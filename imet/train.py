@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
 import os
 from tqdm import tqdm
@@ -12,7 +13,7 @@ import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from scheduler import OneCycleScheduler
-from utils import Mean, seed_everything
+import utils
 from augmentation import SquarePad
 from .model import Model
 
@@ -35,7 +36,7 @@ parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
-seed_everything(args.seed)
+utils.seed_everything(args.seed)
 
 train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
 train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
@@ -369,7 +370,7 @@ def find_lr():
     gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
     lrs = []
-    lss = []
+    losses = []
     sls = []
     ewa = EWA(beta=LOSS_SMOOTHING)
 
@@ -380,7 +381,7 @@ def find_lr():
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), min_lr, weight_decay=args.weight_decay)
+    optimizer = build_optimizer(model.parameters(), 0., weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
@@ -395,7 +396,7 @@ def find_lr():
 
         ewa.update(loss.data.cpu().numpy().mean())
         lrs.append(cur_lr)
-        lss.append(loss.data.cpu().numpy().mean())
+        losses.append(loss.data.cpu().numpy().mean())
         sls.append(ewa.compute())
         if ewa.compute() < minima['loss']:
             minima['loss'] = ewa.compute()
@@ -408,12 +409,24 @@ def find_lr():
         loss.mean().backward()
         optimizer.step()
 
-        writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=step)
+        # writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=step)
 
         if args.debug:
             break
 
-    np.save('stats.npy', (lrs, lss))
+    for step, (lr, loss) in enumerate(zip(lrs, utils.smooth(losses))):
+        pass
+
+    np.save('stats.npy', (lrs, losses))
+
+    plt.plot(lrs, losses)
+    plt.plot(lrs, utils.smooth(losses))
+    plt.axvline(minima['lr'])
+    plt.xscale('log')
+    plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
+
+    plot = utils.plot_to_image()
+    writer.add_image('plot', plot, global_step=0)
 
     return minima
 
@@ -431,7 +444,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'train', 'fold_{}'.format(fold)))
 
     metrics = {
-        'loss': Mean(),
+        'loss': utils.Mean(),
     }
 
     model.train()
@@ -465,7 +478,7 @@ def eval_epoch(model, data_loader, fold, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'eval', 'fold{}'.format(fold)))
 
     metrics = {
-        'loss': Mean(),
+        'loss': utils.Mean(),
     }
 
     predictions = []
