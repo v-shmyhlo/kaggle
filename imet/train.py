@@ -425,7 +425,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         print('[FOLD {}][EPOCH {}][TRAIN] loss: {:.4f}'.format(fold, epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
         lr, beta = scheduler.get_lr()
-        writer.add_scalar('lr', lr, global_step=epoch)
+        writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_scalar('beta', beta, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
 
