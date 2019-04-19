@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import os
 from tqdm import tqdm
-# import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,24 +9,15 @@ import torchvision
 import torchvision.transforms as T
 import pretrainedmodels
 import math
-import random
 from PIL import Image
 from collections import OrderedDict
 import argparse
+from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
+from scheduler import OneCycleScheduler, annealing_linear
+from utils import Mean, seed_everything
 
 FOLDS = list(range(1, 5 + 1))
-
-
-def seed_everything(seed):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    #     tf.set_random_seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset-path', type=str, required=True)
@@ -402,68 +392,6 @@ class SEModule(nn.Module):
         return module_input * x
 
 
-class OneCycleScheduler(object):
-    def __init__(self, optimizer, lr, beta, max_steps, annealing):
-        self.optimizer = optimizer
-        self.lr = lr
-        self.beta = beta
-        self.max_steps = max_steps
-        self.annealing = annealing
-        self.epoch = -1
-
-    def step(self):
-        self.epoch += 1
-
-        mid = round(self.max_steps * 0.3)
-        if self.epoch < mid:
-            r = self.epoch / mid
-            lr = self.annealing(self.lr[0], self.lr[1], r)
-            beta = self.annealing(self.beta[0], self.beta[1], r)
-        else:
-            r = (self.epoch - mid) / (self.max_steps - mid)
-            lr = self.annealing(self.lr[1], self.lr[0] / 1e4, r)
-            beta = self.annealing(self.beta[1], self.beta[0], r)
-
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
-
-            if 'betas' in param_group:
-                param_group['betas'] = (beta, *param_group['betas'][1:])
-            elif 'momentum' in param_group:
-                param_group['momentum'] = beta
-            else:
-                raise AssertionError('no beta parameter')
-
-
-def annealing_linear(start, end, r):
-    return start + r * (end - start)
-
-
-def annealing_cos(start, end, r):
-    cos_out = np.cos(np.pi * r) + 1
-    return end + (start - end) / 2 * cos_out
-
-
-class Mean(object):
-    def __init__(self):
-        self.values = []
-
-    def compute(self):
-        return sum(self.values) / len(self.values)
-
-    def update(self, value):
-        self.values.extend(np.reshape(value, [-1]))
-
-    def reset(self):
-        self.values = []
-
-    def compute_and_reset(self):
-        value = self.compute()
-        self.reset()
-
-        return value
-
-
 class EWA(object):
     def __init__(self, beta=0.9):
         self.beta = beta
@@ -712,7 +640,7 @@ def find_lr():
 
     min_lr = 1e-8
     max_lr = 10.
-    p = (max_lr / min_lr)**(1 / len(train_data_loader))
+    gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
     stp = 0
     cur_lr = min_lr
@@ -729,6 +657,8 @@ def find_lr():
     model = Model()
     model = model.to(DEVICE)
     optimizer = build_optimizer(model.parameters(), min_lr, weight_decay=1e-4)
+
+    writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
     model.train()
     for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
@@ -748,22 +678,17 @@ def find_lr():
             break
         stp += 1
 
-        cur_lr = min_lr * p**stp
+        cur_lr = min_lr * gamma**stp
         set_lr(optimizer, cur_lr)
 
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
 
+        writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=stp)
+
         if args.debug:
             break
-
-    # plt.plot(lrs, lss)
-    # plt.plot(lrs, sls)
-    # plt.axvline(minima['lr'])
-    # plt.xscale('log')
-    # plt.title('loss: {:.4f}, lr: {:.4f}'.format(minima['loss'], minima['lr']))
-    # plt.show()
 
     return minima
 
@@ -777,7 +702,7 @@ def indices_for_fold(fold, size):
     return train_indices, eval_indices
 
 
-def train_fold(fold):
+def train_fold(fold, minima):
     train_indices, eval_indices = indices_for_fold(fold, len(train_data))
 
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
@@ -791,7 +716,7 @@ def train_fold(fold):
 
     model = Model()
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), minima['lr'] / 10, weight_decay=1e-4)
+    optimizer = build_optimizer(model.parameters(), 0., weight_decay=1e-4)
     scheduler = OneCycleScheduler(
         optimizer, lr=(minima['lr'] / 10 / 25, minima['lr'] / 10), beta=(0.95, 0.85),
         max_steps=len(train_data_loader) * args.epochs, annealing=ANNEAL)
@@ -799,12 +724,8 @@ def train_fold(fold):
     metrics = {
         'loss': Mean(),
     }
-
-    stats = {
-        'train_loss': [],
-        'eval_loss': [],
-        'eval_score': []
-    }
+    train_writer = SummaryWriter(os.path.join(args.experiment_path, 'train', 'fold{}'.format(fold)))
+    eval_writer = SummaryWriter(os.path.join(args.experiment_path, 'eval', 'fold{}'.format(fold)))
 
     best_score = 0
     for epoch in range(args.epochs):
@@ -825,8 +746,11 @@ def train_fold(fold):
                 break
 
         loss = metrics['loss'].compute_and_reset()
-        stats['train_loss'].append(loss)
         print('[FOLD {}][EPOCH {}][TRAIN] loss: {:.4f}'.format(fold, epoch, loss))
+        train_writer.add_scalar('loss', loss, global_step=epoch)
+        lr, beta = scheduler.get_lr()
+        train_writer.add_scalar('lr', lr, global_step=epoch)
+        train_writer.add_scalar('beta', beta, global_step=epoch)
 
         predictions = []
         targets = []
@@ -848,24 +772,18 @@ def train_fold(fold):
             del images, labels, logits
 
             loss = metrics['loss'].compute_and_reset()
-            stats['eval_loss'].append(loss)
 
             predictions = torch.cat(predictions, 0)
             targets = torch.cat(targets, 0)
             threshold, score = find_threshold_global(input=predictions, target=targets)
-            stats['eval_score'].append(score)
 
             print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
+            eval_writer.add_scalar('loss', loss, global_step=epoch)
+            eval_writer.add_scalar('score', score, global_step=epoch)
 
             if score > best_score:
                 best_score = score
                 torch.save(model.state_dict(), './model_{}.pth'.format(fold))
-
-    # plt.plot(stats['train_loss'])
-    # plt.plot(stats['eval_loss'])
-    # plt.show()
-    # plt.plot(stats['eval_score'])
-    # plt.show()
 
 
 def build_submission(threshold):
@@ -970,8 +888,9 @@ def find_threshold_for_folds():
         return threshold
 
 
-minima = find_lr()
-for fold in FOLDS:
-    train_fold(fold)
-threshold = find_threshold_for_folds()
-build_submission(threshold)
+def main():
+    minima = find_lr()
+    for fold in FOLDS:
+        train_fold(fold, minima)
+    threshold = find_threshold_for_folds()
+    build_submission(threshold)
