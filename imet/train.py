@@ -16,17 +16,21 @@ from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from scheduler import OneCycleScheduler, annealing_linear
 from utils import Mean, seed_everything
+from augmentation import SquarePad
+
+# TODO: check del
 
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--experiment-path', type=str, default='./tf_log/imet')
 parser.add_argument('--dataset-path', type=str, required=True)
-parser.add_argument('--workers', type=str, default=os.cpu_count())
+parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--seed', type=int, default=42)
 parser.add_argument('--epochs', type=int, default=5)
 parser.add_argument('--image-size', type=int, default=128)
 parser.add_argument('--batch-size', type=int, default=256)
-parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard'], default='med')
+parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad'], default='med')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
@@ -81,6 +85,8 @@ class TestDataset(torch.utils.data.Dataset):
         return image, id
 
 
+# TODO: add images
+
 # def load_image(path, size):
 #     image = cv2.imread(path)
 #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -97,7 +103,7 @@ class TestDataset(torch.utils.data.Dataset):
 
 def load_image(path):
     if args.debug:
-        path = './dog.jpg'
+        path = './imet/dog.jpg'
 
     image = Image.open(path)
 
@@ -605,13 +611,30 @@ elif args.aug == 'hard':
     train_transform = T.Compose([
         T.RandomResizedCrop((args.image_size, args.image_size), scale=scale, ratio=(3. / 4., 4. / 3.)),
         T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
         to_tensor_and_norm,
     ])
     # TODO: correct eval size?
     eval_transform = T.Compose([
         T.Resize(image_size_corrected),
         T.CenterCrop(image_size_corrected),
+        to_tensor_and_norm,
+    ])
+elif args.aug == 'pad':
+    image_size_corrected = round(args.image_size * (1 / 0.8))
+
+    train_transform = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+        T.RandomCrop(args.image_size),
+        T.RandomHorizontalFlip(),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        to_tensor_and_norm,
+    ])
+    eval_transform = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+        T.CenterCrop(args.image_size),
         to_tensor_and_norm,
     ])
 else:
@@ -751,6 +774,7 @@ def train_fold(fold, minima):
         lr, beta = scheduler.get_lr()
         train_writer.add_scalar('lr', lr, global_step=epoch)
         train_writer.add_scalar('beta', beta, global_step=epoch)
+        train_writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
 
         predictions = []
         targets = []
@@ -768,8 +792,6 @@ def train_fold(fold, minima):
 
                 if args.debug:
                     break
-
-            del images, labels, logits
 
             loss = metrics['loss'].compute_and_reset()
 
@@ -894,3 +916,7 @@ def main():
         train_fold(fold, minima)
     threshold = find_threshold_for_folds()
     build_submission(threshold)
+
+
+if __name__ == '__main__':
+    main()
