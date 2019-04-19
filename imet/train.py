@@ -333,6 +333,12 @@ elif args.aug == 'pad':
         T.CenterCrop(args.image_size),
         to_tensor_and_norm,
     ])
+    test_transform = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+        T.TenCrop(args.image_size),
+        T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
+    ])
 else:
     raise AssertionError('invalid AUG {}'.format(args.aug))
 
@@ -532,16 +538,16 @@ def train_fold(fold, minima):
             torch.save(model.state_dict(), './model_{}.pth'.format(fold))
 
 
-def build_submission(threshold):
+def build_submission(folds, threshold):
     with torch.no_grad():
         predictions = 0.
 
-        for fold in FOLDS:
+        for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
             predictions = predictions + fold_predictions.sigmoid()
             ids = fold_ids
 
-        predictions = predictions / len(FOLDS)
+        predictions = predictions / len(folds)
         submission = []
         assert len(ids) == len(predictions)
         for id, prediction in zip(ids, predictions):
@@ -616,11 +622,11 @@ def predict_on_eval_using_fold(fold):
     return fold_targets, fold_predictions, fold_ids
 
 
-def find_threshold_for_folds():
+def find_threshold_for_folds(folds):
     with torch.no_grad():
         targets = []
         predictions = []
-        for fold in FOLDS:
+        for fold in folds:
             fold_targets, fold_predictions, fold_ids = predict_on_eval_using_fold(fold)
             targets.append(fold_targets)
             predictions.append(fold_predictions)
@@ -638,13 +644,15 @@ def main():
     minima = find_lr()
 
     if args.fold is None:
-        for fold in FOLDS:
-            train_fold(fold, minima)
+        folds = FOLDS
     else:
-        train_fold(args.fold, minima)
+        folds = [args.fold]
 
-    # threshold = find_threshold_for_folds()
-    # build_submission(threshold)
+    for fold in folds:
+        train_fold(fold, minima)
+
+    threshold = find_threshold_for_folds(folds)
+    build_submission(folds, threshold)
 
 
 if __name__ == '__main__':
