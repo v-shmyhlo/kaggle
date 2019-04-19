@@ -380,8 +380,8 @@ def find_lr():
         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
         for step, (loss, loss_sm) in enumerate(zip(losses, utils.smooth(losses))):
-            writer.add_scalar('loss', loss, global_step=step)
-            writer.add_scalar('loss_sm', loss_sm, global_step=step)
+            writer.add_scalar('search_loss', loss, global_step=step)
+            writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
 
         np.save('stats.npy', (lrs, losses))
 
