@@ -18,6 +18,8 @@ from augmentation import SquarePad
 from .model import Model
 
 # TODO: check del
+# TODO: try largest lr before diverging
+# TODO: check all plots rendered
 
 FOLDS = list(range(1, 5 + 1))
 
@@ -171,38 +173,13 @@ def find_threshold_global(input, target):
     threshold = thresholds[np.argmax(scores)]
     score = scores[np.argmax(scores)]
 
-    # plt.plot(thresholds, scores)
-    # plt.axvline(threshold)
-    # plt.title('score: {:.4f}, threshold: {:.4f}'.format(score.item(), threshold))
-    # plt.show()
+    plt.plot(thresholds, scores)
+    plt.axvline(threshold)
+    plt.title('score: {:.4f}, threshold: {:.4f}'.format(score.item(), threshold))
+    plt.show()
+    plot = utils.plot_to_image()
 
-    return threshold, score
-
-
-def find_threshold_class(input, target, initial):
-    threshold = torch.full((NUM_CLASSES,), initial).to(input.device)
-    steps = []
-    for _ in tqdm(range(50), desc='threshold search'):
-        for i in np.random.permutation(NUM_CLASSES):
-            r = torch.tensor([threshold[i] - 0.01, threshold[i], threshold[i] + 0.01])
-            space = threshold.view(1, NUM_CLASSES).repeat(r.size(0), 1)
-            space[:, i] = r
-            scores = compute_score(input=input.unsqueeze(0), target=target.unsqueeze(0), threshold=space.unsqueeze(1))
-            scores = scores.mean(-1)
-            threshold[i] = r[scores.argmax()]
-
-        score = compute_score(input=input, target=target, threshold=threshold).mean()
-        steps.append(score)
-
-    # plt.plot(steps)
-    # plt.show()
-
-    # plt.hist(threshold.cpu(), bins=50)
-    # plt.title('score: {:.4f}, threshold mean: {:.4f}, threshold std: {:.4f}'.format(
-    #     score.item(), threshold.mean(), threshold.std()))
-    # plt.show()
-
-    return threshold
+    return threshold, score, plot
 
 
 NUM_CLASSES = len(classes)
@@ -351,9 +328,9 @@ def indices_for_fold(fold, dataset_size):
 
 def find_lr():
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
+    # TODO: all args
     train_data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True,
-        num_workers=args.workers)  # TODO: all args
+        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
     min_lr = 1e-8
     max_lr = 10.
@@ -414,9 +391,8 @@ def find_lr():
         plt.axvline(minima['lr'])
         plt.xscale('log')
         plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
-
         plot = utils.plot_to_image()
-        writer.add_image('plot', plot, global_step=0)
+        writer.add_image('search', plot, global_step=0)
 
         return minima
 
@@ -483,12 +459,13 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score = find_threshold_global(input=predictions, target=targets)
+        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
 
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
+        writer.add_image('thresholds', plot, global_step=epoch)
 
         return score
 
@@ -625,14 +602,17 @@ def find_threshold_for_folds(folds):
             targets.append(fold_targets)
             predictions.append(fold_predictions)
 
+        # TODO: check aggregated correctly
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score = find_threshold_global(input=predictions, target=targets)
+        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
 
         print('threshold: {:.4f}, score: {:.4f}'.format(threshold, score))
 
         return threshold
 
+
+# TODO: check FOLDS usage
 
 def main():
     minima = find_lr()

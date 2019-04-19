@@ -537,6 +537,7 @@ def build_submission(threshold):
 
         for fold in FOLDS:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
+            # TODO: check averaged correctly
             predictions = predictions + fold_predictions.sigmoid().mean(1)
             ids = fold_ids
 
