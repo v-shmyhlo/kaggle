@@ -14,7 +14,7 @@ from collections import OrderedDict
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
-from scheduler import OneCycleScheduler, annealing_linear
+from scheduler import OneCycleScheduler
 from utils import Mean, seed_everything
 from augmentation import SquarePad
 
@@ -30,6 +30,8 @@ parser.add_argument('--seed', type=int, default=42)
 parser.add_argument('--epochs', type=int, default=5)
 parser.add_argument('--image-size', type=int, default=128)
 parser.add_argument('--batch-size', type=int, default=256)
+parser.add_argument('--wd', type=float, default=1e-4)
+parser.add_argument('--annealing', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad'], default='med')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -522,7 +524,6 @@ def find_threshold_class(input, target, initial):
 
 
 NUM_CLASSES = len(classes)
-ANNEAL = annealing_linear
 ARCH = 'seresnext50'
 OPT = 'adam'
 LOSS_SMOOTHING = 0.9
@@ -679,7 +680,7 @@ def find_lr():
 
     model = Model()
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), min_lr, weight_decay=1e-4)
+    optimizer = build_optimizer(model.parameters(), min_lr, weight_decay=args.weight_decay)
 
     writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
@@ -739,10 +740,10 @@ def train_fold(fold, minima):
 
     model = Model()
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), 0., weight_decay=1e-4)
+    optimizer = build_optimizer(model.parameters(), 0., weight_decay=args.weight_decay)
     scheduler = OneCycleScheduler(
         optimizer, lr=(minima['lr'] / 10 / 25, minima['lr'] / 10), beta=(0.95, 0.85),
-        max_steps=len(train_data_loader) * args.epochs, annealing=ANNEAL)
+        max_steps=len(train_data_loader) * args.epochs, annealing=args.annealing)
 
     metrics = {
         'loss': Mean(),

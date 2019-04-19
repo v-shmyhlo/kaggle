@@ -3,6 +3,13 @@ import numpy as np
 
 class OneCycleScheduler(object):
     def __init__(self, optimizer, lr, beta, max_steps, annealing):
+        if annealing == 'linear':
+            annealing = annealing_linear
+        elif annealing == 'cosine':
+            annealing = annealing_cosine
+        else:
+            raise AssertionError('invalid annealing {}'.format(annealing))
+
         self.optimizer = optimizer
         self.lr = lr
         self.beta = beta
@@ -44,7 +51,7 @@ def annealing_linear(start, end, r):
     return start + r * (end - start)
 
 
-def annealing_cos(start, end, r):
+def annealing_cosine(start, end, r):
     cos_out = np.cos(np.pi * r) + 1
 
     return end + (start - end) / 2 * cos_out
