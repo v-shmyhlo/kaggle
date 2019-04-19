@@ -32,7 +32,7 @@ parser.add_argument('--epochs', type=int, default=5)
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--image-size', type=int, default=128)
 parser.add_argument('--batch-size', type=int, default=256)
-parser.add_argument('--wd', type=float, default=1e-4)
+parser.add_argument('--weight-decay', type=float, default=1e-4)
 parser.add_argument('--annealing', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad'], default='med')
 parser.add_argument('--debug', action='store_true')
@@ -625,6 +625,7 @@ def main():
     for fold in folds:
         train_fold(fold, minima)
 
+    # TODO: check and refine
     threshold = find_threshold_for_folds(folds)
     build_submission(folds, threshold)
 

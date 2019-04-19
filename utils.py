@@ -2,7 +2,7 @@ import random
 import matplotlib.pyplot as plt
 from PIL import Image
 import tempfile
-import scipy
+import scipy.signal
 import os
 import numpy as np
 import torch
@@ -44,7 +44,7 @@ class Mean(object):
 
 def smooth(x, ksize=None):
     if ksize is None:
-        ksize = x.shape[0] // 4
+        ksize = len(x) // 4
 
         if ksize % 2 == 0:
             ksize += 1
