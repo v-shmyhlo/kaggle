@@ -8,6 +8,20 @@ import numpy as np
 import torch
 
 
+class EWA(object):
+    def __init__(self, beta=0.9):
+        self.beta = beta
+        self.step = 0
+        self.average = 0
+
+    def update(self, value):
+        self.step += 1
+        self.average = self.beta * self.average + (1 - self.beta) * value
+
+    def compute(self):
+        return self.average / (1 - self.beta**self.step)
+
+
 class Mean(object):
     def __init__(self):
         self.values = []

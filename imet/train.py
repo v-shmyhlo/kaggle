@@ -96,20 +96,6 @@ def load_image(path):
     return image
 
 
-class EWA(object):
-    def __init__(self, beta=0.9):
-        self.beta = beta
-        self.step = 0
-        self.average = 0
-
-    def update(self, value):
-        self.step += 1
-        self.average = self.beta * self.average + (1 - self.beta) * value
-
-    def compute(self):
-        return self.average / (1 - self.beta**self.step)
-
-
 class FocalLoss(nn.Module):
     def __init__(self, gamma=2):
         super().__init__()
@@ -354,9 +340,13 @@ def build_optimizer(parameters, lr, weight_decay):
         raise AssertionError('invalid OPT {}'.format(OPT))
 
 
-def set_lr(optimizer, lr):
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+def indices_for_fold(fold, dataset_size):
+    kfold = KFold(len(FOLDS), shuffle=True, random_state=args.seed)
+    splits = list(kfold.split(np.zeros(dataset_size)))
+    train_indices, eval_indices = splits[fold - 1]
+    assert len(train_indices) + len(eval_indices) == dataset_size
+
+    return train_indices, eval_indices
 
 
 def find_lr():
@@ -372,7 +362,7 @@ def find_lr():
     lrs = []
     losses = []
     sls = []
-    ewa = EWA(beta=LOSS_SMOOTHING)
+    ewa = utils.EWA(beta=LOSS_SMOOTHING)
 
     minima = {
         'loss': np.inf,
@@ -384,10 +374,8 @@ def find_lr():
     optimizer = build_optimizer(model.parameters(), 0., weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
-    writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
-
     model.train()
-    for step, (images, labels, ids) in enumerate(tqdm(train_data_loader, desc='lr search')):
+    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits = model(images)
 
@@ -409,35 +397,28 @@ def find_lr():
         loss.mean().backward()
         optimizer.step()
 
-        # writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=step)
-
         if args.debug:
             break
 
-    for step, (lr, loss) in enumerate(zip(lrs, utils.smooth(losses))):
-        pass
+    with torch.no_grad():
+        writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
-    np.save('stats.npy', (lrs, losses))
+        for step, (loss, loss_sm) in enumerate(zip(lrs, losses, utils.smooth(losses))):
+            writer.add_scalar('loss', loss, global_step=step)
+            writer.add_scalar('loss_sm', loss_sm, global_step=step)
 
-    plt.plot(lrs, losses)
-    plt.plot(lrs, utils.smooth(losses))
-    plt.axvline(minima['lr'])
-    plt.xscale('log')
-    plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
+        np.save('stats.npy', (lrs, losses))
 
-    plot = utils.plot_to_image()
-    writer.add_image('plot', plot, global_step=0)
+        plt.plot(lrs, losses)
+        plt.plot(lrs, utils.smooth(losses))
+        plt.axvline(minima['lr'])
+        plt.xscale('log')
+        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
 
-    return minima
+        plot = utils.plot_to_image()
+        writer.add_image('plot', plot, global_step=0)
 
-
-def indices_for_fold(fold, dataset_size):
-    kfold = KFold(len(FOLDS), shuffle=True, random_state=args.seed)
-    splits = list(kfold.split(np.zeros(dataset_size)))
-    train_indices, eval_indices = splits[fold - 1]
-    assert len(train_indices) + len(eval_indices) == dataset_size
-
-    return train_indices, eval_indices
+        return minima
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
