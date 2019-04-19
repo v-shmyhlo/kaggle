@@ -176,7 +176,6 @@ def find_threshold_global(input, target):
     plt.plot(thresholds, scores)
     plt.axvline(threshold)
     plt.title('score: {:.4f}, threshold: {:.4f}'.format(score.item(), threshold))
-    plt.show()
     plot = utils.plot_to_image()
 
     return threshold, score, plot
@@ -380,7 +379,7 @@ def find_lr():
     with torch.no_grad():
         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
-        for step, (loss, loss_sm) in enumerate(zip(lrs, losses, utils.smooth(losses))):
+        for step, (loss, loss_sm) in enumerate(zip(losses, utils.smooth(losses))):
             writer.add_scalar('loss', loss, global_step=step)
             writer.add_scalar('loss_sm', loss_sm, global_step=step)
 
@@ -392,7 +391,7 @@ def find_lr():
         plt.xscale('log')
         plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
         plot = utils.plot_to_image()
-        writer.add_image('search', plot, global_step=0)
+        writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
 
         return minima
 
@@ -465,7 +464,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
-        writer.add_image('thresholds', plot, global_step=epoch)
+        writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
 
         return score
 
