@@ -413,6 +413,8 @@ def find_lr():
         if args.debug:
             break
 
+    np.save('stats.npy', (lrs, lss))
+
     return minima
 
 
@@ -425,7 +427,7 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
-def train(model, optimizer, scheduler, data_loader, fold, epoch):
+def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'train', 'fold_{}'.format(fold)))
 
     metrics = {
@@ -459,7 +461,7 @@ def train(model, optimizer, scheduler, data_loader, fold, epoch):
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
 
 
-def eval(model, data_loader, fold, epoch):
+def eval_epoch(model, data_loader, fold, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'eval', 'fold{}'.format(fold)))
 
     metrics = {
@@ -518,14 +520,14 @@ def train_fold(fold, minima):
 
     best_score = 0
     for epoch in range(args.epochs):
-        train(
+        train_epoch(
             model=model,
             optimizer=optimizer,
             scheduler=scheduler,
             data_loader=train_data_loader,
             fold=fold,
             epoch=epoch)
-        score = eval(
+        score = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
             fold=fold,
