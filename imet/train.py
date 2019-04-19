@@ -333,12 +333,13 @@ elif args.aug == 'pad':
         T.CenterCrop(args.image_size),
         to_tensor_and_norm,
     ])
-    test_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.TenCrop(args.image_size),
-        T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-    ])
+    # test_transform = T.Compose([
+    #     SquarePad(padding_mode='edge'),
+    #     T.Resize(image_size_corrected),
+    #     T.TenCrop(args.image_size),
+    #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
+    # ])
+    test_transform = eval_transform
 else:
     raise AssertionError('invalid AUG {}'.format(args.aug))
 
@@ -367,8 +368,6 @@ def find_lr():
     max_lr = 10.
     gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
-    stp = 0
-    cur_lr = min_lr
     lrs = []
     lss = []
     sls = []
@@ -382,15 +381,17 @@ def find_lr():
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(model.parameters(), min_lr, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
     model.train()
-    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
+    for step, (images, labels, ids) in enumerate(tqdm(train_data_loader, desc='lr search')):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels)
+        cur_lr = np.squeeze(scheduler.get_lr())
 
         ewa.update(loss.data.cpu().numpy().mean())
         lrs.append(cur_lr)
@@ -401,16 +402,13 @@ def find_lr():
             minima['lr'] = cur_lr
         if minima['loss'] * 4 < ewa.compute():
             break
-        stp += 1
 
-        cur_lr = min_lr * gamma**stp
-        set_lr(optimizer, cur_lr)
-
+        scheduler.step()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
 
-        writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=stp)
+        writer.add_scalar('loss', loss.mean().data.cpu().numpy(), global_step=step)
 
         if args.debug:
             break
