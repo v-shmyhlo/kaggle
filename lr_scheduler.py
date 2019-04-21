@@ -2,7 +2,7 @@ import numpy as np
 
 
 class OneCycleScheduler(object):
-    def __init__(self, optimizer, lr, beta, max_steps, annealing):
+    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.3):
         if annealing == 'linear':
             annealing = annealing_linear
         elif annealing == 'cosine':
@@ -15,6 +15,7 @@ class OneCycleScheduler(object):
         self.beta = beta
         self.max_steps = max_steps
         self.annealing = annealing
+        self.peak_pos = peak_pos
         self.epoch = -1
 
     def step(self):
@@ -33,7 +34,7 @@ class OneCycleScheduler(object):
                 raise AssertionError('no beta parameter')
 
     def get_lr(self):
-        mid = round(self.max_steps * 0.3)
+        mid = round(self.max_steps * self.peak_pos)
 
         if self.epoch < mid:
             r = self.epoch / mid

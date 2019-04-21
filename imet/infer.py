@@ -28,6 +28,7 @@ def seed_everything(seed):
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--experiment-path', type=str, default='./tf_log/imet')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--workers', type=str, default=os.cpu_count())
 parser.add_argument('--seed', type=int, default=42)
@@ -386,7 +387,7 @@ class SEModule(nn.Module):
 
 
 def compute_score(input, target, threshold=0.5):
-    input = (input.sigmoid() > threshold).float()
+    input = (input > threshold).float()
 
     tp = (target * input).sum(-1)
     tn = ((1 - target) * (1 - input)).sum(-1)
@@ -502,9 +503,10 @@ elif args.aug == 'hard':
         to_tensor_and_norm,
     ])
     eval_transform = T.Compose([
-        T.Resize(args.image_size),
+        T.Resize(image_size_corrected),
         T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
+        T.Lambda(lambda x: [x, T.RandomHorizontalFlip(p=1.)(x)]),
+        T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
     ])
     # test_transform = T.Compose([
     #     T.Resize(image_size_corrected),
@@ -515,7 +517,7 @@ elif args.aug == 'hard':
     test_transform = T.Compose([
         T.Resize(args.image_size),
         T.CenterCrop(args.image_size),
-        T.Lambda(lambda x: [x, T.RandomHorizontalFlip(p=1.)(x)]),
+        T.Lambda(lambda x: [x]),
         T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
     ])
 else:
@@ -529,6 +531,92 @@ def indices_for_fold(fold, size):
     assert len(train_indices) + len(eval_indices) == size
 
     return train_indices, eval_indices
+
+
+def predict_on_eval_using_fold(fold):
+    _, eval_indices = indices_for_fold(fold, len(train_data))
+
+    eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
+    eval_data_loader = torch.utils.data.DataLoader(
+        eval_dataset, batch_size=args.batch_size // 2, num_workers=args.workers)  # TODO: all args
+
+    model = Model()
+    model = model.to(DEVICE)
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+    model.eval()
+
+    with torch.no_grad():
+        fold_predictions = []
+        fold_targets = []
+        fold_ids = []
+        for images, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            b, n, _, _, _ = images.shape
+
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            images = images.view(b * n, *images.shape[2:])
+            logits = model(images)
+            logits = logits.view(b, n, NUM_CLASSES)
+            fold_predictions.append(logits)
+            fold_targets.append(labels)
+            fold_ids.extend(ids)
+
+            if args.debug:
+                break
+
+        fold_predictions = torch.cat(fold_predictions, 0)
+        fold_targets = torch.cat(fold_targets, 0)
+
+    return fold_predictions, fold_targets, fold_ids
+
+
+def predict_on_test_using_fold(fold):
+    test_dataset = TestDataset(transform=test_transform)
+    test_data_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=args.batch_size // 2, num_workers=args.workers)  # TODO: all args
+
+    model = Model()
+    model = model.to(DEVICE)
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+    model.eval()
+
+    with torch.no_grad():
+        fold_predictions = []
+        fold_ids = []
+        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            b, n, _, _, _ = images.shape
+
+            images = images.to(DEVICE)
+            images = images.view(b * n, *images.shape[2:])
+            logits = model(images)
+            logits = logits.view(b, n, NUM_CLASSES)
+            fold_predictions.append(logits)
+            fold_ids.extend(ids)
+
+            if args.debug:
+                break
+
+        fold_predictions = torch.cat(fold_predictions, 0)
+
+    return fold_predictions, fold_ids
+
+
+def find_threshold_for_folds():
+    with torch.no_grad():
+        predictions = []
+        targets = []
+        for fold in FOLDS:
+            fold_predictions, fold_targets, fold_ids = predict_on_eval_using_fold(fold)
+            predictions.append(fold_predictions)
+            targets.append(fold_targets)
+
+        predictions = torch.cat(predictions, 0)
+        targets = torch.cat(targets, 0)
+        print(predictions.shape)
+        threshold, score = find_threshold_global(input=predictions.sigmoid().mean(1), target=targets)
+
+        print('threshold: {:.4f}, score: {:.4f}'.format(threshold, score))
+
+        return threshold
 
 
 def build_submission(threshold):
@@ -554,88 +642,6 @@ def build_submission(threshold):
 
         submission = pd.DataFrame(submission, columns=['id', 'attribute_ids'])
         submission.to_csv('./submission.csv', index=False)
-
-
-def predict_on_test_using_fold(fold):
-    test_dataset = TestDataset(transform=test_transform)
-    test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size // 2, num_workers=args.workers)  # TODO: all args
-
-    model = Model()
-    model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
-    model.eval()
-
-    with torch.no_grad():
-        fold_predictions = []
-        fold_ids = []
-        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            b, n, _, _, _ = images.shape
-
-            images = images.to(DEVICE)
-            images = images.view(b * n, *images.shape[2:])
-            logits = model(images)
-            logits = logits.view(b, n, NUM_CLASSES)
-            fold_predictions.append(logits)
-            fold_ids.extend(ids)
-
-            if args.debug:
-                break
-
-        fold_predictions = torch.cat(fold_predictions, 0)
-
-    return fold_predictions, fold_ids
-
-
-def predict_on_eval_using_fold(fold):
-    _, eval_indices = indices_for_fold(fold, len(train_data))
-
-    eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
-    eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
-
-    model = Model()
-    model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
-    model.eval()
-
-    with torch.no_grad():
-        fold_targets = []
-        fold_predictions = []
-        fold_ids = []
-        for images, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits = model(images)
-
-            fold_targets.append(labels)
-            fold_predictions.append(logits)
-            fold_ids.extend(ids)
-
-            if args.debug:
-                break
-
-        fold_targets = torch.cat(fold_targets, 0)
-        fold_predictions = torch.cat(fold_predictions, 0)
-
-    return fold_targets, fold_predictions, fold_ids
-
-
-def find_threshold_for_folds():
-    with torch.no_grad():
-        targets = []
-        predictions = []
-        for fold in FOLDS:
-            fold_targets, fold_predictions, fold_ids = predict_on_eval_using_fold(fold)
-            targets.append(fold_targets)
-            predictions.append(fold_predictions)
-
-        predictions = torch.cat(predictions, 0)
-        targets = torch.cat(targets, 0)
-        threshold, score = find_threshold_global(input=predictions, target=targets)
-
-        print('threshold: {:.4f}, score: {:.4f}'.format(threshold, score))
-
-        return threshold
 
 
 threshold = find_threshold_for_folds()

@@ -44,7 +44,7 @@ class Mean(object):
 
 def smooth(x, ksize=None):
     if ksize is None:
-        ksize = len(x) // 4
+        ksize = len(x) // 10
 
         if ksize % 2 == 0:
             ksize += 1

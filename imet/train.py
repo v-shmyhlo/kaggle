@@ -1,4 +1,5 @@
 import numpy as np
+import gc
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
@@ -12,14 +13,17 @@ from PIL import Image
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
-from scheduler import OneCycleScheduler
+from lr_scheduler import OneCycleScheduler
+from optim import AdamW
 import utils
 from augmentation import SquarePad
 from .model import Model
 
+# TODO: sgd
 # TODO: check del
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
+# TODO: adamw
 
 FOLDS = list(range(1, 5 + 1))
 
@@ -33,8 +37,10 @@ parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--image-size', type=int, default=128)
 parser.add_argument('--batch-size', type=int, default=256)
 parser.add_argument('--weight-decay', type=float, default=1e-4)
-parser.add_argument('--annealing', type=str, choices=['linear', 'cosine'], default='linear')
-parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad'], default='med')
+parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
+parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
+parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad', 'pad-hard'], default='med')
+parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
@@ -106,8 +112,7 @@ class FocalLoss(nn.Module):
     def forward(self, input, target):
         target = target.float()
         max_val = (-input).clamp(min=0)
-        loss = input - input * target + max_val + \
-               ((-max_val).exp() + (-input - max_val).exp()).log()
+        loss = input - input * target + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
 
         invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
         loss = (invprobs * self.gamma).exp() * loss
@@ -183,7 +188,6 @@ def find_threshold_global(input, target):
 
 NUM_CLASSES = len(classes)
 ARCH = 'seresnext50'
-OPT = 'adam'
 LOSS_SMOOTHING = 0.9
 LOSS = [
     # f2_loss,
@@ -303,17 +307,45 @@ elif args.aug == 'pad':
     #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
     # ])
     test_transform = eval_transform
+elif args.aug == 'pad-hard':
+    image_size_corrected = round(args.image_size * (1 / 0.8))
+
+    train_transform = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+        T.RandomAffine(15, scale=(0.8, 1.2), resample=Image.BILINEAR),
+        T.RandomCrop(args.image_size),
+        T.RandomHorizontalFlip(),
+        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        to_tensor_and_norm,
+    ])
+    eval_transform = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+        T.CenterCrop(args.image_size),
+        to_tensor_and_norm,
+    ])
+    # test_transform = T.Compose([
+    #     SquarePad(padding_mode='edge'),
+    #     T.Resize(image_size_corrected),
+    #     T.TenCrop(args.image_size),
+    #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
+    # ])
+    test_transform = eval_transform
 else:
     raise AssertionError('invalid AUG {}'.format(args.aug))
 
 
-def build_optimizer(parameters, lr, weight_decay):
-    if OPT == 'adam':
-        return torch.optim.Adam(parameters, lr, weight_decay=weight_decay)
-    elif OPT == 'sgd':
-        return torch.optim.SGD(parameters, lr, momentum=0.9, weight_decay=weight_decay)
+# TODO: should use top momentum to pick best lr?
+def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
+    if optimizer == 'adam':
+        return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
+    elif optimizer == 'adamw':
+        return AdamW(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
+    elif optimizer == 'sgd':
+        return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay)
     else:
-        raise AssertionError('invalid OPT {}'.format(OPT))
+        raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
 def indices_for_fold(fold, dataset_size):
@@ -325,47 +357,111 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
+# def find_lr():
+#     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
+#     # TODO: all args
+#     data_loader = torch.utils.data.DataLoader(
+#         train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+#
+#     min_lr = 1e-8
+#     max_lr = 10.
+#     gamma = (max_lr / min_lr)**(1 / len(data_loader))
+#
+#     lrs = []
+#     losses = []
+#     sls = []
+#     ewa = utils.EWA(beta=LOSS_SMOOTHING)
+#
+#     minima = {
+#         'loss': np.inf,
+#         'lr': min_lr
+#     }
+#
+#     model = Model(ARCH, NUM_CLASSES)
+#     model = model.to(DEVICE)
+#     optimizer = build_optimizer(args.opt,model.parameters(), min_lr,args.beta[-1], weight_decay=args.weight_decay)
+#     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
+#
+#     model.train()
+#     for images, labels, ids in tqdm(data_loader, desc='lr search'):
+#         images, labels = images.to(DEVICE), labels.to(DEVICE)
+#         logits = model(images)
+#
+#         loss = compute_loss(input=logits, target=labels)
+#         ewa.update(loss.data.cpu().numpy().mean())
+#
+#         cur_lr = np.squeeze(scheduler.get_lr())
+#         lrs.append(cur_lr)
+#         losses.append(loss.data.cpu().numpy().mean())
+#         sls.append(ewa.compute())
+#         if ewa.compute() < minima['loss']:
+#             minima['loss'] = ewa.compute()
+#             minima['lr'] = cur_lr
+#         if minima['loss'] * 4 < ewa.compute():
+#             break
+#
+#         scheduler.step()
+#         optimizer.zero_grad()
+#         loss.mean().backward()
+#         optimizer.step()
+#
+#         if args.debug:
+#             break
+#
+#     with torch.no_grad():
+#         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
+#
+#         step = 0
+#         for loss, loss_sm in zip(losses, utils.smooth(losses)):
+#             writer.add_scalar('search_loss', loss, global_step=step)
+#             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
+#             step += args.batch_size
+#
+#         np.save('stats.npy', (lrs, losses))
+#
+#         plt.plot(lrs, losses)
+#         plt.plot(lrs, utils.smooth(losses))
+#         plt.axvline(minima['lr'])
+#         plt.xscale('log')
+#         plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
+#         plot = utils.plot_to_image()
+#         writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
+#
+#         return minima
+
 def find_lr():
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     # TODO: all args
-    train_data_loader = torch.utils.data.DataLoader(
+    data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
     min_lr = 1e-8
     max_lr = 10.
-    gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
+    gamma = (max_lr / min_lr)**(1 / len(data_loader))
 
     lrs = []
     losses = []
-    sls = []
-    ewa = utils.EWA(beta=LOSS_SMOOTHING)
-
-    minima = {
-        'loss': np.inf,
-        'lr': min_lr
-    }
+    lim = None
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), 0., weight_decay=args.weight_decay)
+    optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
+    for images, labels, ids in tqdm(data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels)
-        cur_lr = np.squeeze(scheduler.get_lr())
 
-        ewa.update(loss.data.cpu().numpy().mean())
-        lrs.append(cur_lr)
+        lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
-        sls.append(ewa.compute())
-        if ewa.compute() < minima['loss']:
-            minima['loss'] = ewa.compute()
-            minima['lr'] = cur_lr
-        if minima['loss'] * 4 < ewa.compute():
+
+        if lim is None:
+            lim = losses[0] * 1.1
+
+        if lim < losses[-1]:
             break
 
         scheduler.step()
@@ -377,11 +473,19 @@ def find_lr():
             break
 
     with torch.no_grad():
+        losses = np.clip(losses, 0, lim)
+        minima = {
+            'loss': losses[np.argmin(utils.smooth(losses))],
+            'lr': lrs[np.argmin(utils.smooth(losses))]
+        }
+
         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
-        for step, (loss, loss_sm) in enumerate(zip(losses, utils.smooth(losses))):
+        step = 0
+        for loss, loss_sm in zip(losses, utils.smooth(losses)):
             writer.add_scalar('search_loss', loss, global_step=step)
             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
+            step += args.batch_size
 
         np.save('stats.npy', (lrs, losses))
 
@@ -397,7 +501,7 @@ def find_lr():
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
-    writer = SummaryWriter(os.path.join(args.experiment_path, 'train', 'fold_{}'.format(fold)))
+    writer = SummaryWriter(os.path.join(args.experiment_path, 'fold{}'.format(fold), 'train'))
 
     metrics = {
         'loss': utils.Mean(),
@@ -431,7 +535,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
 
 def eval_epoch(model, data_loader, fold, epoch):
-    writer = SummaryWriter(os.path.join(args.experiment_path, 'eval', 'fold{}'.format(fold)))
+    writer = SummaryWriter(os.path.join(args.experiment_path, 'fold{}'.format(fold), 'eval'))
 
     metrics = {
         'loss': utils.Mean(),
@@ -483,10 +587,13 @@ def train_fold(fold, minima):
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), 0., weight_decay=args.weight_decay)
+    optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
     scheduler = OneCycleScheduler(
-        optimizer, lr=(minima['lr'] / 10 / 25, minima['lr'] / 10), beta=(0.95, 0.85),
-        max_steps=len(train_data_loader) * args.epochs, annealing=args.annealing)
+        optimizer,
+        lr=(minima['lr'] / 25, minima['lr']),
+        beta=args.beta,
+        max_steps=len(train_data_loader) * args.epochs,
+        annealing=args.anneal)
 
     best_score = 0
     for epoch in range(args.epochs):
@@ -540,8 +647,8 @@ def predict_on_test_using_fold(fold):
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
-    model.eval()
 
+    model.eval()
     with torch.no_grad():
         fold_predictions = []
         fold_ids = []
@@ -569,8 +676,8 @@ def predict_on_eval_using_fold(fold):
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
-    model.eval()
 
+    model.eval()
     with torch.no_grad():
         fold_targets = []
         fold_predictions = []
@@ -615,6 +722,7 @@ def find_threshold_for_folds(folds):
 
 def main():
     minima = find_lr()
+    gc.collect()
 
     if args.fold is None:
         folds = FOLDS
