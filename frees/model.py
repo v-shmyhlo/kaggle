@@ -71,6 +71,7 @@ class AttentionModel(nn.Module):
         input = self.model.fc(input)
 
         weights = weights.unsqueeze(2)
-        weights = F.interpolate(weights, (h, w), mode='nearest')  # TODO: speedup, mode
+        # weights = F.interpolate(weights,size=(h, w), mode='nearest')  # TODO: speedup, mode
+        weights = F.interpolate(weights, scale_factor=(4 * 4, 1 * 4), mode='nearest')  # TODO: speedup, mode
 
         return input, weights
