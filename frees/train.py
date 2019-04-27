@@ -42,7 +42,7 @@ parser.add_argument('--weight-decay', type=float, default=1e-4)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--model', type=str, choices=['avg', 'attn'], default='avg')
-# parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad', 'pad-hard'], default='med')
+parser.add_argument('--aug', type=str, choices=['pad', 'crop'], default='pad')
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -85,6 +85,29 @@ def compute_score(input, target, threshold=0.5):
     return f2
 
 
+def collate_fn(batch):
+    batch = list(zip(*batch))
+
+    if len(batch) == 3:
+        images, labels, ids = batch
+        labels = torch.tensor(labels).float()
+        rest = (labels,)
+    else:
+        images, ids = batch
+        rest = ()
+
+    images_tensor = torch.zeros(
+        len(images),
+        1,
+        images[0].size(1),
+        max(image.size(2) for image in images))
+
+    for i, image in enumerate(images):
+        images_tensor[i, :, :, :image.size(2) + 1] = image
+
+    return (images_tensor, *rest, ids)
+
+
 def get_nrow(images):
     h = images.size(0) * images.size(2)
     w = images.size(3)
@@ -93,7 +116,7 @@ def get_nrow(images):
     k = np.sqrt(a / 2)
 
     nrow = a / (2 * k) / w
-    nrow = nrow.round().astype(np.int32)
+    nrow = np.ceil(nrow).astype(np.int32)
 
     return nrow
 
@@ -155,15 +178,22 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: build sched for lr find
 
 
-train_transform = T.Compose([
-    RandomCrop(256),
-    T.ToTensor(),
-])
-eval_transform = T.Compose([
-    CentralCrop(256),
-    T.ToTensor(),
-])
-test_transform = eval_transform
+if args.aug == 'pad':
+    train_transform = T.ToTensor()
+    eval_transform = T.ToTensor()
+    test_transform = eval_transform
+elif args.aug == 'crop':
+    train_transform = T.Compose([
+        RandomCrop(256),
+        T.ToTensor(),
+    ])
+    eval_transform = T.Compose([
+        CentralCrop(256),
+        T.ToTensor(),
+    ])
+    test_transform = eval_transform
+else:
+    raise AssertionError('invalid aug {}'.format(args.aug))
 
 
 # TODO: should use top momentum to pick best lr?
@@ -191,7 +221,12 @@ def find_lr(train_data):
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     # TODO: all args
     data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        train_dataset,
+        batch_size=args.batch_size,
+        drop_last=True,
+        shuffle=True,
+        num_workers=args.workers,
+        collate_fn=collate_fn)
 
     min_lr = 1e-8
     max_lr = 10.
@@ -350,12 +385,19 @@ def train_fold(train_eval_data, fold, minima):
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True,
-        num_workers=args.workers)  # TODO: all args
+        train_dataset,
+        batch_size=args.batch_size,
+        drop_last=True,
+        shuffle=True,
+        num_workers=args.workers,
+        collate_fn=collate_fn)  # TODO: all args
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
+        eval_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        collate_fn=collate_fn)  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -414,7 +456,10 @@ def build_submission(folds, threshold):
 def predict_on_test_using_fold(fold):
     test_dataset = TestDataset(transform=eval_transform)
     test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
+        test_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        collate_fn=collate_fn)  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -443,7 +488,10 @@ def predict_on_eval_using_fold(fold):
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
+        eval_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        collate_fn=collate_fn)  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)

@@ -46,6 +46,7 @@ parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'momentum'], de
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
+# TODO: move to main
 utils.seed_everything(args.seed)
 
 train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
@@ -293,7 +294,7 @@ elif args.aug == 'pad-hard':
     # ])
     test_transform = eval_transform
 else:
-    raise AssertionError('invalid AUG {}'.format(args.aug))
+    raise AssertionError('invalid aug {}'.format(args.aug))
 
 
 # TODO: should use top momentum to pick best lr?
