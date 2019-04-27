@@ -1,3 +1,4 @@
+from functools import partial
 import numpy as np
 import gc
 import matplotlib.pyplot as plt
@@ -41,6 +42,7 @@ parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--model', type=str, choices=['avg', 'attn'], default='avg')
 parser.add_argument('--aug', type=str, choices=['pad', 'crop'], default='pad')
+parser.add_argument('--pad', type=str, choices=['silence', 'zeros'], default='silence')
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -57,14 +59,21 @@ def compute_loss(input, target):
     return loss
 
 
-def compute_score(input, target, threshold=None):
+def compute_score(input, target):
     per_class_lwlrap, weight_per_class = calculate_per_class_lwlrap(
         truth=target.data.cpu().numpy(), scores=input.data.cpu().numpy())
 
     return np.sum(per_class_lwlrap * weight_per_class)
 
 
-def collate_fn(batch, pad_value=np.log(EPS)):
+def collate_fn(batch, pad):
+    if pad == 'silence':
+        pad = np.log(EPS)
+    elif pad == 'zeros':
+        pad = 0.
+    else:
+        raise AssertionError('invalid pad {}'.format(pad))
+
     batch = list(zip(*batch))
 
     if len(batch) == 3:
@@ -80,7 +89,7 @@ def collate_fn(batch, pad_value=np.log(EPS)):
         1,
         images[0].size(1),
         max(image.size(2) for image in images))
-    images_tensor.fill_(pad_value)
+    images_tensor.fill_(pad)
 
     for i, image in enumerate(images):
         images_tensor[i, :, :, :image.size(2) + 1] = image
@@ -101,30 +110,6 @@ def get_nrow(images):
     return nrow
 
 
-def find_threshold_global(input, target):
-    thresholds = np.arange(0.1, 0.9, 0.01)
-    scores = [compute_score(input=input, target=target, threshold=t).mean()
-              for t in tqdm(thresholds, desc='threshold search')]
-    threshold = thresholds[np.argmax(scores)]
-    score = scores[np.argmax(scores)]
-
-    plt.plot(thresholds, scores)
-    plt.axvline(threshold)
-    plt.title('score: {:.4f}, threshold: {:.4f}'.format(score.item(), threshold))
-    plot = utils.plot_to_image()
-
-    return threshold, score, plot
-
-
-# NUM_CLASSES = len(classes)
-# ARCH = 'seresnext50'
-# LOSS_SMOOTHING = 0.9
-# LOSS = [
-#     # f2_loss,
-#     # F.binary_cross_entropy_with_logits,
-#     FocalLoss(),
-#     # hinge_loss,
-# ]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # TODO: pin memory
@@ -206,7 +191,7 @@ def find_lr(train_data):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)
+        collate_fn=partial(collate_fn, pad=args.pad))
 
     min_lr = 1e-8
     max_lr = 10.
@@ -342,7 +327,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
+        score = compute_score(input=predictions, target=targets)
 
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -355,7 +340,6 @@ def eval_epoch(model, data_loader, fold, epoch):
             'weights',
             torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
             global_step=epoch)
-        writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
 
         return score
 
@@ -370,14 +354,14 @@ def train_fold(fold, train_eval_data, minima):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=args.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -409,7 +393,7 @@ def train_fold(fold, train_eval_data, minima):
             torch.save(model.state_dict(), './model_{}.pth'.format(fold))
 
 
-def build_submission(folds, test_data, threshold):
+def build_submission(folds, test_data):
     with torch.no_grad():
         predictions = 0.
 
@@ -439,7 +423,7 @@ def predict_on_test_using_fold(fold, test_data):
         test_dataset,
         batch_size=args.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -471,7 +455,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         eval_dataset,
         batch_size=args.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -499,7 +483,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     return fold_targets, fold_predictions, fold_ids
 
 
-def find_threshold_for_folds(folds, train_eval_data):
+def evaluate_folds(folds, train_eval_data):
     with torch.no_grad():
         targets = []
         predictions = []
@@ -511,11 +495,9 @@ def find_threshold_for_folds(folds, train_eval_data):
         # TODO: check aggregated correctly
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
+        score = compute_score(input=predictions, target=targets)
 
-        print('threshold: {:.4f}, score: {:.4f}'.format(threshold, score))
-
-        return threshold
+        print('score: {:.4f}'.format(score))
 
 
 # TODO: check FOLDS usage
@@ -551,8 +533,9 @@ def main():
         train_fold(fold, train_eval_data, minima)
 
     # TODO: check and refine
-    threshold = find_threshold_for_folds(folds, train_eval_data)
-    build_submission(folds, test_data, threshold)
+    # TODO: remove?
+    evaluate_folds(folds, train_eval_data)
+    # build_submission(folds, test_data)  # FIXME:
 
 
 if __name__ == '__main__':
