@@ -16,9 +16,10 @@ from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
 from optim import AdamW
 import utils
-from augmentation import SquarePad
 from .model import Model
 from .dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
+from loss import FocalLoss
+from frees.transform import RandomCrop, CentralCrop
 
 # TODO: sgd
 # TODO: check del
@@ -40,13 +41,11 @@ parser.add_argument('--batch-size', type=int, default=256)
 parser.add_argument('--weight-decay', type=float, default=1e-4)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
+parser.add_argument('--model', type=str, choices=['avg', 'attn'], default='avg')
 # parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad', 'pad-hard'], default='med')
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
-
-utils.seed_everything(args.seed)
-
 
 # train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
 # train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
@@ -56,29 +55,9 @@ utils.seed_everything(args.seed)
 # class_to_id = {id_to_class[k]: k for k in id_to_class}
 
 
-def f2_loss(input, target, eps=1e-7):
-    input = input.sigmoid()
-
-    tp = (target * input).sum(1)
-    tn = ((1 - target) * (1 - input)).sum(1)
-    fp = ((1 - target) * input).sum(1)
-    fn = (target * (1 - input)).sum(1)
-
-    p = tp / (tp + fp + eps)
-    r = tp / (tp + fn + eps)
-
-    beta_sq = 2**2
-    f2 = (1 + beta_sq) * p * r / (beta_sq * p + r + eps)
-    loss = -(f2 + eps).log()
-
-    return loss
-
-
-def hinge_loss(input, target, delta=1.):
-    target = target * 1. + (1 - target) * -1.
-    loss = torch.max(torch.zeros_like(input).to(input.device), delta - target * input)
-
-    return loss
+LOSS = [
+    FocalLoss(),
+]
 
 
 def compute_loss(input, target):
@@ -106,6 +85,19 @@ def compute_score(input, target, threshold=0.5):
     return f2
 
 
+def get_nrow(images):
+    h = images.size(0) * images.size(2)
+    w = images.size(3)
+
+    a = h * w
+    k = np.sqrt(a / 2)
+
+    nrow = a / (2 * k) / w
+    nrow = nrow.round().astype(np.int32)
+
+    return nrow
+
+
 def find_threshold_global(input, target):
     thresholds = np.arange(0.1, 0.9, 0.01)
     scores = [compute_score(input=input, target=target, threshold=t).mean()
@@ -131,7 +123,6 @@ def find_threshold_global(input, target):
 #     # hinge_loss,
 # ]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
 
 # TODO: pin memory
 # TODO: stochastic weight averaging
@@ -163,21 +154,16 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: label smoothing
 # TODO: build sched for lr find
 
-class RandomCrop(object):
-    def __init__(self, size):
-        pass
-
-    def __call__(self, input):
-        print(input.shape)
-        fial
-
 
 train_transform = T.Compose([
-    RandomCrop(256)
-
+    RandomCrop(256),
+    T.ToTensor(),
 ])
-eval_transform = None
-test_transform = None
+eval_transform = T.Compose([
+    CentralCrop(256),
+    T.ToTensor(),
+])
+test_transform = eval_transform
 
 
 # TODO: should use top momentum to pick best lr?
@@ -215,7 +201,7 @@ def find_lr(train_data):
     losses = []
     lim = None
 
-    model = Model(NUM_CLASSES)
+    model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
@@ -223,7 +209,7 @@ def find_lr(train_data):
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits = model(images)
+        logits, _ = model(images)
 
         loss = compute_loss(input=logits, target=labels)
 
@@ -282,7 +268,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits = model(images)
+        logits, weights = model(images)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -303,7 +289,14 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         lr, beta = scheduler.get_lr()
         writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_scalar('beta', beta, global_step=epoch)
-        writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
+        writer.add_image(
+            'image',
+            torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
+            global_step=epoch)
+        writer.add_image(
+            'weights',
+            torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
+            global_step=epoch)
 
 
 def eval_epoch(model, data_loader, fold, epoch):
@@ -319,7 +312,7 @@ def eval_epoch(model, data_loader, fold, epoch):
     with torch.no_grad():
         for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits = model(images)
+            logits, weights = model(images)
 
             targets.append(labels)
             predictions.append(logits)
@@ -339,25 +332,32 @@ def eval_epoch(model, data_loader, fold, epoch):
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
-        writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
+        writer.add_image(
+            'image',
+            torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
+            global_step=epoch)
+        writer.add_image(
+            'weights',
+            torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
+            global_step=epoch)
         writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
 
         return score
 
 
-def train_fold(fold, minima):
-    train_indices, eval_indices = indices_for_fold(fold, len(train_data))
+def train_fold(train_eval_data, fold, minima):
+    train_indices, eval_indices = indices_for_fold(fold, len(train_eval_data))
 
-    train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
+    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True,
         num_workers=args.workers)  # TODO: all args
 
-    eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(NUM_CLASSES)
+    model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
     scheduler = OneCycleScheduler(
@@ -416,7 +416,7 @@ def predict_on_test_using_fold(fold):
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(NUM_CLASSES)
+    model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
 
@@ -426,7 +426,7 @@ def predict_on_test_using_fold(fold):
         fold_ids = []
         for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
             images = images.to(DEVICE)
-            logits = model(images)
+            logits, _ = model(images)
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -445,7 +445,7 @@ def predict_on_eval_using_fold(fold):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(NUM_CLASSES)
+    model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
 
@@ -456,7 +456,7 @@ def predict_on_eval_using_fold(fold):
         fold_ids = []
         for images, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits = model(images)
+            logits, _ = model(images)
 
             fold_targets.append(labels)
             fold_predictions.append(logits)
@@ -493,14 +493,20 @@ def find_threshold_for_folds(folds):
 # TODO: check FOLDS usage
 
 def main():
+    utils.seed_everything(args.seed)
+
     id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
     class_to_id = {c: i for i, c in enumerate(id_to_class)}
 
-    train_data = pd.read_csv(os.path.join(args.dataset_path, 'train_curated.csv'))
-    train_data['fname'] = train_data['fname'].apply(lambda x: os.path.join(args.dataset_path, 'train_curated', x))
-    train_data['labels'] = train_data['labels'].apply(lambda x: [class_to_id[c] for c in x.split(',')])
+    train_eval_data = pd.read_csv(os.path.join(args.dataset_path, 'train_curated.csv'))
+    train_eval_data['fname'] = train_eval_data['fname'].apply(
+        lambda x: os.path.join(args.dataset_path, 'train_curated', x))
+    train_eval_data['labels'] = train_eval_data['labels'].apply(lambda x: [class_to_id[c] for c in x.split(',')])
 
-    minima = find_lr(train_data)
+    # FIXME:
+    train_eval_data['fname'] = './frees/sample.wav'
+
+    minima = find_lr(train_eval_data)
     gc.collect()
 
     if args.fold is None:
@@ -509,7 +515,7 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(fold, minima)
+        train_fold(train_eval_data, fold, minima)
 
     # TODO: check and refine
     threshold = find_threshold_for_folds(folds)

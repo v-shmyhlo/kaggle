@@ -3,6 +3,7 @@ import os
 import numpy as np
 import librosa
 import soundfile
+from PIL import Image
 
 NUM_CLASSES = 80
 
@@ -53,15 +54,12 @@ def load_image(path):
     n_fft = round(0.025 * rate)  # TODO: refactor
     hop_length = round(0.01 * rate)  # TODO: refactor
 
-    # print(rate)
-    # print(n_fft, hop_length)
-    # print(n_fft * (1 / rate), hop_length * (1 / rate))
-
-    # x = librosa.feature.melspectrogram(sig, n_fft=n_fft, hop_length=hop_length)
     x = librosa.core.stft(sig, n_fft=n_fft, hop_length=hop_length)
-    x = np.abs(x) + 1e-7  # TODO: add eps?
-    x = np.log(x)
+    x = np.abs(x)
     x = np.dot(librosa.filters.mel(rate, n_fft), x)
+    x = np.log(x + 1e-7)  # TODO: add eps?
+
     # x = (x - x.mean(1, keepdims=True)) / x.std(1, keepdims=True)
+    x = Image.fromarray(x)
 
     return x
