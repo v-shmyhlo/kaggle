@@ -2,4 +2,5 @@
 
 rsync -avhHPx ./*.py vshmyhlo@192.168.0.105:code/kaggle/
 rsync -avhHPx ./imet/ vshmyhlo@192.168.0.105:code/kaggle/imet/
+rsync -avhHPx ./frees/ vshmyhlo@192.168.0.105:code/kaggle/frees/
 rsync -avhHPx vshmyhlo@192.168.0.105:code/kaggle/submission.csv ./submission.csv

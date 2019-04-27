@@ -18,6 +18,7 @@ from optim import AdamW
 import utils
 from augmentation import SquarePad
 from .model import Model
+from .dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 
 # TODO: sgd
 # TODO: check del
@@ -28,7 +29,7 @@ from .model import Model
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--experiment-path', type=str, default='./tf_log/imet')
+parser.add_argument('--experiment-path', type=str, default='./tf_log/frees')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--seed', type=int, default=42)
@@ -39,45 +40,20 @@ parser.add_argument('--batch-size', type=int, default=256)
 parser.add_argument('--weight-decay', type=float, default=1e-4)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
-parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad', 'pad-hard'], default='med')
+# parser.add_argument('--aug', type=str, choices=['low', 'med', 'med+color', 'hard', 'pad', 'pad-hard'], default='med')
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
 utils.seed_everything(args.seed)
 
-train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
-train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
 
-classes = pd.read_csv(os.path.join(args.dataset_path, 'labels.csv'))
-id_to_class = {row['attribute_id']: row['attribute_name'] for _, row in classes.iterrows()}
-class_to_id = {id_to_class[k]: k for k in id_to_class}
-
-
-def load_image(path):
-    if args.debug:
-        path = './imet/dog.jpg'
-
-    image = Image.open(path)
-
-    return image
-
-
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2):
-        super().__init__()
-        self.gamma = gamma
-
-    def forward(self, input, target):
-        target = target.float()
-        max_val = (-input).clamp(min=0)
-        loss = input - input * target + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
-
-        invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
-        loss = (invprobs * self.gamma).exp() * loss
-        if len(loss.size()) == 2:
-            loss = loss.sum(dim=1)
-        return loss.mean()
+# train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
+# train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
+#
+# classes = pd.read_csv(os.path.join(args.dataset_path, 'labels.csv'))
+# id_to_class = {row['attribute_id']: row['attribute_name'] for _, row in classes.iterrows()}
+# class_to_id = {id_to_class[k]: k for k in id_to_class}
 
 
 def f2_loss(input, target, eps=1e-7):
@@ -145,16 +121,17 @@ def find_threshold_global(input, target):
     return threshold, score, plot
 
 
-NUM_CLASSES = len(classes)
-ARCH = 'seresnext50'
-LOSS_SMOOTHING = 0.9
-LOSS = [
-    # f2_loss,
-    # F.binary_cross_entropy_with_logits,
-    FocalLoss(),
-    # hinge_loss,
-]
+# NUM_CLASSES = len(classes)
+# ARCH = 'seresnext50'
+# LOSS_SMOOTHING = 0.9
+# LOSS = [
+#     # f2_loss,
+#     # F.binary_cross_entropy_with_logits,
+#     FocalLoss(),
+#     # hinge_loss,
+# ]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 
 # TODO: pin memory
 # TODO: stochastic weight averaging
@@ -186,113 +163,21 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: label smoothing
 # TODO: build sched for lr find
 
+class RandomCrop(object):
+    def __init__(self, size):
+        pass
 
-to_tensor_and_norm = T.Compose([
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    def __call__(self, input):
+        print(input.shape)
+        fial
+
+
+train_transform = T.Compose([
+    RandomCrop(256)
+
 ])
-
-if args.aug == 'low':
-    train_transform = T.Compose([
-        T.Resize((args.image_size, args.image_size)),
-        T.RandomHorizontalFlip(),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        T.Resize((args.image_size, args.image_size)),
-        to_tensor_and_norm,
-    ])
-elif args.aug == 'med':
-    train_transform = T.Compose([
-        T.RandomResizedCrop((args.image_size, args.image_size), scale=(1., 1.), ratio=(3. / 4., 4. / 3.)),
-        T.RandomHorizontalFlip(),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        T.Resize(args.image_size),
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-elif args.aug == 'med+color':
-    train_transform = T.Compose([
-        T.RandomResizedCrop((args.image_size, args.image_size), scale=(1., 1.), ratio=(3. / 4., 4. / 3.)),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        T.Resize(args.image_size),
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-elif args.aug == 'hard':
-    scale = (0.6, 1.0)
-    # image_size_corrected = round(args.image_size * (1 / np.mean(scale).item()))
-    image_size_corrected = args.image_size
-
-    train_transform = T.Compose([
-        T.RandomResizedCrop((args.image_size, args.image_size), scale=scale, ratio=(3. / 4., 4. / 3.)),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    # TODO: correct eval size?
-    eval_transform = T.Compose([
-        T.Resize(image_size_corrected),
-        T.CenterCrop(image_size_corrected),
-        to_tensor_and_norm,
-    ])
-elif args.aug == 'pad':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
-
-    train_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    # test_transform = T.Compose([
-    #     SquarePad(padding_mode='edge'),
-    #     T.Resize(image_size_corrected),
-    #     T.TenCrop(args.image_size),
-    #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-    # ])
-    test_transform = eval_transform
-elif args.aug == 'pad-hard':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
-
-    train_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.RandomAffine(15, scale=(0.8, 1.2), resample=Image.BILINEAR),
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    # test_transform = T.Compose([
-    #     SquarePad(padding_mode='edge'),
-    #     T.Resize(image_size_corrected),
-    #     T.TenCrop(args.image_size),
-    #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-    # ])
-    test_transform = eval_transform
-else:
-    raise AssertionError('invalid AUG {}'.format(args.aug))
+eval_transform = None
+test_transform = None
 
 
 # TODO: should use top momentum to pick best lr?
@@ -316,79 +201,7 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
-# def find_lr():
-#     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
-#     # TODO: all args
-#     data_loader = torch.utils.data.DataLoader(
-#         train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
-#
-#     min_lr = 1e-8
-#     max_lr = 10.
-#     gamma = (max_lr / min_lr)**(1 / len(data_loader))
-#
-#     lrs = []
-#     losses = []
-#     sls = []
-#     ewa = utils.EWA(beta=LOSS_SMOOTHING)
-#
-#     minima = {
-#         'loss': np.inf,
-#         'lr': min_lr
-#     }
-#
-#     model = Model(ARCH, NUM_CLASSES)
-#     model = model.to(DEVICE)
-#     optimizer = build_optimizer(args.opt,model.parameters(), min_lr,args.beta[-1], weight_decay=args.weight_decay)
-#     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
-#
-#     model.train()
-#     for images, labels, ids in tqdm(data_loader, desc='lr search'):
-#         images, labels = images.to(DEVICE), labels.to(DEVICE)
-#         logits = model(images)
-#
-#         loss = compute_loss(input=logits, target=labels)
-#         ewa.update(loss.data.cpu().numpy().mean())
-#
-#         cur_lr = np.squeeze(scheduler.get_lr())
-#         lrs.append(cur_lr)
-#         losses.append(loss.data.cpu().numpy().mean())
-#         sls.append(ewa.compute())
-#         if ewa.compute() < minima['loss']:
-#             minima['loss'] = ewa.compute()
-#             minima['lr'] = cur_lr
-#         if minima['loss'] * 4 < ewa.compute():
-#             break
-#
-#         scheduler.step()
-#         optimizer.zero_grad()
-#         loss.mean().backward()
-#         optimizer.step()
-#
-#         if args.debug:
-#             break
-#
-#     with torch.no_grad():
-#         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
-#
-#         step = 0
-#         for loss, loss_sm in zip(losses, utils.smooth(losses)):
-#             writer.add_scalar('search_loss', loss, global_step=step)
-#             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
-#             step += args.batch_size
-#
-#         np.save('stats.npy', (lrs, losses))
-#
-#         plt.plot(lrs, losses)
-#         plt.plot(lrs, utils.smooth(losses))
-#         plt.axvline(minima['lr'])
-#         plt.xscale('log')
-#         plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
-#         plot = utils.plot_to_image()
-#         writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
-#
-#         return minima
-
-def find_lr():
+def find_lr(train_data):
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     # TODO: all args
     data_loader = torch.utils.data.DataLoader(
@@ -402,7 +215,7 @@ def find_lr():
     losses = []
     lim = None
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
@@ -544,7 +357,7 @@ def train_fold(fold, minima):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
     scheduler = OneCycleScheduler(
@@ -603,7 +416,7 @@ def predict_on_test_using_fold(fold):
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
 
@@ -632,7 +445,7 @@ def predict_on_eval_using_fold(fold):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=args.batch_size, num_workers=args.workers)  # TODO: all args
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
 
@@ -680,7 +493,14 @@ def find_threshold_for_folds(folds):
 # TODO: check FOLDS usage
 
 def main():
-    minima = find_lr()
+    id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
+    class_to_id = {c: i for i, c in enumerate(id_to_class)}
+
+    train_data = pd.read_csv(os.path.join(args.dataset_path, 'train_curated.csv'))
+    train_data['fname'] = train_data['fname'].apply(lambda x: os.path.join(args.dataset_path, 'train_curated', x))
+    train_data['labels'] = train_data['labels'].apply(lambda x: [class_to_id[c] for c in x.split(',')])
+
+    minima = find_lr(train_data)
     gc.collect()
 
     if args.fold is None:
