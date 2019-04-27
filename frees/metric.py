@@ -1,51 +1,44 @@
 import numpy as np
 
 
-class Score(object):
-    """Accumulate batches of test samples into per-class and overall lwlrap."""
+def calculate_per_class_lwlrap(truth, scores):
+    """Calculate label-weighted label-ranking average precision.
 
-    def __init__(self):
-        self.num_classes = 0
-        self.total_num_samples = 0
+    Arguments:
+      truth: np.array of (num_samples, num_classes) giving boolean ground-truth
+        of presence of that class in that sample.
+      scores: np.array of (num_samples, num_classes) giving the classifier-under-
+        test's real-valued score for each class for each sample.
 
-    def update(self, batch_truth, batch_scores):
-        """Cumulate a new batch of samples into the metric.
-
-        Args:
-          truth: np.array of (num_samples, num_classes) giving boolean
-            ground-truth of presence of that class in that sample for this batch.
-          scores: np.array of (num_samples, num_classes) giving the
-            classifier-under-test's real-valued score for each class for each
-            sample.
-        """
-        assert batch_scores.shape == batch_truth.shape
-        num_samples, num_classes = batch_truth.shape
-        if not self.num_classes:
-            self.num_classes = num_classes
-            self._per_class_cumulative_precision = np.zeros(self.num_classes)
-            self._per_class_cumulative_count = np.zeros(self.num_classes, dtype=np.int)
-        assert num_classes == self.num_classes
-        for truth, scores in zip(batch_truth, batch_scores):
-            pos_class_indices, precision_at_hits = (
-                _one_sample_positive_class_precisions(scores, truth))
-            self._per_class_cumulative_precision[pos_class_indices] += (
-                precision_at_hits)
-            self._per_class_cumulative_count[pos_class_indices] += 1
-        self.total_num_samples += num_samples
-
-    def per_class_lwlrap(self):
-        """Return a vector of the per-class lwlraps for the accumulated samples."""
-        return (self._per_class_cumulative_precision /
-                np.maximum(1, self._per_class_cumulative_count))
-
-    def per_class_weight(self):
-        """Return a normalized weight vector for the contributions of each class."""
-        return (self._per_class_cumulative_count /
-                float(np.sum(self._per_class_cumulative_count)))
-
-    def compute(self):
-        """Return the scalar overall lwlrap for cumulated samples."""
-        return np.sum(self.per_class_lwlrap() * self.per_class_weight())
+    Returns:
+      per_class_lwlrap: np.array of (num_classes,) giving the lwlrap for each
+        class.
+      weight_per_class: np.array of (num_classes,) giving the prior of each
+        class within the truth labels.  Then the overall unbalanced lwlrap is
+        simply np.sum(per_class_lwlrap * weight_per_class)
+    """
+    assert truth.shape == scores.shape
+    num_samples, num_classes = scores.shape
+    # Space to store a distinct precision value for each class on each sample.
+    # Only the classes that are true for each sample will be filled in.
+    precisions_for_samples_by_classes = np.zeros((num_samples, num_classes))
+    for sample_num in range(num_samples):
+        pos_class_indices, precision_at_hits = (
+            _one_sample_positive_class_precisions(scores[sample_num, :],
+                                                  truth[sample_num, :]))
+        precisions_for_samples_by_classes[sample_num, pos_class_indices] = (
+            precision_at_hits)
+    labels_per_class = np.sum(truth > 0, axis=0)
+    weight_per_class = labels_per_class / float(np.sum(labels_per_class))
+    # Form average of each column, i.e. all the precisions assigned to labels in
+    # a particular class.
+    per_class_lwlrap = (np.sum(precisions_for_samples_by_classes, axis=0) /
+                        np.maximum(1, labels_per_class))
+    # overall_lwlrap = simple average of all the actual per-class, per-sample precisions
+    #                = np.sum(precisions_for_samples_by_classes) / np.sum(precisions_for_samples_by_classes > 0)
+    #           also = weighted mean of per-class lwlraps, weighted by class label prior across samples
+    #                = np.sum(per_class_lwlrap * weight_per_class)
+    return per_class_lwlrap, weight_per_class
 
 
 def _one_sample_positive_class_precisions(scores, truth):

@@ -5,11 +5,8 @@ import pandas as pd
 import os
 from tqdm import tqdm
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as T
-from PIL import Image
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
@@ -17,9 +14,10 @@ from lr_scheduler import OneCycleScheduler
 from optim import AdamW
 import utils
 from .model import Model
-from .dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
+from .dataset import NUM_CLASSES, EPS, TrainEvalDataset, TestDataset
 from loss import FocalLoss
 from frees.transform import RandomCrop, CentralCrop
+from frees.metric import calculate_per_class_lwlrap
 
 # TODO: sgd
 # TODO: check del
@@ -47,14 +45,6 @@ parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
-# train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
-# train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
-#
-# classes = pd.read_csv(os.path.join(args.dataset_path, 'labels.csv'))
-# id_to_class = {row['attribute_id']: row['attribute_name'] for _, row in classes.iterrows()}
-# class_to_id = {id_to_class[k]: k for k in id_to_class}
-
-
 LOSS = [
     FocalLoss(),
 ]
@@ -67,25 +57,14 @@ def compute_loss(input, target):
     return loss
 
 
-def compute_score(input, target, threshold=0.5):
-    input = (input.sigmoid() > threshold).float()
+def compute_score(input, target, threshold=None):
+    per_class_lwlrap, weight_per_class = calculate_per_class_lwlrap(
+        truth=target.data.cpu().numpy(), scores=input.data.cpu().numpy())
 
-    tp = (target * input).sum(-1)
-    tn = ((1 - target) * (1 - input)).sum(-1)
-    fp = ((1 - target) * input).sum(-1)
-    fn = (target * (1 - input)).sum(-1)
-
-    p = tp / (tp + fp)
-    r = tp / (tp + fn)
-
-    beta_sq = 2**2
-    f2 = (1 + beta_sq) * p * r / (beta_sq * p + r)
-    f2[f2 != f2] = 0.
-
-    return f2
+    return np.sum(per_class_lwlrap * weight_per_class)
 
 
-def collate_fn(batch):
+def collate_fn(batch, pad_value=np.log(EPS)):
     batch = list(zip(*batch))
 
     if len(batch) == 3:
@@ -101,6 +80,7 @@ def collate_fn(batch):
         1,
         images[0].size(1),
         max(image.size(2) for image in images))
+    images_tensor.fill_(pad_value)
 
     for i, image in enumerate(images):
         images_tensor[i, :, :, :image.size(2) + 1] = image
@@ -380,7 +360,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         return score
 
 
-def train_fold(train_eval_data, fold, minima):
+def train_fold(fold, train_eval_data, minima):
     train_indices, eval_indices = indices_for_fold(fold, len(train_eval_data))
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
@@ -429,12 +409,12 @@ def train_fold(train_eval_data, fold, minima):
             torch.save(model.state_dict(), './model_{}.pth'.format(fold))
 
 
-def build_submission(folds, threshold):
+def build_submission(folds, test_data, threshold):
     with torch.no_grad():
         predictions = 0.
 
         for fold in folds:
-            fold_predictions, fold_ids = predict_on_test_using_fold(fold)
+            fold_predictions, fold_ids = predict_on_test_using_fold(fold, test_data)
             predictions = predictions + fold_predictions.sigmoid()
             ids = fold_ids
 
@@ -453,8 +433,8 @@ def build_submission(folds, threshold):
         submission.to_csv('./submission.csv', index=False)
 
 
-def predict_on_test_using_fold(fold):
-    test_dataset = TestDataset(transform=eval_transform)
+def predict_on_test_using_fold(fold, test_data):
+    test_dataset = TestDataset(test_data, transform=eval_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
         batch_size=args.batch_size,
@@ -483,10 +463,10 @@ def predict_on_test_using_fold(fold):
     return fold_predictions, fold_ids
 
 
-def predict_on_eval_using_fold(fold):
-    _, eval_indices = indices_for_fold(fold, len(train_data))
+def predict_on_eval_using_fold(fold, train_eval_data):
+    _, eval_indices = indices_for_fold(fold, len(train_eval_data))
 
-    eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=args.batch_size,
@@ -519,12 +499,12 @@ def predict_on_eval_using_fold(fold):
     return fold_targets, fold_predictions, fold_ids
 
 
-def find_threshold_for_folds(folds):
+def find_threshold_for_folds(folds, train_eval_data):
     with torch.no_grad():
         targets = []
         predictions = []
         for fold in folds:
-            fold_targets, fold_predictions, fold_ids = predict_on_eval_using_fold(fold)
+            fold_targets, fold_predictions, fold_ids = predict_on_eval_using_fold(fold, train_eval_data)
             targets.append(fold_targets)
             predictions.append(fold_predictions)
 
@@ -551,8 +531,13 @@ def main():
         lambda x: os.path.join(args.dataset_path, 'train_curated', x))
     train_eval_data['labels'] = train_eval_data['labels'].apply(lambda x: [class_to_id[c] for c in x.split(',')])
 
+    test_data = pd.DataFrame({'fname': os.listdir(os.path.join(args.dataset_path, 'test'))})
+    test_data['fname'] = test_data['fname'].apply(
+        lambda x: os.path.join(args.dataset_path, 'train_curated', x))
+
     # FIXME:
     train_eval_data['fname'] = './frees/sample.wav'
+    test_data['fname'] = './frees/sample.wav'
 
     minima = find_lr(train_eval_data)
     gc.collect()
@@ -563,11 +548,11 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(train_eval_data, fold, minima)
+        train_fold(fold, train_eval_data, minima)
 
     # TODO: check and refine
-    threshold = find_threshold_for_folds(folds)
-    build_submission(folds, threshold)
+    threshold = find_threshold_for_folds(folds, train_eval_data)
+    build_submission(folds, test_data, threshold)
 
 
 if __name__ == '__main__':
