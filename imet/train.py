@@ -46,7 +46,8 @@ parser.add_argument('--label-smooth', type=float)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--aug', type=str, choices=['resize', 'crop', 'pad'], default='pad')
-parser.add_argument('--crop-ratio', type=float, default=224 / 256)
+parser.add_argument('--aug-aspect', action='store_true')
+parser.add_argument('--crop-scale', type=float, default=224 / 256)
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'momentum'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -191,7 +192,6 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: larger model
 # TODO: imagenet papers
 # TODO: load image as jpeg
-# TODO: augmentations (flip, crops, color)
 # TODO: min 1 tag?
 # TODO: pick threshold to match ratio
 # TODO: compute smoothing beta from batch size and num steps
@@ -204,10 +204,51 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: build sched for lr find
 
 
+image_size_corrected = round(args.image_size * (1 / args.crop_scale))
+
+if args.aug == 'resize':
+    resize = T.Resize((image_size_corrected, image_size_corrected))
+
+    train_transform = resize
+    eval_transform = resize
+elif args.aug == 'crop':
+    resize = T.Resize(image_size_corrected)
+
+    train_transform = resize
+    eval_transform = resize
+elif args.aug == 'pad':
+    pad_and_resize = T.Compose([
+        SquarePad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+    ])
+
+    train_transform = pad_and_resize
+    eval_transform = pad_and_resize
+else:
+    raise AssertionError('invalid aug {}'.format(args.aug))
+
+if args.aug_aspect:
+    random_crop = T.RandomResizedCrop(args.image_size, scale=args.crop_ratio, ratio=(3. / 4., 4. / 3.))
+else:
+    random_crop = T.RandomCrop(args.image_size)
 to_tensor_and_norm = T.Compose([
     T.ToTensor(),
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
+train_transform = T.Compose([
+    train_transform,
+    random_crop,
+    T.RandomHorizontalFlip(),
+    T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    to_tensor_and_norm,
+])
+eval_transform = T.Compose([
+    eval_transform,
+    T.CenterCrop(args.image_size),
+    to_tensor_and_norm,
+])
+test_transform = eval_transform
+
 
 # test_transform = T.Compose([
 #     SquarePad(padding_mode='edge'),
@@ -215,88 +256,12 @@ to_tensor_and_norm = T.Compose([
 #     T.TenCrop(args.image_size),
 #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
 # ])
-
-if args.aug == 'resize':
-    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
-    resize = T.Resize((image_size_corrected, image_size_corrected))
-
-    train_transform = T.Compose([
-        resize,
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        resize,
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    test_transform = eval_transform
-elif args.aug == 'crop':
-    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
-    resize = T.Resize(image_size_corrected)
-
-    train_transform = T.Compose([
-        resize,
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        resize,
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    test_transform = eval_transform
-elif args.aug == 'pad':
-    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
-    pad_and_resize = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-    ])
-
-    train_transform = T.Compose([
-        pad_and_resize,
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        pad_and_resize,
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    test_transform = eval_transform
-elif args.aug == 'pad-hard':
-    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
-
-    train_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.RandomAffine(15, scale=(args.crop_ratio, 2. - args.crop_ratio), resample=Image.BILINEAR),
-        T.RandomCrop(args.image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        to_tensor_and_norm,
-    ])
-    eval_transform = T.Compose([
-        SquarePad(padding_mode='edge'),
-        T.Resize(image_size_corrected),
-        T.CenterCrop(args.image_size),
-        to_tensor_and_norm,
-    ])
-    # test_transform = T.Compose([
-    #     SquarePad(padding_mode='edge'),
-    #     T.Resize(image_size_corrected),
-    #     T.TenCrop(args.image_size),
-    #     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-    # ])
-    test_transform = eval_transform
-else:
-    raise AssertionError('invalid aug {}'.format(args.aug))
+# test_transform = T.Compose([
+#     SquarePad(padding_mode='edge'),
+#     T.Resize(image_size_corrected),
+#     T.TenCrop(args.image_size),
+#     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
+# ])
 
 
 # TODO: should use top momentum to pick best lr?
