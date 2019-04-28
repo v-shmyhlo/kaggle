@@ -16,7 +16,7 @@ from optim import AdamW
 import utils
 from .model import Model
 from .dataset import NUM_CLASSES, EPS, TrainEvalDataset, TestDataset
-from loss import FocalLoss
+from loss import FocalLoss, lsep_loss
 from frees.transform import RandomCrop, CentralCrop
 from frees.metric import calculate_per_class_lwlrap
 
@@ -48,7 +48,8 @@ parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
 LOSS = [
-    FocalLoss(),
+    # FocalLoss(),
+    lsep_loss
 ]
 
 
@@ -403,18 +404,8 @@ def build_submission(folds, test_data):
             ids = fold_ids
 
         predictions = predictions / len(folds)
-        submission = []
-        assert len(ids) == len(predictions)
-        for id, prediction in zip(ids, predictions):
-            pred = (prediction > threshold).nonzero().reshape(-1)
-            pred = pred.data.cpu().numpy()
-            pred = map(str, pred)
-            pred = ' '.join(pred)
 
-            submission.append((id, pred))
-
-        submission = pd.DataFrame(submission, columns=['id', 'attribute_ids'])
-        submission.to_csv('./submission.csv', index=False)
+        return predictions, ids
 
 
 def predict_on_test_using_fold(fold, test_data):
@@ -535,7 +526,13 @@ def main():
     # TODO: check and refine
     # TODO: remove?
     evaluate_folds(folds, train_eval_data)
-    # build_submission(folds, test_data)  # FIXME:
+    predictions, ids = build_submission(folds, test_data)
+    submission = {
+        'fname': ids,
+        **{id_to_class[i]: predictions[:, i] for i in range(NUM_CLASSES)}
+    }
+    submission = pd.DataFrame(submission)
+    submission.to_csv('./submission.csv', index=False)
 
 
 if __name__ == '__main__':

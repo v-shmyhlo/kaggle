@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2):
+    def __init__(self, gamma=2.):
         super().__init__()
         self.gamma = gamma
 
@@ -41,5 +41,37 @@ def f2_loss(input, target, eps=1e-7):
 def hinge_loss(input, target, delta=1.):
     target = target * 1. + (1 - target) * -1.
     loss = torch.max(torch.zeros_like(input).to(input.device), delta - target * input)
+
+    return loss
+
+
+# def lsep_loss(input, target):
+#     positive_indices = (target > 0.5).float()
+#     negative_indices = (target <= 0.5).float()
+#
+#     loss = 0.
+#     for i in range(input.size()[0]):
+#         pos = positive_indices[i].nonzero()
+#         neg = negative_indices[i].nonzero()
+#         pos_examples = input[i, pos]
+#         neg_examples = torch.transpose(input[i, neg], 0, 1)
+#         loss += torch.sum(torch.exp(neg_examples - pos_examples))
+#
+#     loss = torch.log(1 + loss)
+#
+#     return loss
+
+def lsep_loss(input, target):
+    pos_examples = input.unsqueeze(-1)
+    neg_examples = input.unsqueeze(1)
+    loss = torch.exp(neg_examples - pos_examples)
+
+    positive_mask = (target > 0.5).unsqueeze(-1)
+    negative_mask = (target <= 0.5).unsqueeze(1)
+    mask = negative_mask & positive_mask
+
+    loss = loss * mask.float()
+    loss = loss.sum()
+    loss = torch.log(1 + loss)
 
     return loss

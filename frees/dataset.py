@@ -1,3 +1,4 @@
+import os
 import torch.utils.data
 import numpy as np
 import librosa
@@ -26,7 +27,9 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         label = np.zeros(NUM_CLASSES, dtype=np.float32)
         label[row['labels']] = 1.
 
-        return image, label, row['fname']
+        id = os.path.split(row['fname'])[-1]
+
+        return image, label, id
 
 
 class TestDataset(torch.utils.data.Dataset):
@@ -44,7 +47,9 @@ class TestDataset(torch.utils.data.Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return image, row['fname']
+        id = os.path.split(row['fname'])[-1]
+
+        return image, id
 
 
 def load_image(path):
