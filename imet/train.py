@@ -38,7 +38,7 @@ parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--seed', type=int, default=42)
 parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--fold', type=int, choices=FOLDS)
-parser.add_argument('--image-size', type=int, default=128)
+parser.add_argument('--image-size', type=int, default=224)
 parser.add_argument('--batch-size', type=int, default=256)
 parser.add_argument('--focal-gamma', type=float, default=2.)
 parser.add_argument('--weight-decay', type=float, default=1e-4)
@@ -46,6 +46,7 @@ parser.add_argument('--label-smooth', type=float)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
 parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
 parser.add_argument('--aug', type=str, choices=['resize', 'crop', 'pad'], default='pad')
+parser.add_argument('--crop-ratio', type=float, default=224 / 256)
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'momentum'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
@@ -216,7 +217,7 @@ to_tensor_and_norm = T.Compose([
 # ])
 
 if args.aug == 'resize':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
+    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
     resize = T.Resize((image_size_corrected, image_size_corrected))
 
     train_transform = T.Compose([
@@ -233,7 +234,7 @@ if args.aug == 'resize':
     ])
     test_transform = eval_transform
 elif args.aug == 'crop':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
+    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
     resize = T.Resize(image_size_corrected)
 
     train_transform = T.Compose([
@@ -250,7 +251,7 @@ elif args.aug == 'crop':
     ])
     test_transform = eval_transform
 elif args.aug == 'pad':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
+    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
     pad_and_resize = T.Compose([
         SquarePad(padding_mode='edge'),
         T.Resize(image_size_corrected),
@@ -270,12 +271,12 @@ elif args.aug == 'pad':
     ])
     test_transform = eval_transform
 elif args.aug == 'pad-hard':
-    image_size_corrected = round(args.image_size * (1 / 0.8))
+    image_size_corrected = round(args.image_size * (1 / args.crop_ratio))
 
     train_transform = T.Compose([
         SquarePad(padding_mode='edge'),
         T.Resize(image_size_corrected),
-        T.RandomAffine(15, scale=(0.8, 1.2), resample=Image.BILINEAR),
+        T.RandomAffine(15, scale=(args.crop_ratio, 2. - args.crop_ratio), resample=Image.BILINEAR),
         T.RandomCrop(args.image_size),
         T.RandomHorizontalFlip(),
         T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
