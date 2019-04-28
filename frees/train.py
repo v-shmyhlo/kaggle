@@ -391,7 +391,7 @@ def train_fold(fold, train_eval_data, minima):
 
         if score > best_score:
             best_score = score
-            torch.save(model.state_dict(), './model_{}.pth'.format(fold))
+            torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
 def build_submission(folds, test_data):
@@ -418,7 +418,7 @@ def predict_on_test_using_fold(fold, test_data):
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
     model.eval()
     with torch.no_grad():
@@ -450,7 +450,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
     model = Model(args.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
     model.eval()
     with torch.no_grad():
@@ -494,6 +494,7 @@ def evaluate_folds(folds, train_eval_data):
 # TODO: check FOLDS usage
 
 def main():
+    # TODO: refactor seed
     utils.seed_everything(args.seed)
 
     id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
@@ -532,7 +533,7 @@ def main():
         **{id_to_class[i]: predictions[:, i] for i in range(NUM_CLASSES)}
     }
     submission = pd.DataFrame(submission)
-    submission.to_csv('./submission.csv', index=False)
+    submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
 
 
 if __name__ == '__main__':

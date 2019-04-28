@@ -16,8 +16,10 @@ plt.show()
 n_fft = round(0.025 * rate)  # TODO: refactor
 hop_length = round(0.01 * rate)  # TODO: refactor
 
-# print(n_fft, hop_length)
-# print(n_fft * (1 / rate), hop_length * (1 / rate))
+print('n_fft', n_fft)
+print('hop_length', hop_length)
+print('n_fft secs', n_fft * (1 / rate))
+print('hop_length secs', hop_length * (1 / rate))
 
 # method 1
 x = librosa.core.stft(sig, n_fft=n_fft, hop_length=hop_length)

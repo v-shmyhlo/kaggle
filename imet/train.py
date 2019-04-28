@@ -26,6 +26,9 @@ from loss import FocalLoss
 # TODO: better minimum for lr
 
 
+# TODO: save all data in folder
+# TODO: full debug run
+
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
@@ -46,9 +49,6 @@ parser.add_argument('--aug', type=str, choices=['resize', 'crop', 'pad'], defaul
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'momentum'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
-
-# TODO: move to main
-utils.seed_everything(args.seed)
 
 train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
 train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
@@ -101,7 +101,7 @@ class TestDataset(torch.utils.data.Dataset):
 
 def load_image(path):
     if args.debug:
-        path = './imet/dog.jpg'
+        path = './imet/sample.jpg'
 
     image = Image.open(path)
 
@@ -515,7 +515,7 @@ def train_fold(fold, minima):
 
         if score > best_score:
             best_score = score
-            torch.save(model.state_dict(), './model_{}.pth'.format(fold))
+            torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
 def build_submission(folds, threshold):
@@ -539,7 +539,7 @@ def build_submission(folds, threshold):
             submission.append((id, pred))
 
         submission = pd.DataFrame(submission, columns=['id', 'attribute_ids'])
-        submission.to_csv('./submission.csv', index=False)
+        submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
 
 
 def predict_on_test_using_fold(fold):
@@ -549,7 +549,7 @@ def predict_on_test_using_fold(fold):
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
     model.eval()
     with torch.no_grad():
@@ -578,7 +578,7 @@ def predict_on_eval_using_fold(fold):
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    model.load_state_dict(torch.load('./model_{}.pth'.format(fold)))
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
     model.eval()
     with torch.no_grad():
@@ -624,6 +624,9 @@ def find_threshold_for_folds(folds):
 # TODO: check FOLDS usage
 
 def main():
+    # TODO: refactor seed
+    utils.seed_everything(args.seed)
+
     minima = find_lr()
     gc.collect()
 
