@@ -124,7 +124,7 @@ def compute_score(input, target, threshold=0.5):
     input = (input.sigmoid() > threshold).float()
 
     tp = (target * input).sum(-1)
-    tn = ((1 - target) * (1 - input)).sum(-1)
+    # tn = ((1 - target) * (1 - input)).sum(-1)
     fp = ((1 - target) * input).sum(-1)
     fn = (target * (1 - input)).sum(-1)
 
@@ -165,7 +165,6 @@ def find_threshold_global(input, target):
 
 NUM_CLASSES = len(classes)
 ARCH = 'seresnext50'
-LOSS_SMOOTHING = 0.9
 LOSS = [
     # f2_loss,
     # F.binary_cross_entropy_with_logits,
@@ -228,10 +227,11 @@ else:
     raise AssertionError('invalid aug {}'.format(args.aug))
 
 if args.aug_aspect:
-    random_crop = T.RandomResizedCrop(args.image_size, scale=args.crop_ratio, ratio=(3. / 4., 4. / 3.))
+    random_crop = T.RandomResizedCrop(
+        args.image_size, scale=(args.crop_scale, args.crop_scale), ratio=(3. / 4., 4. / 3.))
 else:
     random_crop = T.RandomCrop(args.image_size)
-   
+
 to_tensor_and_norm = T.Compose([
     T.ToTensor(),
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
