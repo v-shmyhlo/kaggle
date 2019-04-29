@@ -1,0 +1,18 @@
+seed: 42
+epochs: 10
+batch_size: 4 # FIXME:
+model: avg
+pad: silence
+
+aug:
+  type: pad
+
+opt:
+  type: adam
+  beta: 0.9
+  weight_decay: 1e-4
+
+sched:
+  onecycle:
+    anneal: linear
+    beta: [0.95, 0.85]

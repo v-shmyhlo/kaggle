@@ -75,3 +75,9 @@ def plot_to_image():
         image = np.array(image)
 
         return image
+
+
+def mkdir(path):
+    os.makedirs(path, exist_ok=True)
+
+    return path

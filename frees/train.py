@@ -1,5 +1,7 @@
 from functools import partial
+import shutil
 import numpy as np
+from config import Config
 import gc
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -20,6 +22,7 @@ from loss import FocalLoss, lsep_loss
 from frees.transform import RandomCrop, CentralCrop
 from frees.metric import calculate_per_class_lwlrap
 
+# TODO: try max pool
 # TODO: sgd
 # TODO: check del
 # TODO: try largest lr before diverging
@@ -29,23 +32,15 @@ from frees.metric import calculate_per_class_lwlrap
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/frees')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
-parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--fold', type=int, choices=FOLDS)
-parser.add_argument('--image-size', type=int, default=128)
-parser.add_argument('--batch-size', type=int, default=256)
-parser.add_argument('--weight-decay', type=float, default=1e-4)
-parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
-parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
-parser.add_argument('--model', type=str, choices=['avg', 'attn'], default='avg')
-parser.add_argument('--aug', type=str, choices=['pad', 'crop'], default='pad')
-parser.add_argument('--pad', type=str, choices=['silence', 'zeros'], default='silence')
-parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
+config = Config.from_yaml(args.config_path)
+shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 LOSS = [
     # FocalLoss(),
@@ -144,11 +139,11 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: build sched for lr find
 
 
-if args.aug == 'pad':
+if config.aug.type == 'pad':
     train_transform = T.ToTensor()
     eval_transform = T.ToTensor()
     test_transform = eval_transform
-elif args.aug == 'crop':
+elif config.aug.type == 'crop':
     train_transform = T.Compose([
         RandomCrop(256),
         T.ToTensor(),
@@ -159,7 +154,7 @@ elif args.aug == 'crop':
     ])
     test_transform = eval_transform
 else:
-    raise AssertionError('invalid aug {}'.format(args.aug))
+    raise AssertionError('invalid aug {}'.format(config.aug.type))
 
 
 # TODO: should use top momentum to pick best lr?
@@ -175,7 +170,7 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
 
 
 def indices_for_fold(fold, dataset_size):
-    kfold = KFold(len(FOLDS), shuffle=True, random_state=args.seed)
+    kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
     splits = list(kfold.split(np.zeros(dataset_size)))
     train_indices, eval_indices = splits[fold - 1]
     assert len(train_indices) + len(eval_indices) == dataset_size
@@ -188,11 +183,11 @@ def find_lr(train_data):
     # TODO: all args
     data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=partial(collate_fn, pad=args.pad))
+        collate_fn=partial(collate_fn, pad=config.pad))
 
     min_lr = 1e-8
     max_lr = 10.
@@ -202,9 +197,10 @@ def find_lr(train_data):
     losses = []
     lim = None
 
-    model = Model(args.model, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
+    optimizer = build_optimizer(
+        config.opt.type, model.parameters(), min_lr, config.opt.beta, weight_decay=config.opt.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
@@ -244,7 +240,7 @@ def find_lr(train_data):
         for loss, loss_sm in zip(losses, utils.smooth(losses)):
             writer.add_scalar('search_loss', loss, global_step=step)
             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
-            step += args.batch_size
+            step += config.batch_size
 
         np.save('stats.npy', (lrs, losses))
 
@@ -351,31 +347,32 @@ def train_fold(fold, train_eval_data, minima):
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
-    model = Model(args.model, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
+    optimizer = build_optimizer(
+        config.opt.type, model.parameters(), 0., config.opt.beta, weight_decay=config.opt.weight_decay)
     scheduler = OneCycleScheduler(
         optimizer,
         lr=(minima['lr'] / 25, minima['lr']),
-        beta=args.beta,
-        max_steps=len(train_data_loader) * args.epochs,
-        annealing=args.anneal)
+        beta=config.sched.onecycle.beta,
+        max_steps=len(train_data_loader) * config.epochs,
+        annealing=config.sched.onecycle.anneal)
 
     best_score = 0
-    for epoch in range(args.epochs):
+    for epoch in range(config.epochs):
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -412,11 +409,11 @@ def predict_on_test_using_fold(fold, test_data):
     test_dataset = TestDataset(test_data, transform=eval_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
-    model = Model(args.model, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -444,11 +441,11 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=partial(collate_fn, pad=args.pad))  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
-    model = Model(args.model, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -495,7 +492,7 @@ def evaluate_folds(folds, train_eval_data):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(args.seed)
+    utils.seed_everything(config.seed)
 
     id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
     class_to_id = {c: i for i, c in enumerate(id_to_class)}
