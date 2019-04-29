@@ -1,7 +1,15 @@
 import numpy as np
 
 
-class OneCycleScheduler(object):
+class LRScheduler(object):
+    def step(self):
+        raise NotImplementedError
+
+    def get_lr(self):
+        raise NotImplementedError
+
+
+class OneCycleScheduler(LRScheduler):
     def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.3):
         if annealing == 'linear':
             annealing = annealing_linear

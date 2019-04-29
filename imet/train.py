@@ -12,6 +12,7 @@ import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
+import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from augmentation import SquarePad
@@ -458,15 +459,18 @@ def train_fold(fold, minima):
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
-    scheduler = OneCycleScheduler(
-        optimizer,
-        lr=(minima['lr'] / 25, minima['lr']),
-        beta=args.beta,
-        max_steps=len(train_data_loader) * args.epochs,
-        annealing=args.anneal)
+    scheduler = lr_scheduler_wrapper.StepWrapper(
+        OneCycleScheduler(
+            optimizer,
+            lr=(minima['lr'] / 25, minima['lr']),
+            beta=args.beta,
+            max_steps=len(train_data_loader) * args.epochs,
+            annealing=args.anneal))
 
     best_score = 0
     for epoch in range(args.epochs):
+        scheduler.step_epoch()
+
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -479,6 +483,8 @@ def train_fold(fold, minima):
             data_loader=eval_data_loader,
             fold=fold,
             epoch=epoch)
+
+        scheduler.step_score(score)
 
         if score > best_score:
             best_score = score
