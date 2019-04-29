@@ -11,9 +11,9 @@ class LRScheduler(object):
 
 class OneCycleScheduler(LRScheduler):
     def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.3):
-        if annealing == 'linear':
+        if annealing == 'lin':
             annealing = annealing_linear
-        elif annealing == 'cosine':
+        elif annealing == 'cos':
             annealing = annealing_cosine
         else:
             raise AssertionError('invalid annealing {}'.format(annealing))

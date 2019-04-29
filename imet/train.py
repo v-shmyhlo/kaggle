@@ -30,6 +30,8 @@ from loss import FocalLoss
 # TODO: save all data in folder
 # TODO: full debug run
 
+# TODO: handle beta when no OneCycle
+
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
@@ -42,10 +44,11 @@ parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--image-size', type=int, default=224)
 parser.add_argument('--batch-size', type=int, default=256)
 parser.add_argument('--focal-gamma', type=float, default=2.)
+parser.add_argument('--lr', type=float)
 parser.add_argument('--weight-decay', type=float, default=1e-4)
 parser.add_argument('--label-smooth', type=float)
 parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
-parser.add_argument('--anneal', type=str, choices=['linear', 'cosine'], default='linear')
+parser.add_argument('--sched', type=str, choices=['1cycle-lin', '1cycle-cos', 'plateau'], default='1cycle-lin')
 parser.add_argument('--aug', type=str, choices=['resize', 'crop', 'pad'], default='pad')
 parser.add_argument('--aug-aspect', action='store_true')
 parser.add_argument('--crop-scale', type=float, default=224 / 256)
@@ -314,6 +317,7 @@ def find_lr():
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
+    # TODO: correct beta for find_lr
     optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
@@ -344,10 +348,8 @@ def find_lr():
 
     with torch.no_grad():
         losses = np.clip(losses, 0, lim)
-        minima = {
-            'loss': losses[np.argmin(utils.smooth(losses))],
-            'lr': lrs[np.argmin(utils.smooth(losses))]
-        }
+        minima_loss = losses[np.argmin(utils.smooth(losses))]
+        minima_lr = lrs[np.argmin(utils.smooth(losses))]
 
         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
@@ -361,13 +363,13 @@ def find_lr():
 
         plt.plot(lrs, losses)
         plt.plot(lrs, utils.smooth(losses))
-        plt.axvline(minima['lr'])
+        plt.axvline(minima_lr)
         plt.xscale('log')
-        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
+        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima_loss, minima_lr))
         plot = utils.plot_to_image()
         writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
 
-        return minima
+        return minima_lr
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
@@ -445,7 +447,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         return score
 
 
-def train_fold(fold, minima):
+def train_fold(fold, lr):
     train_indices, eval_indices = indices_for_fold(fold, len(train_data))
 
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
@@ -458,14 +460,22 @@ def train_fold(fold, minima):
 
     model = Model(ARCH, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(args.opt, model.parameters(), 0., args.beta[-1], weight_decay=args.weight_decay)
-    scheduler = lr_scheduler_wrapper.StepWrapper(
-        OneCycleScheduler(
-            optimizer,
-            lr=(minima['lr'] / 25, minima['lr']),
-            beta=args.beta,
-            max_steps=len(train_data_loader) * args.epochs,
-            annealing=args.anneal))
+    optimizer = build_optimizer(args.opt, model.parameters(), lr, args.beta[-1], weight_decay=args.weight_decay)
+
+    if args.sched.startswith('1cycle'):
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            OneCycleScheduler(
+                optimizer,
+                lr=(lr / 25, lr),
+                beta=args.beta,
+                max_steps=len(train_data_loader) * args.epochs,
+                annealing=args.sched[-3:]))
+    elif args.sched == 'plateau':
+        scheduler = lr_scheduler_wrapper.ScoreWrapper(
+            torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='max', factor=0.5, patience=3, verbose=True))
+    else:
+        raise AssertionError('invalid sched {}'.format(args.sched))
 
     best_score = 0
     for epoch in range(args.epochs):
@@ -600,8 +610,12 @@ def main():
     # TODO: refactor seed
     utils.seed_everything(args.seed)
 
-    minima = find_lr()
-    gc.collect()
+    if args.lr is None:
+        lr = find_lr()
+        gc.collect()
+
+    else:
+        lr = args.lr
 
     if args.fold is None:
         folds = FOLDS
@@ -609,7 +623,7 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(fold, minima)
+        train_fold(fold, lr)
 
     # TODO: check and refine
     threshold = find_threshold_for_folds(folds)
