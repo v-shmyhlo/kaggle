@@ -14,7 +14,7 @@ from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
 from optim import AdamW
 import utils
-from augmentation import SquarePad
+from transform import SquarePad
 from .model import Model
 from loss import lsep_loss
 import torch.nn.functional as F

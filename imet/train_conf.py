@@ -16,7 +16,7 @@ from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
-from augmentation import SquarePad
+from transform import SquarePad
 from .model import Model
 from loss import FocalLoss
 from config import Config
