@@ -5,6 +5,10 @@ batch_size: 4 # FIXME:
 focal_gamma: 2.0
 label_smooth:
 
+model:
+  backbone: seresnext50
+  head: avg
+
 aug:
   type: pad
   aspect: false
