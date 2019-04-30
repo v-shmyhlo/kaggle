@@ -247,8 +247,6 @@ def find_lr(train_eval_data):
             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
             step += config.batch_size
 
-        np.save('stats.npy', (lrs, losses))
-
         plt.plot(lrs, losses)
         plt.plot(lrs, utils.smooth(losses))
         plt.axvline(minima_lr)
