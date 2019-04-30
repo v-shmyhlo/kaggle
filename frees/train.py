@@ -14,11 +14,12 @@ import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
+import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from .model import Model
 from .dataset import NUM_CLASSES, EPS, TrainEvalDataset, TestDataset
-from loss import FocalLoss, lsep_loss
+from loss import lsep_loss
 from frees.transform import RandomCrop, CentralCrop
 from frees.metric import calculate_per_class_lwlrap
 
@@ -42,15 +43,34 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-LOSS = [
-    # FocalLoss(),
-    lsep_loss
-]
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+(MEAN, STD), _ = np.load(os.path.join(args.dataset_path, 'stats.npy'))
+
+to_tensor_and_norm = T.Compose([
+    T.ToTensor(),
+    T.Normalize(mean=[MEAN], std=[STD])
+])
+
+if config.aug.type == 'pad':
+    train_transform = to_tensor_and_norm
+    eval_transform = to_tensor_and_norm
+    test_transform = eval_transform
+elif config.aug.type == 'crop':
+    train_transform = T.Compose([
+        RandomCrop(256),
+        to_tensor_and_norm
+    ])
+    eval_transform = T.Compose([
+        CentralCrop(256),
+        to_tensor_and_norm
+    ])
+    test_transform = eval_transform
+else:
+    raise AssertionError('invalid aug {}'.format(config.aug.type))
 
 
 def compute_loss(input, target):
-    loss = [l(input=input, target=target).mean() for l in LOSS]
-    loss = sum(loss) / len(loss)
+    loss = lsep_loss(input=input, target=target).mean()
 
     return loss
 
@@ -64,7 +84,7 @@ def compute_score(input, target):
 
 def collate_fn(batch, pad):
     if pad == 'silence':
-        pad = np.log(EPS)
+        pad = (np.log(EPS) - MEAN) / STD
     elif pad == 'zeros':
         pad = 0.
     else:
@@ -106,8 +126,6 @@ def get_nrow(images):
     return nrow
 
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
 # TODO: pin memory
 # TODO: stochastic weight averaging
 # TODO: group images by buckets (size, ratio) and batch
@@ -139,24 +157,6 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: build sched for lr find
 
 
-if config.aug.type == 'pad':
-    train_transform = T.ToTensor()
-    eval_transform = T.ToTensor()
-    test_transform = eval_transform
-elif config.aug.type == 'crop':
-    train_transform = T.Compose([
-        RandomCrop(256),
-        T.ToTensor(),
-    ])
-    eval_transform = T.Compose([
-        CentralCrop(256),
-        T.ToTensor(),
-    ])
-    test_transform = eval_transform
-else:
-    raise AssertionError('invalid aug {}'.format(config.aug.type))
-
-
 # TODO: should use top momentum to pick best lr?
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
     if optimizer == 'adam':
@@ -178,11 +178,11 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
-def find_lr(train_data):
-    train_dataset = TrainEvalDataset(train_data, transform=train_transform)
+def find_lr(train_eval_data):
+    train_eval_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
     # TODO: all args
-    data_loader = torch.utils.data.DataLoader(
-        train_dataset,
+    train_eval_data_loader = torch.utils.data.DataLoader(
+        train_eval_dataset,
         batch_size=config.batch_size,
         drop_last=True,
         shuffle=True,
@@ -191,7 +191,7 @@ def find_lr(train_data):
 
     min_lr = 1e-8
     max_lr = 10.
-    gamma = (max_lr / min_lr)**(1 / len(data_loader))
+    gamma = (max_lr / min_lr)**(1 / len(train_eval_data_loader))
 
     lrs = []
     losses = []
@@ -204,7 +204,7 @@ def find_lr(train_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(data_loader, desc='lr search'):
+    for images, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits, _ = model(images)
 
@@ -229,10 +229,8 @@ def find_lr(train_data):
 
     with torch.no_grad():
         losses = np.clip(losses, 0, lim)
-        minima = {
-            'loss': losses[np.argmin(utils.smooth(losses))],
-            'lr': lrs[np.argmin(utils.smooth(losses))]
-        }
+        minima_loss = losses[np.argmin(utils.smooth(losses))]
+        minima_lr = lrs[np.argmin(utils.smooth(losses))]
 
         writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
@@ -246,13 +244,13 @@ def find_lr(train_data):
 
         plt.plot(lrs, losses)
         plt.plot(lrs, utils.smooth(losses))
-        plt.axvline(minima['lr'])
+        plt.axvline(minima_lr)
         plt.xscale('log')
-        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima['loss'], minima['lr']))
+        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima_loss, minima_lr))
         plot = utils.plot_to_image()
         writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
 
-        return minima
+        return minima_lr
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
@@ -341,7 +339,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         return score
 
 
-def train_fold(fold, train_eval_data, minima):
+def train_fold(fold, train_eval_data, lr):
     train_indices, eval_indices = indices_for_fold(fold, len(train_eval_data))
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
@@ -363,16 +361,27 @@ def train_fold(fold, train_eval_data, minima):
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(
-        config.opt.type, model.parameters(), 0., config.opt.beta, weight_decay=config.opt.weight_decay)
-    scheduler = OneCycleScheduler(
-        optimizer,
-        lr=(minima['lr'] / 25, minima['lr']),
-        beta=config.sched.onecycle.beta,
-        max_steps=len(train_data_loader) * config.epochs,
-        annealing=config.sched.onecycle.anneal)
+        config.opt.type, model.parameters(), lr, config.opt.beta, weight_decay=config.opt.weight_decay)
+
+    if config.sched.type == 'onecycle':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            OneCycleScheduler(
+                optimizer,
+                lr=(lr / 25, lr),
+                beta=config.sched.onecycle.beta,
+                max_steps=len(train_data_loader) * config.epochs,
+                annealing=config.sched.onecycle.anneal))
+    elif config.sched.type == 'plateau':
+        scheduler = lr_scheduler_wrapper.ScoreWrapper(
+            torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='max', factor=0.5, patience=3, verbose=True))
+    else:
+        raise AssertionError('invalid sched {}'.format(config.sched.type))
 
     best_score = 0
     for epoch in range(config.epochs):
+        scheduler.step_epoch()
+
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -385,6 +394,8 @@ def train_fold(fold, train_eval_data, minima):
             data_loader=eval_data_loader,
             fold=fold,
             epoch=epoch)
+
+        scheduler.step_score(score)
 
         if score > best_score:
             best_score = score
@@ -506,12 +517,16 @@ def main():
     test_data['fname'] = test_data['fname'].apply(
         lambda x: os.path.join(args.dataset_path, 'train_curated', x))
 
-    # FIXME:
-    train_eval_data['fname'] = './frees/sample.wav'
-    test_data['fname'] = './frees/sample.wav'
+    if args.debug:
+        train_eval_data['fname'] = './frees/sample.wav'
+        test_data['fname'] = './frees/sample.wav'
 
-    minima = find_lr(train_eval_data)
-    gc.collect()
+    if config.opt.lr is None:
+        lr = find_lr(train_eval_data)
+        gc.collect()
+
+    else:
+        lr = config.opt.lr
 
     if args.fold is None:
         folds = FOLDS
@@ -519,7 +534,7 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(fold, train_eval_data, minima)
+        train_fold(fold, train_eval_data, lr)
 
     # TODO: check and refine
     # TODO: remove?

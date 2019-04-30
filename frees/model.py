@@ -10,6 +10,8 @@ class Model(nn.Module):
 
         if model == 'avg':
             self.model = AvgPoolModel(num_classes)
+        elif model == 'max':
+            self.model = MaxPoolModel(num_classes)
         elif model == 'attn':
             self.model = AttentionModel(num_classes)
         else:
@@ -27,6 +29,25 @@ class AvgPoolModel(nn.Module):
         self.model = torchvision.models.resnet.ResNet(block, [1, 1, 1, 1])
         self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.avgpool = nn.AdaptiveAvgPool2d(1)
+        self.model.fc = nn.Linear(512 * block.expansion, num_classes)
+
+    def forward(self, input):
+        b, _, h, w = input.size()
+
+        input = self.model(input)
+        weights = torch.zeros(b, 1, h, w)
+
+        return input, weights
+
+
+class MaxPoolModel(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+
+        block = torchvision.models.resnet.BasicBlock
+        self.model = torchvision.models.resnet.ResNet(block, [1, 1, 1, 1])
+        self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.model.avgpool = nn.AdaptiveMaxPool2d(1)
         self.model.fc = nn.Linear(512 * block.expansion, num_classes)
 
     def forward(self, input):
