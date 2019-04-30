@@ -48,7 +48,7 @@ def hinge_loss(input, target, delta=1.):
         neg = negative_indices[i].nonzero()
         pos_examples = input[i, pos]
         neg_examples = torch.transpose(input[i, neg], 0, 1)
-        loss += torch.sum(torch.max(0., delta + neg_examples - pos_examples))
+        loss += torch.sum(torch.max(torch.tensor(0.), delta + neg_examples - pos_examples))
 
     return loss
 
