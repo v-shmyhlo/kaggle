@@ -158,16 +158,6 @@ def find_threshold_global(input, target):
     return threshold, score, plot
 
 
-# def find_threshold_class(input, target):
-#     threshold = [find_threshold_global(input=input[:, i:i + 1], target=target[:, i:i + 1])
-#                  for i in tqdm(range(NUM_CLASSES))]
-#     threshold = torch.tensor(threshold).to(DEVICE)
-#     plot = utils.plot_to_image()
-#     score = compute_score(input=input, target=target, threshold=threshold).mean()
-#
-#     return threshold, score, plot
-
-
 NUM_CLASSES = len(classes)
 ARCH = 'seresnext50'
 LOSS = [
