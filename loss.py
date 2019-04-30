@@ -39,8 +39,16 @@ def f2_loss(input, target, eps=1e-7):
 
 
 def hinge_loss(input, target, delta=1.):
-    target = target * 1. + (1 - target) * -1.
-    loss = torch.max(torch.zeros_like(input).to(input.device), delta - target * input)
+    positive_indices = (target > 0.5).float()
+    negative_indices = (target <= 0.5).float()
+
+    loss = 0.
+    for i in range(input.size()[0]):
+        pos = positive_indices[i].nonzero()
+        neg = negative_indices[i].nonzero()
+        pos_examples = input[i, pos]
+        neg_examples = torch.transpose(input[i, neg], 0, 1)
+        loss += torch.sum(torch.max(0., delta + neg_examples - pos_examples))
 
     return loss
 

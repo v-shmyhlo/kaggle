@@ -116,8 +116,7 @@ def compute_loss(input, target):
     class_loss = lsep_loss(input=logits, target=target)
     thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
 
-    # TODO: normalize by batch?
-    return (class_loss + thresh_loss / input.size(0)) / 2
+    return (class_loss + thresh_loss) / 2
 
 
 def output_to_logits(input):
