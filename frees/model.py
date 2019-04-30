@@ -82,7 +82,7 @@ class AttentionModel(nn.Module):
         input = self.model.layer3(input)
         input = self.model.layer4(input)
 
-        input = input.mean(2)
+        input = input.mean(2)  # TODO: or max?
         weights = self.weights(input)
         weights = weights.softmax(2)
         input = (input * weights).sum(2)

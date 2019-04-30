@@ -108,7 +108,7 @@ def collate_fn(batch, pad):
     images_tensor.fill_(pad)
 
     for i, image in enumerate(images):
-        images_tensor[i, :, :, :image.size(2) + 1] = image
+        images_tensor[i, :, :, :image.size(2)] = image
 
     return (images_tensor, *rest, ids)
 
