@@ -17,8 +17,8 @@ class Model(nn.Module):
         else:
             raise AssertionError('invalid model {}'.format(model))
 
-    def forward(self, input):
-        return self.model(input)
+    def forward(self, input, mask):
+        return self.model(input, mask)
 
 
 class AvgPoolModel(nn.Module):
@@ -31,7 +31,7 @@ class AvgPoolModel(nn.Module):
         self.model.avgpool = nn.AdaptiveAvgPool2d(1)
         self.model.fc = nn.Linear(512 * block.expansion, num_classes)
 
-    def forward(self, input):
+    def forward(self, input, _):
         b, _, h, w = input.size()
 
         input = self.model(input)
@@ -50,7 +50,7 @@ class MaxPoolModel(nn.Module):
         self.model.avgpool = nn.AdaptiveMaxPool2d(1)
         self.model.fc = nn.Linear(512 * block.expansion, num_classes)
 
-    def forward(self, input):
+    def forward(self, input, _):
         b, _, h, w = input.size()
 
         input = self.model(input)
@@ -69,7 +69,7 @@ class AttentionModel(nn.Module):
         self.model.fc = nn.Linear(512 * block.expansion, num_classes)
         self.weights = nn.Conv1d(512 * block.expansion, 1, kernel_size=1)
 
-    def forward(self, input):
+    def forward(self, input, mask):
         _, _, h, w = input.size()
 
         input = self.model.conv1(input)
@@ -82,8 +82,13 @@ class AttentionModel(nn.Module):
         input = self.model.layer3(input)
         input = self.model.layer4(input)
 
+        for _ in range(5):
+            mask = mask[:, ::2]
+        mask = mask.unsqueeze(1)
+
         input = input.mean(2)  # TODO: or max?
         weights = self.weights(input)
+        weights.masked_fill_(mask == 0, float('-inf'))
         weights = weights.softmax(2)
         input = (input * weights).sum(2)
 

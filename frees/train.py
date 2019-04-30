@@ -106,11 +106,18 @@ def collate_fn(batch, pad):
         images[0].size(1),
         max(image.size(2) for image in images))
     images_tensor.fill_(pad)
+    masks_tensor = torch.zeros(
+        len(images),
+        max(image.size(2) for image in images),
+        dtype=torch.uint8)
 
     for i, image in enumerate(images):
+        if args.debug and i % 2 == 0:
+            image = image[:, :, ::2]
         images_tensor[i, :, :, :image.size(2)] = image
+        masks_tensor[i, :image.size(2)] = torch.ones(image.size(2), dtype=torch.uint8)
 
-    return (images_tensor, *rest, ids)
+    return (images_tensor, masks_tensor, *rest, ids)
 
 
 def get_nrow(images):
@@ -204,9 +211,9 @@ def find_lr(train_eval_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits, _ = model(images)
+    for images, masks, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
+        images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+        logits, _ = model(images, masks)
 
         loss = compute_loss(input=logits, target=labels)
 
@@ -261,9 +268,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits, weights = model(images)
+    for images, masks, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+        logits, weights = model(images, masks)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -305,9 +312,9 @@ def eval_epoch(model, data_loader, fold, epoch):
     targets = []
     model.eval()
     with torch.no_grad():
-        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits, weights = model(images)
+        for images, masks, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+            logits, weights = model(images, masks)
 
             targets.append(labels)
             predictions.append(logits)
@@ -432,9 +439,9 @@ def predict_on_test_using_fold(fold, test_data):
     with torch.no_grad():
         fold_predictions = []
         fold_ids = []
-        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            images = images.to(DEVICE)
-            logits, _ = model(images)
+        for images, masks, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images, masks = images.to(DEVICE), masks.to(DEVICE)
+            logits, _ = model(images, masks)
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -465,9 +472,9 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_targets = []
         fold_predictions = []
         fold_ids = []
-        for images, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits, _ = model(images)
+        for images, masks, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+            logits, _ = model(images, masks)
 
             fold_targets.append(labels)
             fold_predictions.append(logits)
