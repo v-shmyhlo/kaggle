@@ -19,7 +19,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad
 from .model_v2 import Model
-from loss import FocalLoss
+from loss import FocalLoss, lsep_loss
 from config import Config
 
 # TODO: config
@@ -107,9 +107,11 @@ def load_image(path):
 def compute_loss(input, target, smoothing):
     if config.loss.type == 'focal':
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
+    elif config.loss.type == 'lsep':
+        compute_class_loss = lsep_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
-   
+
     if smoothing is not None:
         target = target * smoothing + (1 - target) * (1 - smoothing)
 
