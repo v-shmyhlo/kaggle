@@ -105,19 +105,23 @@ def load_image(path):
 
 
 def compute_loss(input, target, smoothing):
+    if config.loss.type == 'focal':
+        compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
+    else:
+        raise AssertionError('invalid loss {}'.format(config.loss.type))
+   
     if smoothing is not None:
         target = target * smoothing + (1 - target) * (1 - smoothing)
 
     if config.model.predict_thresh:
         logits, thresholds = input.split(input.shape[1] // 2, 1)
 
-        class_loss = FocalLoss(gamma=config.focal_gamma)(input=logits, target=target)
-        thresh_loss = F.binary_cross_entropy_with_logits(
-            input=logits - thresholds, target=target, reduction='sum')
+        class_loss = compute_class_loss(input=logits, target=target)
+        thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
 
         loss = (class_loss + thresh_loss) / 2
     else:
-        loss = FocalLoss(gamma=config.focal_gamma)(input=input, target=target)
+        loss = compute_class_loss(input=input, target=target)
 
     return loss
 

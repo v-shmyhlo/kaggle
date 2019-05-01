@@ -2,8 +2,13 @@ seed: 42
 epochs: 10
 image_size: 224
 batch_size: 4 # FIXME:
-focal_gamma: 2.0
 label_smooth:
+
+loss:
+  type: focal
+
+  focal:
+    gamma: 2.0
 
 model:
   type: seresnext50
