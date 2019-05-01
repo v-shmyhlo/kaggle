@@ -10,6 +10,7 @@ import torchvision
 import torchvision.transforms as T
 from PIL import Image
 import argparse
+import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
@@ -17,7 +18,7 @@ import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from transform import SquarePad
-from .model import Model
+from .model_v2 import Model
 from loss import FocalLoss
 from config import Config
 
@@ -28,11 +29,8 @@ from config import Config
 # TODO: check all plots rendered
 # TODO: adamw
 # TODO: better minimum for lr
-
-
 # TODO: save all data in folder
 # TODO: full debug run
-
 # TODO: handle beta when no OneCycle
 
 FOLDS = list(range(1, 5 + 1))
@@ -110,13 +108,32 @@ def compute_loss(input, target, smoothing):
     if smoothing is not None:
         target = target * smoothing + (1 - target) * (1 - smoothing)
 
-    loss = [l(input=input, target=target).mean() for l in LOSS]
-    loss = sum(loss) / len(loss)
+    if config.model.predict_thresh:
+        logits, thresholds = input.split(input.shape[1] // 2, 1)
+
+        class_loss = FocalLoss(gamma=config.focal_gamma)(input=logits, target=target)
+        thresh_loss = F.binary_cross_entropy_with_logits(
+            input=logits - thresholds, target=target, reduction='sum')
+
+        loss = (class_loss + thresh_loss) / 2
+    else:
+        loss = FocalLoss(gamma=config.focal_gamma)(input=input, target=target)
 
     return loss
 
 
+def output_to_logits(input):
+    if config.model.predict_thresh:
+        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits = logits - thresholds
+    else:
+        logits = input
+
+    return logits
+
+
 def compute_score(input, target, threshold=0.5):
+    input = output_to_logits(input)
     input = (input.sigmoid() > threshold).float()
 
     tp = (target * input).sum(-1)
@@ -150,13 +167,6 @@ def find_threshold_global(input, target):
 
 
 NUM_CLASSES = len(classes)
-ARCH = 'seresnext50'
-LOSS = [
-    # f2_loss,
-    # F.binary_cross_entropy_with_logits,
-    FocalLoss(gamma=config.focal_gamma),
-    # hinge_loss,
-]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # TODO: pin memory
@@ -297,7 +307,7 @@ def find_lr():
     losses = []
     lim = None
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     # TODO: correct beta for find_lr
     optimizer = build_optimizer(
@@ -439,7 +449,7 @@ def train_fold(fold, lr):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     optimizer = build_optimizer(
         config.opt.type, model.parameters(), lr, config.opt.beta, weight_decay=config.opt.weight_decay)
@@ -489,6 +499,7 @@ def build_submission(folds, threshold):
 
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
+            fold_predictions = output_to_logits(fold_predictions)
             predictions = predictions + fold_predictions.sigmoid()
             ids = fold_ids
 
@@ -512,7 +523,7 @@ def predict_on_test_using_fold(fold):
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -541,7 +552,7 @@ def predict_on_eval_using_fold(fold):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
