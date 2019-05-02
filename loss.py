@@ -15,8 +15,10 @@ class FocalLoss(nn.Module):
 
         invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
         loss = (invprobs * self.gamma).exp() * loss
+
         if len(loss.size()) == 2:
             loss = loss.sum(dim=1)
+
         return loss.mean()
 
 
@@ -50,6 +52,8 @@ def hinge_loss(input, target, delta=1.):
         neg_examples = torch.transpose(input[i, neg], 0, 1)
         loss += torch.sum(torch.max(torch.tensor(0.), delta + neg_examples - pos_examples))
 
+    loss /= input.size(0)
+
     return loss
 
 
@@ -66,20 +70,6 @@ def lsep_loss(input, target):
         loss += torch.sum(torch.exp(neg_examples - pos_examples))
 
     loss = torch.log(1 + loss)
+    loss /= input.size(0)
 
     return loss
-
-# def lsep_loss(input, target):
-#     pos_examples = input.unsqueeze(-1)
-#     neg_examples = input.unsqueeze(1)
-#     loss = torch.exp(neg_examples - pos_examples)
-#
-#     positive_mask = (target > 0.5).unsqueeze(-1)
-#     negative_mask = (target <= 0.5).unsqueeze(1)
-#     mask = negative_mask & positive_mask
-#
-#     loss = loss * mask.float()
-#     loss = loss.sum()
-#     loss = torch.log(1 + loss)
-#
-#     return loss
