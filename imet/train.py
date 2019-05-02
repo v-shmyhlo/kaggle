@@ -24,13 +24,10 @@ from config import Config
 
 # TODO: config
 # TODO: sgd
-# TODO: check del
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
 # TODO: adamw
 # TODO: better minimum for lr
-# TODO: save all data in folder
-# TODO: full debug run
 # TODO: handle beta when no OneCycle
 
 FOLDS = list(range(1, 5 + 1))
