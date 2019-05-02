@@ -230,7 +230,7 @@ else:
 
 if config.aug.aspect:
     random_crop = T.RandomResizedCrop(
-        config.image_size, scale=(config.aug.crop_scale, config.aug.crop_scale), ratio=(3. / 4., 4. / 3.))
+        config.image_size, scale=(config.aug.crop_scale**2, config.aug.crop_scale**2), ratio=(3. / 4., 4. / 3.))
 else:
     random_crop = T.RandomCrop(config.image_size)
 
@@ -242,7 +242,7 @@ train_transform = T.Compose([
     train_transform,
     random_crop,
     T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    T.ColorJitter(brightness=config.aug.color, contrast=config.aug.color, saturation=config.aug.color),
     to_tensor_and_norm,
 ])
 eval_transform = T.Compose([

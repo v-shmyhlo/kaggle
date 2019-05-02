@@ -1,7 +1,7 @@
 seed: 42
 epochs: 10
 image_size: 224
-batch_size: 4 # FIXME:
+batch_size: 76
 label_smooth:
 
 loss:
@@ -16,12 +16,13 @@ model:
 
 aug:
   type: pad
-  aspect: false
+  aspect: False
+  color: 0.1
   crop_scale: 0.875 # 224 / 256
 
 opt:
   type: adam
-  lr:
+  lr: 1e-3
   beta: 0.9
   weight_decay: 1e-4
 

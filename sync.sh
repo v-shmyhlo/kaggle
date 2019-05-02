@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-rsync -avhHPx ./*.py vshmyhlo@192.168.0.105:code/kaggle/
-rsync -avhHPx ./imet/ vshmyhlo@192.168.0.105:code/kaggle/imet/
-rsync -avhHPx ./frees/ vshmyhlo@192.168.0.105:code/kaggle/frees/
-rsync -avhHPx vshmyhlo@192.168.0.105:code/kaggle/submission.csv ./submission.csv
+HOST=vshmyhlo@192.168.0.103
+
+rsync -avhHPx ./*.py ${HOST}:code/kaggle/
+rsync -avhHPx ./imet/ ${HOST}:code/kaggle/imet/
+rsync -avhHPx ./frees/ ${HOST}:code/kaggle/frees/
+rsync -avhHPx ${HOST}:code/kaggle/submission.csv ./submission.csv
