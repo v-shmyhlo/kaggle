@@ -23,6 +23,9 @@ from loss import lsep_loss
 from frees.transform import RandomCrop, CentralCrop
 from frees.metric import calculate_per_class_lwlrap
 
+# TODO: adapt torch 1.1 scheduler
+fail
+
 # TODO: try max pool
 # TODO: sgd
 # TODO: check del

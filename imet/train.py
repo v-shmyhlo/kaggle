@@ -325,10 +325,10 @@ def find_lr():
         if lim < losses[-1]:
             break
 
-        scheduler.step()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
+        scheduler.step()
 
         if args.debug:
             break
@@ -373,10 +373,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
         metrics['loss'].update(loss.data.cpu().numpy())
 
-        scheduler.step()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
+        scheduler.step()
 
         if args.debug:
             break
@@ -465,7 +465,6 @@ def train_fold(fold, lr):
 
     best_score = 0
     for epoch in range(config.epochs):
-        scheduler.step_epoch()
 
         train_epoch(
             model=model,
@@ -480,6 +479,7 @@ def train_fold(fold, lr):
             fold=fold,
             epoch=epoch)
 
+        scheduler.step_epoch()
         scheduler.step_score(score)
 
         if score > best_score:
