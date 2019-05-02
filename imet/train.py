@@ -1,4 +1,5 @@
 import numpy as np
+import shutil
 import gc
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -9,6 +10,7 @@ import torchvision
 import torchvision.transforms as T
 from PIL import Image
 import argparse
+import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler
@@ -16,8 +18,9 @@ import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from transform import SquarePad
-from .model import Model
-from loss import FocalLoss
+from .model_v2 import Model
+from loss import FocalLoss, lsep_loss
+from config import Config
 
 # TODO: config
 # TODO: sgd
@@ -26,36 +29,22 @@ from loss import FocalLoss
 # TODO: check all plots rendered
 # TODO: adamw
 # TODO: better minimum for lr
-
-
 # TODO: save all data in folder
 # TODO: full debug run
-
 # TODO: handle beta when no OneCycle
 
 FOLDS = list(range(1, 5 + 1))
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/imet')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
-parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--fold', type=int, choices=FOLDS)
-parser.add_argument('--image-size', type=int, default=224)
-parser.add_argument('--batch-size', type=int, default=256)
-parser.add_argument('--focal-gamma', type=float, default=2.)
-parser.add_argument('--lr', type=float)
-parser.add_argument('--weight-decay', type=float, default=1e-4)
-parser.add_argument('--label-smooth', type=float)
-parser.add_argument('--beta', type=float, nargs=2, default=(0.95, 0.85))
-parser.add_argument('--sched', type=str, choices=['1cycle-lin', '1cycle-cos', 'plateau'], default='1cycle-lin')
-parser.add_argument('--aug', type=str, choices=['resize', 'crop', 'pad'], default='pad')
-parser.add_argument('--aug-aspect', action='store_true')
-parser.add_argument('--crop-scale', type=float, default=224 / 256)
-parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'momentum'], default='adam')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
+config = Config.from_yaml(args.config_path)
+shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 train_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
 train_data['attribute_ids'] = train_data['attribute_ids'].apply(lambda s: [int(x) for x in s.split()])
@@ -116,16 +105,41 @@ def load_image(path):
 
 
 def compute_loss(input, target, smoothing):
+    if config.loss.type == 'focal':
+        compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
+    elif config.loss.type == 'lsep':
+        compute_class_loss = lsep_loss
+    else:
+        raise AssertionError('invalid loss {}'.format(config.loss.type))
+
     if smoothing is not None:
         target = target * smoothing + (1 - target) * (1 - smoothing)
 
-    loss = [l(input=input, target=target).mean() for l in LOSS]
-    loss = sum(loss) / len(loss)
+    if config.model.predict_thresh:
+        logits, thresholds = input.split(input.shape[1] // 2, 1)
+
+        class_loss = compute_class_loss(input=logits, target=target)
+        thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
+
+        loss = (class_loss + thresh_loss) / 2
+    else:
+        loss = compute_class_loss(input=input, target=target)
 
     return loss
 
 
+def output_to_logits(input):
+    if config.model.predict_thresh:
+        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits = logits - thresholds
+    else:
+        logits = input
+
+    return logits
+
+
 def compute_score(input, target, threshold=0.5):
+    input = output_to_logits(input)
     input = (input.sigmoid() > threshold).float()
 
     tp = (target * input).sum(-1)
@@ -159,13 +173,6 @@ def find_threshold_global(input, target):
 
 
 NUM_CLASSES = len(classes)
-ARCH = 'seresnext50'
-LOSS = [
-    # f2_loss,
-    # F.binary_cross_entropy_with_logits,
-    FocalLoss(gamma=args.focal_gamma),
-    # hinge_loss,
-]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # TODO: pin memory
@@ -198,19 +205,19 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: build sched for lr find
 
 
-image_size_corrected = round(args.image_size * (1 / args.crop_scale))
+image_size_corrected = round(config.image_size * (1 / config.aug.crop_scale))
 
-if args.aug == 'resize':
+if config.aug.type == 'resize':
     resize = T.Resize((image_size_corrected, image_size_corrected))
 
     train_transform = resize
     eval_transform = resize
-elif args.aug == 'crop':
+elif config.aug.type == 'crop':
     resize = T.Resize(image_size_corrected)
 
     train_transform = resize
     eval_transform = resize
-elif args.aug == 'pad':
+elif config.aug.type == 'pad':
     pad_and_resize = T.Compose([
         SquarePad(padding_mode='edge'),
         T.Resize(image_size_corrected),
@@ -219,13 +226,13 @@ elif args.aug == 'pad':
     train_transform = pad_and_resize
     eval_transform = pad_and_resize
 else:
-    raise AssertionError('invalid aug {}'.format(args.aug))
+    raise AssertionError('invalid aug {}'.format(config.aug.type))
 
-if args.aug_aspect:
+if config.aug.aspect:
     random_crop = T.RandomResizedCrop(
-        args.image_size, scale=(args.crop_scale, args.crop_scale), ratio=(3. / 4., 4. / 3.))
+        config.image_size, scale=(config.aug.crop_scale**2, config.aug.crop_scale**2), ratio=(3. / 4., 4. / 3.))
 else:
-    random_crop = T.RandomCrop(args.image_size)
+    random_crop = T.RandomCrop(config.image_size)
 
 to_tensor_and_norm = T.Compose([
     T.ToTensor(),
@@ -235,12 +242,12 @@ train_transform = T.Compose([
     train_transform,
     random_crop,
     T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    T.ColorJitter(brightness=config.aug.color, contrast=config.aug.color, saturation=config.aug.color),
     to_tensor_and_norm,
 ])
 eval_transform = T.Compose([
     eval_transform,
-    T.CenterCrop(args.image_size),
+    T.CenterCrop(config.image_size),
     to_tensor_and_norm,
 ])
 test_transform = eval_transform
@@ -273,7 +280,7 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
 
 
 def indices_for_fold(fold, dataset_size):
-    kfold = KFold(len(FOLDS), shuffle=True, random_state=args.seed)
+    kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
     splits = list(kfold.split(np.zeros(dataset_size)))
     train_indices, eval_indices = splits[fold - 1]
     assert len(train_indices) + len(eval_indices) == dataset_size
@@ -296,7 +303,7 @@ def mixup(images, labels):
 def find_lr():
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
     min_lr = 1e-8
     max_lr = 10.
@@ -306,10 +313,11 @@ def find_lr():
     losses = []
     lim = None
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     # TODO: correct beta for find_lr
-    optimizer = build_optimizer(args.opt, model.parameters(), min_lr, args.beta[-1], weight_decay=args.weight_decay)
+    optimizer = build_optimizer(
+        config.opt.type, model.parameters(), min_lr, config.opt.beta, weight_decay=config.opt.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
@@ -318,7 +326,7 @@ def find_lr():
         # images, labels = mixup(images, labels)
         logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels, smoothing=args.label_smooth)
+        loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -348,7 +356,7 @@ def find_lr():
         for loss, loss_sm in zip(losses, utils.smooth(losses)):
             writer.add_scalar('search_loss', loss, global_step=step)
             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
-            step += args.batch_size
+            step += config.batch_size
 
         plt.plot(lrs, losses)
         plt.plot(lrs, utils.smooth(losses))
@@ -374,7 +382,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         # images, labels = mixup(images, labels)
         logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels, smoothing=args.label_smooth)
+        loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         scheduler.step()
@@ -415,7 +423,7 @@ def eval_epoch(model, data_loader, fold, epoch):
             targets.append(labels)
             predictions.append(logits)
 
-            loss = compute_loss(input=logits, target=labels, smoothing=args.label_smooth)
+            loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             if args.debug:
@@ -441,33 +449,34 @@ def train_fold(fold, lr):
 
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size, num_workers=args.workers)
+        eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    optimizer = build_optimizer(args.opt, model.parameters(), lr, args.beta[-1], weight_decay=args.weight_decay)
+    optimizer = build_optimizer(
+        config.opt.type, model.parameters(), lr, config.opt.beta, weight_decay=config.opt.weight_decay)
 
-    if args.sched.startswith('1cycle'):
+    if config.sched.type == 'onecycle':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             OneCycleScheduler(
                 optimizer,
                 lr=(lr / 25, lr),
-                beta=args.beta,
-                max_steps=len(train_data_loader) * args.epochs,
-                annealing=args.sched[-3:]))
-    elif args.sched == 'plateau':
+                beta=config.sched.onecycle.beta,
+                max_steps=len(train_data_loader) * config.epochs,
+                annealing=config.sched.onecycle.anneal))
+    elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='max', factor=0.5, patience=3, verbose=True))
     else:
-        raise AssertionError('invalid sched {}'.format(args.sched))
+        raise AssertionError('invalid sched {}'.format(config.sched.type))
 
     best_score = 0
-    for epoch in range(args.epochs):
+    for epoch in range(config.epochs):
         scheduler.step_epoch()
 
         train_epoch(
@@ -496,6 +505,7 @@ def build_submission(folds, threshold):
 
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
+            fold_predictions = output_to_logits(fold_predictions)
             predictions = predictions + fold_predictions.sigmoid()
             ids = fold_ids
 
@@ -517,9 +527,9 @@ def build_submission(folds, threshold):
 def predict_on_test_using_fold(fold):
     test_dataset = TestDataset(transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=args.batch_size, num_workers=args.workers)
+        test_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -546,9 +556,9 @@ def predict_on_eval_using_fold(fold):
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=args.batch_size, num_workers=args.workers)
+        eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
 
-    model = Model(ARCH, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -597,14 +607,14 @@ def find_threshold_for_folds(folds):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(args.seed)
+    utils.seed_everything(config.seed)
 
-    if args.lr is None:
+    if config.opt.lr is None:
         lr = find_lr()
         gc.collect()
 
     else:
-        lr = args.lr
+        lr = config.opt.lr
 
     if args.fold is None:
         folds = FOLDS
