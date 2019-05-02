@@ -111,7 +111,8 @@ def compute_loss(input, target, smoothing):
         logits, thresholds = input.split(input.shape[1] // 2, 1)
 
         class_loss = compute_class_loss(input=logits, target=target)
-        thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
+        thresh_loss = F.binary_cross_entropy_with_logits(
+            input=logits.detach() - thresholds, target=target, reduction='sum')
         thresh_loss /= logits.size(0)
 
         loss = (class_loss + thresh_loss) / 2
@@ -151,7 +152,7 @@ def compute_score(input, target, threshold=0.5):
 
 
 def find_threshold_global(input, target):
-    thresholds = np.arange(0.1, 0.9, 0.01)
+    thresholds = np.arange(0.01, 1 - 0.01, 0.01)
     scores = [compute_score(input=input, target=target, threshold=t).mean()
               for t in tqdm(thresholds, desc='threshold search')]
     threshold = thresholds[np.argmax(scores)]
