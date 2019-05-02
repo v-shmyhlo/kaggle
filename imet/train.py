@@ -22,13 +22,9 @@ from .model_v2 import Model
 from loss import FocalLoss, lsep_loss
 from config import Config
 
-# TODO: config
-# TODO: sgd
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
-# TODO: adamw
 # TODO: better minimum for lr
-# TODO: handle beta when no OneCycle
 
 FOLDS = list(range(1, 5 + 1))
 
@@ -67,8 +63,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             image = self.transform(image)
 
         label = np.zeros(NUM_CLASSES, dtype=np.float32)
-        for l in row['attribute_ids']:  # TODO:
-            label[l] = 1.
+        label[row['attribute_ids']] = 1.
 
         return image, label, row['id']
 
@@ -172,7 +167,6 @@ def find_threshold_global(input, target):
 NUM_CLASSES = len(classes)
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-# TODO: pin memory
 # TODO: stochastic weight averaging
 # TODO: group images by buckets (size, ratio) and batch
 # TODO: hinge loss clamp instead of minimum
@@ -187,14 +181,13 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: tune on large size
 # TODO: cross val
 # TODO: smart sampling
+# TODO: cutout
 # TODO: larger model
-# TODO: imagenet papers
 # TODO: load image as jpeg
 # TODO: min 1 tag?
 # TODO: pick threshold to match ratio
 # TODO: compute smoothing beta from batch size and num steps
 # TODO: speedup image loading
-# TODO: pin memory
 # TODO: smart sampling
 # TODO: better threshold search (step, epochs)
 # TODO: weight standartization
@@ -264,7 +257,6 @@ test_transform = eval_transform
 # ])
 
 
-# TODO: should use top momentum to pick best lr?
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
     if optimizer == 'adam':
         return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
@@ -312,7 +304,6 @@ def find_lr():
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
-    # TODO: correct beta for find_lr
     optimizer = build_optimizer(
         config.opt.type, model.parameters(), min_lr, config.opt.beta, weight_decay=config.opt.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
