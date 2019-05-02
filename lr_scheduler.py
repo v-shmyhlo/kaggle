@@ -29,7 +29,8 @@ class OneCycleScheduler(LRScheduler):
     def step(self):
         self.epoch += 1
 
-        lr, beta = self.get_lr()
+        lr = self.get_lr()
+        beta = self.get_beta()
 
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
@@ -47,13 +48,23 @@ class OneCycleScheduler(LRScheduler):
         if self.epoch < mid:
             r = self.epoch / mid
             lr = self.annealing(self.lr[0], self.lr[1], r)
-            beta = self.annealing(self.beta[0], self.beta[1], r)
         else:
             r = (self.epoch - mid) / (self.max_steps - mid)
             lr = self.annealing(self.lr[1], self.lr[0] / 1e4, r)
+
+        return lr
+
+    def get_beta(self):
+        mid = round(self.max_steps * self.peak_pos)
+
+        if self.epoch < mid:
+            r = self.epoch / mid
+            beta = self.annealing(self.beta[0], self.beta[1], r)
+        else:
+            r = (self.epoch - mid) / (self.max_steps - mid)
             beta = self.annealing(self.beta[1], self.beta[0], r)
 
-        return lr, beta
+        return beta
 
 
 def annealing_linear(start, end, r):
