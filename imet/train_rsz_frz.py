@@ -470,6 +470,8 @@ def train_fold(fold, lr):
 
         params = list(model.parameters())
         num_frozen = round((config.epochs - epoch - 1) / (config.epochs) * len(params))
+        for p in params:
+            p.requires_grad = True
         for p in params[:num_frozen]:
             p.requires_grad = False
         print('>>>>>>>>>>', num_frozen, len(params), crop_size, config.image_size)
