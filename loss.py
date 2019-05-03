@@ -52,8 +52,6 @@ def hinge_loss(input, target, delta=1.):
         neg_examples = torch.transpose(input[i, neg], 0, 1)
         loss += torch.sum(torch.max(torch.tensor(0.), delta + neg_examples - pos_examples))
 
-    loss /= input.size(0)
-
     return loss
 
 
@@ -70,6 +68,5 @@ def lsep_loss(input, target):
         loss += torch.sum(torch.exp(neg_examples - pos_examples))
 
     loss = torch.log(1 + loss)
-    loss /= input.size(0)
 
     return loss

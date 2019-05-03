@@ -111,9 +111,7 @@ def compute_loss(input, target, smoothing):
         logits, thresholds = input.split(input.shape[1] // 2, 1)
 
         class_loss = compute_class_loss(input=logits, target=target)
-        thresh_loss = F.binary_cross_entropy_with_logits(
-            input=logits.detach() - thresholds, target=target, reduction='sum')
-        thresh_loss /= logits.size(0)
+        thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
 
         loss = (class_loss + thresh_loss) / 2
     else:
