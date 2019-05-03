@@ -471,6 +471,7 @@ def train_fold(fold, lr):
         num_frozen = round((config.epochs - epoch - 1) / (config.epochs) * len(params))
         for p in params[:num_frozen]:
             p.requires_grad = False
+        print('>>>>>>>>>>', num_frozen, len(params))
 
         train_epoch(
             model=model,
