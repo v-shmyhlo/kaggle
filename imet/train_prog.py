@@ -427,6 +427,8 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, lr):
     train_indices, eval_indices = indices_for_fold(fold, len(train_data))
 
+    train_transform, eval_transform, _ = build_transforms(config.image_size)
+
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
@@ -457,8 +459,14 @@ def train_fold(fold, lr):
 
     best_score = 0
     for epoch in range(config.epochs):
-        train_transform, eval_transform, _ = build_transforms(
-            32 + epoch / (config.epochs - 1) * (config.image_size - 32))
+        # crop_sizes = 32 + np.arange(config.epochs) / (config.epochs - 1) * (config.image_size - 32)
+        crop_sizes = 32 * ((config.image_size / 32)**(1 / config.epochs))**np.linspace(0, config.epochs, config.epochs)
+        assert crop_sizes.shape == (10,)
+        crop_sizes = [round(x) for x in crop_sizes]
+        crop_size = crop_sizes[epoch].item()
+        print('>>>', crop_size, crop_sizes)
+
+        train_transform, eval_transform, _ = build_transforms(crop_size)
 
         train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
         train_data_loader = torch.utils.data.DataLoader(
