@@ -19,7 +19,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad
 from .model_v2 import Model
-from loss import FocalLoss, lsep_loss
+from loss import FocalLoss, lsep_loss, centered_hinge_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -101,6 +101,8 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
+    elif config.loss.type == 'chinge':
+        compute_class_loss = centered_hinge_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 

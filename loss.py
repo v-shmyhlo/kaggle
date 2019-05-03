@@ -40,6 +40,13 @@ def f2_loss(input, target, eps=1e-7):
     return loss
 
 
+def centered_hinge_loss(input, target, delta=1.):
+    pos = torch.min(torch.tensor(0.), (input - delta) * target)
+    neg = torch.max(torch.tensor(0.), (input + delta) * (1 - target))
+
+    return torch.sum(neg - pos)
+
+
 def hinge_loss(input, target, delta=1.):
     positive_indices = (target > 0.5).float()
     negative_indices = (target <= 0.5).float()
