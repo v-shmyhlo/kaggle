@@ -26,7 +26,7 @@ class Model(nn.Module):
         elif arch.type == 'seresnext50':
             block = SEResNeXtBottleneck
             self.model = SENet(
-                block, [3, 4, 6, 3], groups=32, reduction=16, dropout_p=None,
+                block, [3, 4, 6, 3], groups=32, reduction=16, dropout_p=arch.dropout,
                 inplanes=64, input_3x3=False, downsample_kernel_size=1, downsample_padding=0,
                 num_classes=1000)
             settings = pretrainedmodels.models.senet.pretrained_settings['se_resnext50_32x4d']['imagenet']
