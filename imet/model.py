@@ -29,6 +29,18 @@ class Model(nn.Module):
             settings = pretrainedmodels.models.senet.pretrained_settings['se_resnext50_32x4d']['imagenet']
             pretrainedmodels.models.senet.initialize_pretrained_model(self.model, 1000, settings)
             self.model.last_linear = nn.Linear(512 * block.expansion, num_classes)
+        elif arch == 'senet154':
+            block = pretrainedmodels.models.senet.SEBottleneck
+            self.model = SENet(
+                block,
+                [3, 8, 36, 3],
+                groups=64,
+                reduction=16,
+                dropout_p=arch.dropout,
+                num_classes=num_classes)
+            settings = pretrainedmodels.models.senet.pretrained_settings['senet154']['imagenet']
+            pretrainedmodels.models.senet.initialize_pretrained_model(self.model, 1000, settings)
+            self.model.last_linear = nn.Linear(512 * block.expansion, num_classes)
         else:
             raise AssertionError('invalid ARCH {}'.format(arch))
 
