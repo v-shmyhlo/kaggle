@@ -11,12 +11,12 @@ loss:
     gamma: 2.0
 
 model:
-  type: seresnext50
+  type: senet154
   predict_thresh: False
 
 aug:
   type: pad
-  aspect: True
+  aspect: False
   color: 0.1
   crop_scale: 0.875 # 224 / 256
 
