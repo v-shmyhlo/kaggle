@@ -427,6 +427,8 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, lr):
     train_indices, eval_indices = indices_for_fold(fold, len(train_data))
 
+    train_transform, eval_transform, _ = build_transforms(config.image_size)
+
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)

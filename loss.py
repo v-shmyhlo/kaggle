@@ -41,8 +41,9 @@ def f2_loss(input, target, eps=1e-7):
 
 
 def centered_hinge_loss(input, target, delta=1.):
-    pos = torch.min(torch.tensor(0.), (input - delta) * target)
-    neg = torch.max(torch.tensor(0.), (input + delta) * (1 - target))
+    zero = torch.tensor(0.).to(input.device)
+    pos = torch.min(zero, (input - delta) * target)
+    neg = torch.max(zero, (input + delta) * (1 - target))
 
     return torch.sum(neg - pos)
 

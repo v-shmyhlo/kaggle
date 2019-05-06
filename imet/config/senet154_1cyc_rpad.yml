@@ -1,7 +1,7 @@
 seed: 42
-epochs: 10
+epochs: 30
 image_size: 224
-batch_size: 76
+batch_size: 24
 label_smooth:
 
 loss:
@@ -13,11 +13,12 @@ loss:
 model:
   type: senet154
   predict_thresh: False
+  dropout: 0.2
 
 aug:
-  type: pad
-  aspect: False
-  color: 0.1
+  type: rpad
+  scale: True
+  color: 0.3
   crop_scale: 0.875 # 224 / 256
 
 opt:
@@ -27,7 +28,7 @@ opt:
   weight_decay: 1e-4
 
 sched:
-  type: onecycle
+  type: plateau
 
   onecycle:
     anneal: linear

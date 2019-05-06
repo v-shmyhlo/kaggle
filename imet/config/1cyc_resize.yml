@@ -13,6 +13,7 @@ loss:
 model:
   type: seresnext50
   predict_thresh: False
+  dropout:
 
 aug:
   type: resize

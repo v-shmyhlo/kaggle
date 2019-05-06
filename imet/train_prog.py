@@ -17,8 +17,8 @@ from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
-from transform import SquarePad
-from .model_v2 import Model
+from transform import SquarePad, RatioPad
+from .model import Model
 from loss import FocalLoss, lsep_loss, centered_hinge_loss
 from config import Config
 
@@ -124,7 +124,7 @@ def compute_loss(input, target, smoothing):
 
 def output_to_logits(input):
     if config.model.predict_thresh:
-        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits, thresholds = input.split(input.shape[1] // 2, -1)
         logits = logits - thresholds
     else:
         logits = input
@@ -206,11 +206,13 @@ def build_transforms(crop_size):
 
         train_transform = resize
         eval_transform = resize
+        test_transform = resize
     elif config.aug.type == 'crop':
         resize = T.Resize(image_size_corrected)
 
         train_transform = resize
         eval_transform = resize
+        test_transform = resize
     elif config.aug.type == 'pad':
         pad_and_resize = T.Compose([
             SquarePad(padding_mode='edge'),
@@ -219,11 +221,23 @@ def build_transforms(crop_size):
 
         train_transform = pad_and_resize
         eval_transform = pad_and_resize
+        test_transform = pad_and_resize
+    elif config.aug.type == 'rpad':
+        pad_and_resize = T.Compose([
+            RatioPad(padding_mode='edge'),
+            T.Resize(image_size_corrected),
+        ])
+
+        train_transform = pad_and_resize
+        eval_transform = pad_and_resize
+        test_transform = pad_and_resize
     else:
         raise AssertionError('invalid aug {}'.format(config.aug.type))
 
-    if config.aug.aspect:
-        raise AssertionError('aspect augmentation not supported')
+    if config.aug.scale:
+        crop_scale = (config.aug.crop_scale**2 * 2 - 1, 1.)
+        assert config.aug.crop_scale == np.sqrt(np.mean(crop_scale))
+        random_crop = T.RandomResizedCrop(crop_size, scale=crop_scale)
     else:
         random_crop = T.RandomCrop(crop_size)
 
@@ -235,7 +249,11 @@ def build_transforms(crop_size):
         train_transform,
         random_crop,
         T.RandomHorizontalFlip(),
-        T.ColorJitter(brightness=config.aug.color, contrast=config.aug.color, saturation=config.aug.color),
+        T.ColorJitter(
+            brightness=config.aug.color.brightness,
+            contrast=config.aug.color.contrast,
+            saturation=config.aug.color.saturation,
+            hue=config.aug.color.hue),
         to_tensor_and_norm,
     ])
     eval_transform = T.Compose([
@@ -243,7 +261,11 @@ def build_transforms(crop_size):
         T.CenterCrop(crop_size),
         to_tensor_and_norm,
     ])
-    test_transform = eval_transform
+    test_transform = T.Compose([
+        test_transform,
+        T.TenCrop(crop_size),
+        T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0))
+    ])
 
     return train_transform, eval_transform, test_transform
 
@@ -286,7 +308,7 @@ def find_lr():
     data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
-    min_lr = 1e-8
+    min_lr = 1e-7
     max_lr = 10.
     gamma = (max_lr / min_lr)**(1 / len(data_loader))
 
@@ -453,17 +475,21 @@ def train_fold(fold, lr):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=3, verbose=True))
+                optimizer, mode='max', factor=0.5, patience=2, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
     best_score = 0
     for epoch in range(config.epochs):
+        # crop_size = config.image_size
+
         # crop_sizes = 32 + np.arange(config.epochs) / (config.epochs - 1) * (config.image_size - 32)
-        crop_sizes = 32 * ((config.image_size / 32)**(1 / config.epochs))**np.linspace(0, config.epochs, config.epochs)
-        assert crop_sizes.shape == (10,)
-        crop_sizes = [round(x) for x in crop_sizes]
-        crop_size = crop_sizes[epoch].item()
+        # crop_sizes = 32 * ((config.image_size / 32)**(1 / config.epochs))**np.linspace(0, config.epochs, config.epochs)
+        # crop_sizes = np.sqrt(32**2 + np.arange(config.epochs) / (config.epochs - 1) * (config.image_size**2 - 32**2))
+        crop_sizes = np.array([config.image_size] * config.epochs)
+        assert crop_sizes.shape == (config.epochs,)
+        crop_sizes = [round(x.item()) for x in crop_sizes]
+        crop_size = crop_sizes[epoch]
         print('>>>', crop_size, crop_sizes)
 
         train_transform, eval_transform, _ = build_transforms(crop_size)
@@ -504,7 +530,7 @@ def build_submission(folds, threshold):
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
             fold_predictions = output_to_logits(fold_predictions)
-            predictions = predictions + fold_predictions.sigmoid()
+            predictions = predictions + fold_predictions.sigmoid().mean(1)
             ids = fold_ids
 
         predictions = predictions / len(folds)
@@ -526,7 +552,7 @@ def predict_on_test_using_fold(fold):
     _, _, test_transform = build_transforms(config.image_size)
     test_dataset = TestDataset(transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=config.batch_size, num_workers=args.workers)
+        test_dataset, batch_size=config.batch_size // 2, num_workers=args.workers)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -538,7 +564,12 @@ def predict_on_test_using_fold(fold):
         fold_ids = []
         for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
             images = images.to(DEVICE)
+
+            b, n, c, h, w = images.size()
+            images = images.view(b * n, c, h, w)
             logits = model(images)
+            logits = logits.view(b, n, NUM_CLASSES)
+
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 

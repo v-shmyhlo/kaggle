@@ -16,14 +16,14 @@ model:
   dropout:
 
 aug:
-  type: pad
+  type: rpad
   scale: True
-  color: 0.3
+  color: 0.1
   crop_scale: 0.875 # 224 / 256
 
 opt:
-  type: adam
-  lr: 1e-3
+  type: momentum
+  lr: 0.1
   beta: 0.9
   weight_decay: 1e-4
 

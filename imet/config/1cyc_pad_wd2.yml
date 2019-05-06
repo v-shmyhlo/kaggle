@@ -25,7 +25,7 @@ opt:
   type: adam
   lr: 1e-3
   beta: 0.9
-  weight_decay: 1e-4
+  weight_decay: 2e-4
 
 sched:
   type: onecycle

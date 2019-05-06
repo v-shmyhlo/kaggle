@@ -23,9 +23,6 @@ from loss import lsep_loss
 from frees.transform import RandomCrop, CentralCrop
 from frees.metric import calculate_per_class_lwlrap
 
-# TODO: adapt torch 1.1 scheduler
-fail
-
 # TODO: try max pool
 # TODO: sgd
 # TODO: check del
@@ -199,7 +196,7 @@ def find_lr(train_eval_data):
         num_workers=args.workers,
         collate_fn=partial(collate_fn, pad=config.pad))
 
-    min_lr = 1e-8
+    min_lr = 1e-7
     max_lr = 10.
     gamma = (max_lr / min_lr)**(1 / len(train_eval_data_loader))
 
@@ -229,10 +226,10 @@ def find_lr(train_eval_data):
         if lim < losses[-1]:
             break
 
-        scheduler.step()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
+        scheduler.step()
 
         if args.debug:
             break
@@ -276,10 +273,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
-        scheduler.step()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
+        scheduler.step()
 
         if args.debug:
             break
@@ -388,7 +385,6 @@ def train_fold(fold, train_eval_data, lr):
 
     best_score = 0
     for epoch in range(config.epochs):
-        scheduler.step_epoch()
 
         train_epoch(
             model=model,
@@ -403,6 +399,7 @@ def train_fold(fold, train_eval_data, lr):
             fold=fold,
             epoch=epoch)
 
+        scheduler.step_epoch()
         scheduler.step_score(score)
 
         if score > best_score:

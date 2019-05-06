@@ -1,8 +1,11 @@
 seed: 42
 epochs: 10
-batch_size: 4 # FIXME:
-model: attn
+batch_size: 32
 pad: silence
+
+model:
+  type: attn
+  dropout: 0.5
 
 aug:
   type: pad

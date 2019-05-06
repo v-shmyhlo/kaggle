@@ -8,14 +8,14 @@ class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
-        if model == 'avg':
+        if model.type == 'avg':
             self.model = AvgPoolModel(num_classes)
-        elif model == 'max':
+        elif model.type == 'max':
             self.model = MaxPoolModel(num_classes)
-        elif model == 'attn':
+        elif model.type == 'attn':
             self.model = AttentionModel(num_classes)
         else:
-            raise AssertionError('invalid model {}'.format(model))
+            raise AssertionError('invalid model {}'.format(model.type))
 
     def forward(self, input, mask):
         return self.model(input, mask)

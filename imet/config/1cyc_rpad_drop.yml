@@ -13,10 +13,10 @@ loss:
 model:
   type: seresnext50
   predict_thresh: False
-  dropout:
+  dropout: 0.2
 
 aug:
-  type: pad
+  type: rpad
   scale: True
   color: 0.3
   crop_scale: 0.875 # 224 / 256
@@ -33,3 +33,4 @@ sched:
   onecycle:
     anneal: linear
     beta: [0.95, 0.85]
+

@@ -18,7 +18,7 @@ import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from transform import SquarePad
-from .model_v2 import Model
+from .model import Model
 from loss import FocalLoss, lsep_loss, centered_hinge_loss
 from config import Config
 

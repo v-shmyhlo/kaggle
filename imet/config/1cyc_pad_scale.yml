@@ -18,7 +18,7 @@ model:
 aug:
   type: pad
   scale: True
-  color: 0.3
+  color: 0.1
   crop_scale: 0.875 # 224 / 256
 
 opt:
