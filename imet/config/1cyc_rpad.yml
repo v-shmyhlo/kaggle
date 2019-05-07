@@ -18,7 +18,11 @@ model:
 aug:
   type: rpad
   scale: True
-  color: 0.3
+  color:
+    brightness: 0.3
+    contrast: 0.3
+    saturation: 0.3
+    hue: 0.
   crop_scale: 0.875 # 224 / 256
 
 opt:

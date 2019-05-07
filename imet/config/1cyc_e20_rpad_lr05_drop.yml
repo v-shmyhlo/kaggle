@@ -1,5 +1,5 @@
 seed: 42
-epochs: 10
+epochs: 20
 image_size: 224
 batch_size: 76
 label_smooth:
