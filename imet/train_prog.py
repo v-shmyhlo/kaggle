@@ -17,7 +17,7 @@ from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
-from transform import SquarePad, RatioPad
+from transform import SquarePad, RatioPad, Cutout
 from .model import Model
 from loss import FocalLoss, lsep_loss, centered_hinge_loss
 from config import Config
@@ -107,15 +107,15 @@ def compute_loss(input, target, smoothing):
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 
     if smoothing is not None:
-        target = target * smoothing + (1 - target) * (1 - smoothing)
+        target = (1 - smoothing) * target + smoothing / 2
 
     if config.model.predict_thresh:
-        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits, thresholds = input.split(input.size(-1) // 2, -1)
 
         class_loss = compute_class_loss(input=logits, target=target)
         thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
 
-        loss = (class_loss + thresh_loss) / 2
+        loss = (class_loss.mean() + thresh_loss.mean()) / 2  # TODO: remove mean?
     else:
         loss = compute_class_loss(input=input, target=target)
 
@@ -124,7 +124,7 @@ def compute_loss(input, target, smoothing):
 
 def output_to_logits(input):
     if config.model.predict_thresh:
-        logits, thresholds = input.split(input.shape[1] // 2, -1)
+        logits, thresholds = input.split(input.size(-1) // 2, -1)
         logits = logits - thresholds
     else:
         logits = input
@@ -194,7 +194,6 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: smart sampling
 # TODO: better threshold search (step, epochs)
 # TODO: weight standartization
-# TODO: label smoothing
 # TODO: build sched for lr find
 
 
@@ -255,6 +254,7 @@ def build_transforms(crop_size):
             saturation=config.aug.color.saturation,
             hue=config.aug.color.hue),
         to_tensor_and_norm,
+        Cutout(n_holes=config.aug.cutout.n_holes, length=config.aug.cutout.n_holes),
     ])
     eval_transform = T.Compose([
         eval_transform,
@@ -302,6 +302,28 @@ def mixup(images, labels):
     return images, labels
 
 
+class MixupDataLoader(object):
+    def __init__(self, data_loader, alpha=0.2):
+        self.data_loader = data_loader
+        self.dist = torch.distributions.beta.Beta(alpha, alpha)
+
+        # TODO: handle ids
+        # TODO: sample beta for each sample
+
+    def __iter__(self):
+        for (images_1, labels_1, ids_1), (images_2, labels_2, ids_2) in zip(self.data_loader, self.data_loader):
+            lam = self.dist.sample()
+
+            images = lam * images_1 + (1 - lam) * images_2
+            labels = lam * labels_1 + (1 - lam) * labels_2
+            ids = ids_1 if lam > 0.5 else ids_2
+
+            yield images, labels, ids
+
+    def __len__(self):
+        return len(self.data_loader)
+
+
 def find_lr():
     train_transform, _, _ = build_transforms(config.image_size)
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
@@ -325,7 +347,6 @@ def find_lr():
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        # images, labels = mixup(images, labels)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
@@ -381,12 +402,12 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        # images, labels = mixup(images, labels)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
         metrics['loss'].update(loss.data.cpu().numpy())
 
+        lr, beta = scheduler.get_lr()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
@@ -400,7 +421,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
         print('[FOLD {}][EPOCH {}][TRAIN] loss: {:.4f}'.format(fold, epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
-        lr, beta = scheduler.get_lr()
         writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_scalar('beta', beta, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
@@ -454,6 +474,8 @@ def train_fold(fold, lr):
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+    if config.mixup:
+        train_data_loader = MixupDataLoader(train_data_loader)
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
@@ -472,6 +494,10 @@ def train_fold(fold, lr):
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
+    elif config.sched.type == 'cawr':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=len(train_data_loader), T_mult=2))
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -497,6 +523,8 @@ def train_fold(fold, lr):
         train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
         train_data_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        if config.mixup:
+            train_data_loader = MixupDataLoader(train_data_loader)
 
         eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
         eval_data_loader = torch.utils.data.DataLoader(
@@ -568,7 +596,7 @@ def predict_on_test_using_fold(fold):
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
             logits = model(images)
-            logits = logits.view(b, n, NUM_CLASSES)
+            logits = logits.view(b, n, NUM_CLASSES * (1 + config.model.predict_thresh))
 
             fold_predictions.append(logits)
             fold_ids.extend(ids)

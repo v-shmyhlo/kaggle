@@ -1,6 +1,9 @@
 import numpy as np
 
 
+# TODO: refactor to use optimizers LR (check torch code)
+
+
 class LRScheduler(object):
     def step(self):
         raise NotImplementedError

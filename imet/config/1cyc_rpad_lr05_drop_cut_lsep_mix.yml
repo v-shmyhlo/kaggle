@@ -3,27 +3,35 @@ epochs: 10
 image_size: 224
 batch_size: 76
 label_smooth:
+mixup: True
 
 loss:
-  type: focal
+  type: lsep
 
   focal:
     gamma: 2.0
 
 model:
   type: seresnext50
-  predict_thresh: False
-  dropout:
+  predict_thresh: True
+  dropout: 0.2
 
 aug:
-  type: resize
-  aspect: False
-  color: 0.1
+  type: rpad
   crop_scale: 0.875 # 224 / 256
+  scale: True
+  color:
+    brightness: 0.3
+    contrast: 0.3
+    saturation: 0.3
+    hue: 0.
+  cutout:
+    n_holes: 1
+    length: 128
 
 opt:
   type: adam
-  lr: 1e-3
+  lr: 5e-4
   beta: 0.9
   weight_decay: 1e-4
 
@@ -33,3 +41,4 @@ sched:
   onecycle:
     anneal: linear
     beta: [0.95, 0.85]
+
