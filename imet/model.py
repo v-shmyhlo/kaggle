@@ -13,21 +13,39 @@ class Model(nn.Module):
         if arch.predict_thresh:
             num_classes *= 2
 
-        if arch.type == 'resnet34':
+        if arch.type == 'resnet18':
+            block = torchvision.models.resnet.BasicBlock
+            self.model = ResNet(block, [2, 2, 2, 2])
+            self.model.load_state_dict(torch.utils.model_zoo.load_url(torchvision.models.resnet.model_urls['resnet18']))
+            self.model.fc = nn.Sequential(
+                nn.Dropout(arch.dropout),
+                nn.Linear(512 * block.expansion, num_classes))
+        elif arch.type == 'resnet34':
             block = torchvision.models.resnet.BasicBlock
             self.model = ResNet(block, [3, 4, 6, 3])
             self.model.load_state_dict(torch.utils.model_zoo.load_url(torchvision.models.resnet.model_urls['resnet34']))
-            self.model.fc = nn.Linear(512 * block.expansion, num_classes)
+            self.model.fc = nn.Sequential(
+                nn.Dropout(arch.dropout),
+                nn.Linear(512 * block.expansion, num_classes))
         elif arch.type == 'resnet50':
             block = torchvision.models.resnet.Bottleneck
             self.model = ResNet(block, [3, 4, 6, 3])
             self.model.load_state_dict(torch.utils.model_zoo.load_url(torchvision.models.resnet.model_urls['resnet50']))
-            self.model.fc = nn.Linear(512 * block.expansion, num_classes)
+            self.model.fc = nn.Sequential(
+                nn.Dropout(arch.dropout),
+                nn.Linear(512 * block.expansion, num_classes))
         elif arch.type == 'seresnext50':
             block = SEResNeXtBottleneck
             self.model = SENet(
-                block, [3, 4, 6, 3], groups=32, reduction=16, dropout_p=arch.dropout,
-                inplanes=64, input_3x3=False, downsample_kernel_size=1, downsample_padding=0,
+                block,
+                [3, 4, 6, 3],
+                groups=32,
+                reduction=16,
+                dropout_p=arch.dropout,
+                inplanes=64,
+                input_3x3=False,
+                downsample_kernel_size=1,
+                downsample_padding=0,
                 num_classes=1000)
             settings = pretrainedmodels.models.senet.pretrained_settings['se_resnext50_32x4d']['imagenet']
             pretrainedmodels.models.senet.initialize_pretrained_model(self.model, 1000, settings)

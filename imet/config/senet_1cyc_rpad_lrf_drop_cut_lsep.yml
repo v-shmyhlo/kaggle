@@ -1,7 +1,7 @@
 seed: 42
 epochs: 10
 image_size: 224
-batch_size: 76
+batch_size: 24
 label_smooth:
 mixup: False
 
@@ -12,7 +12,7 @@ loss:
     gamma: 2.0
 
 model:
-  type: seresnext50
+  type: senet154
   predict_thresh: True
   dropout: 0.2
 
@@ -31,7 +31,7 @@ aug:
 
 opt:
   type: adam
-  lr: 5e-4
+  lr:
   beta: 0.9
   weight_decay: 1e-4
 

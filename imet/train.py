@@ -6,6 +6,9 @@ import pandas as pd
 import os
 from tqdm import tqdm
 import torch
+import torch.utils
+import torch.utils.data
+import torch.distributions
 import torchvision
 import torchvision.transforms as T
 from PIL import Image
@@ -17,9 +20,9 @@ from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
-from transform import SquarePad
+from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss, centered_hinge_loss
+from loss import FocalLoss, lsep_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -101,21 +104,19 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
-    elif config.loss.type == 'chinge':
-        compute_class_loss = centered_hinge_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 
     if smoothing is not None:
-        target = target * smoothing + (1 - target) * (1 - smoothing)
+        target = (1 - smoothing) * target + smoothing / 2
 
     if config.model.predict_thresh:
-        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits, thresholds = input.split(input.size(-1) // 2, -1)
 
         class_loss = compute_class_loss(input=logits, target=target)
         thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
 
-        loss = (class_loss + thresh_loss) / 2
+        loss = (class_loss.mean() + thresh_loss.mean()) / 2  # TODO: remove mean?
     else:
         loss = compute_class_loss(input=input, target=target)
 
@@ -124,7 +125,7 @@ def compute_loss(input, target, smoothing):
 
 def output_to_logits(input):
     if config.model.predict_thresh:
-        logits, thresholds = input.split(input.shape[1] // 2, 1)
+        logits, thresholds = input.split(input.size(-1) // 2, -1)
         logits = logits - thresholds
     else:
         logits = input
@@ -193,7 +194,6 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 # TODO: smart sampling
 # TODO: better threshold search (step, epochs)
 # TODO: weight standartization
-# TODO: label smoothing
 # TODO: build sched for lr find
 
 
@@ -204,11 +204,13 @@ if config.aug.type == 'resize':
 
     train_transform = resize
     eval_transform = resize
+    test_transform = resize
 elif config.aug.type == 'crop':
     resize = T.Resize(image_size_corrected)
 
     train_transform = resize
     eval_transform = resize
+    test_transform = resize
 elif config.aug.type == 'pad':
     pad_and_resize = T.Compose([
         SquarePad(padding_mode='edge'),
@@ -217,12 +219,23 @@ elif config.aug.type == 'pad':
 
     train_transform = pad_and_resize
     eval_transform = pad_and_resize
+    test_transform = pad_and_resize
+elif config.aug.type == 'rpad':
+    pad_and_resize = T.Compose([
+        RatioPad(padding_mode='edge'),
+        T.Resize(image_size_corrected),
+    ])
+
+    train_transform = pad_and_resize
+    eval_transform = pad_and_resize
+    test_transform = pad_and_resize
 else:
     raise AssertionError('invalid aug {}'.format(config.aug.type))
 
-if config.aug.aspect:
-    random_crop = T.RandomResizedCrop(
-        config.image_size, scale=(config.aug.crop_scale**2, config.aug.crop_scale**2), ratio=(3. / 4., 4. / 3.))
+if config.aug.scale:
+    crop_scale = (config.aug.crop_scale**2 * 2 - 1, 1.)
+    assert config.aug.crop_scale == np.sqrt(np.mean(crop_scale))
+    random_crop = T.RandomResizedCrop(config.image_size, scale=crop_scale)
 else:
     random_crop = T.RandomCrop(config.image_size)
 
@@ -234,29 +247,24 @@ train_transform = T.Compose([
     train_transform,
     random_crop,
     T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=config.aug.color, contrast=config.aug.color, saturation=config.aug.color),
+    T.ColorJitter(
+        brightness=config.aug.color.brightness,
+        contrast=config.aug.color.contrast,
+        saturation=config.aug.color.saturation,
+        hue=config.aug.color.hue),
     to_tensor_and_norm,
+    Cutout(n_holes=config.aug.cutout.n_holes, length=round(config.image_size * config.aug.cutout.length)),
 ])
 eval_transform = T.Compose([
     eval_transform,
     T.CenterCrop(config.image_size),
     to_tensor_and_norm,
 ])
-test_transform = eval_transform
-
-
-# test_transform = T.Compose([
-#     SquarePad(padding_mode='edge'),
-#     T.Resize(image_size_corrected),
-#     T.TenCrop(args.image_size),
-#     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-# ])
-# test_transform = T.Compose([
-#     SquarePad(padding_mode='edge'),
-#     T.Resize(image_size_corrected),
-#     T.TenCrop(args.image_size),
-#     T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0)),
-# ])
+test_transform = T.Compose([
+    test_transform,
+    T.TenCrop(config.image_size),
+    T.Lambda(lambda xs: torch.stack([to_tensor_and_norm(x) for x in xs], 0))
+])
 
 
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
@@ -279,16 +287,27 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
-def mixup(images, labels):
-    bs = images.size(0)
-    images_a, images_b = torch.split(images, bs // 2)
-    labels_a, labels_b = torch.split(labels, bs // 2)
+class MixupDataLoader(object):
+    def __init__(self, data_loader, alpha=0.2):
+        self.data_loader = data_loader
+        self.dist = torch.distributions.beta.Beta(alpha, alpha)
 
-    r = torch.rand(())
-    images = r * images_a + (1 - r) * images_b
-    labels = r * labels_a + (1 - r) * labels_b
+        # TODO: handle ids
+        # TODO: sample beta for each sample
+        # TODO: speedup
 
-    return images, labels
+    def __iter__(self):
+        for (images_1, labels_1, ids_1), (images_2, labels_2, ids_2) in zip(self.data_loader, self.data_loader):
+            lam = self.dist.sample().to(DEVICE)
+
+            images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
+            labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
+            ids = ids_1 if lam > 0.5 else ids_2
+
+            yield images, labels, ids
+
+    def __len__(self):
+        return len(self.data_loader)
 
 
 def find_lr():
@@ -296,7 +315,7 @@ def find_lr():
     data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
 
-    min_lr = 1e-8
+    min_lr = 1e-7
     max_lr = 10.
     gamma = (max_lr / min_lr)**(1 / len(data_loader))
 
@@ -313,7 +332,6 @@ def find_lr():
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        # images, labels = mixup(images, labels)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
@@ -369,12 +387,12 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     model.train()
     for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
-        # images, labels = mixup(images, labels)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
         metrics['loss'].update(loss.data.cpu().numpy())
 
+        lr, beta = scheduler.get_lr()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
@@ -388,7 +406,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
         print('[FOLD {}][EPOCH {}][TRAIN] loss: {:.4f}'.format(fold, epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
-        lr, beta = scheduler.get_lr()
         writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_scalar('beta', beta, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
@@ -440,6 +457,8 @@ def train_fold(fold, lr):
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+    if config.mixup:
+        train_data_loader = MixupDataLoader(train_data_loader)
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
@@ -458,16 +477,19 @@ def train_fold(fold, lr):
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
+    elif config.sched.type == 'cawr':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=len(train_data_loader), T_mult=2))
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=3, verbose=True))
+                optimizer, mode='max', factor=0.5, patience=0, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
     best_score = 0
     for epoch in range(config.epochs):
-
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -475,11 +497,13 @@ def train_fold(fold, lr):
             data_loader=train_data_loader,
             fold=fold,
             epoch=epoch)
+        gc.collect()
         score = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
             fold=fold,
             epoch=epoch)
+        gc.collect()
 
         scheduler.step_epoch()
         scheduler.step_score(score)
@@ -496,7 +520,7 @@ def build_submission(folds, threshold):
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
             fold_predictions = output_to_logits(fold_predictions)
-            predictions = predictions + fold_predictions.sigmoid()
+            predictions = predictions + fold_predictions.sigmoid().mean(1)
             ids = fold_ids
 
         predictions = predictions / len(folds)
@@ -517,7 +541,7 @@ def build_submission(folds, threshold):
 def predict_on_test_using_fold(fold):
     test_dataset = TestDataset(transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=config.batch_size, num_workers=args.workers)
+        test_dataset, batch_size=config.batch_size // 2, num_workers=args.workers)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -529,7 +553,12 @@ def predict_on_test_using_fold(fold):
         fold_ids = []
         for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
             images = images.to(DEVICE)
+
+            b, n, c, h, w = images.size()
+            images = images.view(b * n, c, h, w)
             logits = model(images)
+            logits = logits.view(b, n, NUM_CLASSES * (1 + config.model.predict_thresh))
+
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -601,8 +630,8 @@ def main():
 
     if config.opt.lr is None:
         lr = find_lr()
+        print('find_lr: {}'.format(lr))
         gc.collect()
-
     else:
         lr = config.opt.lr
 

@@ -1,5 +1,5 @@
 seed: 42
-epochs: 10
+epochs: 30
 image_size: 224
 batch_size: 76
 label_smooth:
@@ -27,7 +27,6 @@ aug:
     hue: 0.
   cutout:
     n_holes: 1
-    length: 0.5
 
 opt:
   type: adam
@@ -36,7 +35,7 @@ opt:
   weight_decay: 1e-4
 
 sched:
-  type: onecycle
+  type: plateau
 
   onecycle:
     anneal: linear

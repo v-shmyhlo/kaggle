@@ -19,7 +19,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss, centered_hinge_loss
+from loss import FocalLoss, lsep_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -101,8 +101,6 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
-    elif config.loss.type == 'chinge':
-        compute_class_loss = centered_hinge_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 
@@ -254,7 +252,7 @@ def build_transforms(crop_size):
             saturation=config.aug.color.saturation,
             hue=config.aug.color.hue),
         to_tensor_and_norm,
-        Cutout(n_holes=config.aug.cutout.n_holes, length=config.aug.cutout.n_holes),
+        Cutout(n_holes=config.aug.cutout.n_holes, length=round(crop_size * config.aug.cutout.length)),
     ])
     eval_transform = T.Compose([
         eval_transform,
@@ -290,18 +288,6 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
-def mixup(images, labels):
-    bs = images.size(0)
-    images_a, images_b = torch.split(images, bs // 2)
-    labels_a, labels_b = torch.split(labels, bs // 2)
-
-    r = torch.rand(())
-    images = r * images_a + (1 - r) * images_b
-    labels = r * labels_a + (1 - r) * labels_b
-
-    return images, labels
-
-
 class MixupDataLoader(object):
     def __init__(self, data_loader, alpha=0.2):
         self.data_loader = data_loader
@@ -309,13 +295,14 @@ class MixupDataLoader(object):
 
         # TODO: handle ids
         # TODO: sample beta for each sample
+        # TODO: speedup
 
     def __iter__(self):
         for (images_1, labels_1, ids_1), (images_2, labels_2, ids_2) in zip(self.data_loader, self.data_loader):
-            lam = self.dist.sample()
+            lam = self.dist.sample().to(DEVICE)
 
-            images = lam * images_1 + (1 - lam) * images_2
-            labels = lam * labels_1 + (1 - lam) * labels_2
+            images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
+            labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
             ids = ids_1 if lam > 0.5 else ids_2
 
             yield images, labels, ids
@@ -501,7 +488,7 @@ def train_fold(fold, lr):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=2, verbose=True))
+                optimizer, mode='max', factor=0.5, patience=0, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
@@ -509,8 +496,9 @@ def train_fold(fold, lr):
     for epoch in range(config.epochs):
         # crop_size = config.image_size
 
+        # ms = config.image_size // 2
         # crop_sizes = 32 + np.arange(config.epochs) / (config.epochs - 1) * (config.image_size - 32)
-        # crop_sizes = 32 * ((config.image_size / 32)**(1 / config.epochs))**np.linspace(0, config.epochs, config.epochs)
+        # crop_sizes = ms * ((config.image_size / ms)**(1 / config.epochs))**np.linspace(0, config.epochs, config.epochs)
         # crop_sizes = np.sqrt(32**2 + np.arange(config.epochs) / (config.epochs - 1) * (config.image_size**2 - 32**2))
         crop_sizes = np.array([config.image_size] * config.epochs)
         assert crop_sizes.shape == (config.epochs,)

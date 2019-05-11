@@ -3,6 +3,9 @@ import torch
 import torchvision.transforms.functional as F
 
 
+# TODO: refactor
+# TODO: repr
+
 class SquarePad(object):
     def __init__(self, fill=0, padding_mode='constant'):
         self.fill = fill

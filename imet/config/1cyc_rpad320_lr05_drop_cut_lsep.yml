@@ -1,7 +1,7 @@
 seed: 42
 epochs: 10
-image_size: 224
-batch_size: 76
+image_size: 320
+batch_size: 38
 label_smooth:
 mixup: False
 
@@ -31,7 +31,7 @@ aug:
 
 opt:
   type: adam
-  lr: 5e-4
+  lr: 2.5e-4
   beta: 0.9
   weight_decay: 1e-4
 

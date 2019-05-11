@@ -17,7 +17,7 @@ model:
   dropout: 0.2
 
 aug:
-  type: rpad
+  type: crop
   crop_scale: 0.875 # 224 / 256
   scale: True
   color:
@@ -27,7 +27,6 @@ aug:
     hue: 0.
   cutout:
     n_holes: 1
-    length: 0.5
 
 opt:
   type: adam

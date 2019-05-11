@@ -1,9 +1,9 @@
 seed: 42
-epochs: 10
+epochs: 30
 image_size: 224
 batch_size: 76
 label_smooth:
-mixup: True
+mixup: False
 
 loss:
   type: lsep
@@ -27,16 +27,16 @@ aug:
     hue: 0.
   cutout:
     n_holes: 1
-    length: 128
+    length: 0.5
 
 opt:
-  type: adam
-  lr: 5e-4
+  type: momentum
+  lr: 0.1
   beta: 0.9
   weight_decay: 1e-4
 
 sched:
-  type: onecycle
+  type: cawr
 
   onecycle:
     anneal: linear

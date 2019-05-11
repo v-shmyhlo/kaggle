@@ -1,5 +1,5 @@
 seed: 42
-epochs: 10
+epochs: 30
 image_size: 224
 batch_size: 76
 label_smooth:
@@ -36,7 +36,7 @@ opt:
   weight_decay: 1e-4
 
 sched:
-  type: onecycle
+  type: cawr
 
   onecycle:
     anneal: linear
