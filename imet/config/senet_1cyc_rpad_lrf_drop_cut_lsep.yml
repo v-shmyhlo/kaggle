@@ -3,7 +3,6 @@ epochs: 10
 image_size: 224
 batch_size: 24
 label_smooth:
-mixup: False
 
 loss:
   type: lsep

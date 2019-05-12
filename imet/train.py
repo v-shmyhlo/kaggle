@@ -22,7 +22,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss, lsep2_loss, f2_loss
+from loss import FocalLoss, lsep_loss, lsep2_loss, f2_loss, lovasz_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -108,6 +108,8 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = lsep_loss
     elif config.loss.type == 'lsep2':
         compute_class_loss = lsep2_loss
+    elif config.loss.type == 'lovasz':
+        compute_class_loss = lovasz_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 
@@ -316,12 +318,14 @@ class MixupDataLoader(object):
 
 def find_lr():
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
-    data_loader = torch.utils.data.DataLoader(
+    train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+    if config.mixup is not None:
+        train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     min_lr = 1e-7
     max_lr = 10.
-    gamma = (max_lr / min_lr)**(1 / len(data_loader))
+    gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
     lrs = []
     losses = []
@@ -334,7 +338,7 @@ def find_lr():
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(data_loader, desc='lr search'):
+    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits = model(images)
 
@@ -461,8 +465,8 @@ def train_fold(fold, lr):
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
-    if config.mixup:
-        train_data_loader = MixupDataLoader(train_data_loader)
+    if config.mixup is not None:
+        train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
@@ -489,7 +493,10 @@ def train_fold(fold, lr):
                 lr,
                 step_size_up=len(train_data_loader),
                 step_size_down=len(train_data_loader),
-                mode='triangular2'))
+                mode='triangular2',
+                cycle_momentum=True,
+                base_momentum=0.75,
+                max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
