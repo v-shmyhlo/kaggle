@@ -279,7 +279,7 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
     elif optimizer == 'adamw':
         return AdamW(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
     elif optimizer == 'momentum':
-        return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay)
+        return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
@@ -294,7 +294,7 @@ def indices_for_fold(fold, dataset_size):
 
 
 class MixupDataLoader(object):
-    def __init__(self, data_loader, alpha=0.2):
+    def __init__(self, data_loader, alpha):
         self.data_loader = data_loader
         self.dist = torch.distributions.beta.Beta(alpha, alpha)
 

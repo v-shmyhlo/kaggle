@@ -3,6 +3,7 @@ epochs: 10
 image_size: 224
 batch_size: 76
 label_smooth:
+mixup:
 
 loss:
   type: lovasz
@@ -12,7 +13,7 @@ loss:
 
 model:
   type: seresnext50
-  predict_thresh: True
+  predict_thresh: False
   dropout: 0.2
 
 aug:
