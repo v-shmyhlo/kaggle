@@ -22,7 +22,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss
+from loss import FocalLoss, lsep_loss, lsep2_loss, f2_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -102,8 +102,12 @@ def load_image(path):
 def compute_loss(input, target, smoothing):
     if config.loss.type == 'focal':
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
+    elif config.loss.type == 'f2':
+        compute_class_loss = f2_loss
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
+    elif config.loss.type == 'lsep2':
+        compute_class_loss = lsep2_loss
     else:
         raise AssertionError('invalid loss {}'.format(config.loss.type))
 
@@ -477,6 +481,15 @@ def train_fold(fold, lr):
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
+    elif config.sched.type == 'cyclic':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CyclicLR(
+                optimizer,
+                0.,
+                lr,
+                step_size_up=len(train_data_loader),
+                step_size_down=len(train_data_loader),
+                mode='triangular2'))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(

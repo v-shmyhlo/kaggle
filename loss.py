@@ -1,6 +1,11 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
+from lovasz_losses import lovasz_hinge
+
+
+# TODO: add reduction argument
+# TODO: reduce same way everything
 
 
 class FocalLoss(nn.Module):
@@ -40,14 +45,6 @@ def f2_loss(input, target, eps=1e-7):
     return loss
 
 
-def centered_hinge_loss(input, target, delta=1.):
-    zero = torch.tensor(0.).to(input.device)
-    pos = torch.min(zero, (input - delta) * target)
-    neg = torch.max(zero, (input + delta) * (1 - target))
-
-    return torch.sum(neg - pos)
-
-
 def hinge_loss(input, target, delta=1.):
     positive_indices = (target > 0.5).float()
     negative_indices = (target <= 0.5).float()
@@ -76,5 +73,27 @@ def lsep_loss(input, target):
         loss += torch.sum(torch.exp(neg_examples - pos_examples))
 
     loss = torch.log(1 + loss)
+
+    return loss
+
+
+def lsep2_loss(input, target):
+    positive_indices = (target > 0.5).float()
+    negative_indices = (target <= 0.5).float()
+
+    loss = 0.
+    for i in range(input.size()[0]):
+        pos = positive_indices[i].nonzero()
+        neg = negative_indices[i].nonzero()
+        pos_examples = input[i, pos]
+        neg_examples = torch.transpose(input[i, neg], 0, 1)
+        loss += torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples)))
+
+    return loss
+
+
+def lovasz_loss(input, target):
+    loss = lovasz_hinge(logits=input, labels=target)
+    loss = loss.mean()
 
     return loss
