@@ -6,4 +6,3 @@ HOST=vshmyhlo@77.120.246.182
 rsync -avhHPx ./*.py ${HOST}:code/kaggle/
 rsync -avhHPx ./imet/ ${HOST}:code/kaggle/imet/
 rsync -avhHPx ./frees/ ${HOST}:code/kaggle/frees/
-rsync -avhHPx ./sandbox/ ${HOST}:code/kaggle/sandbox/

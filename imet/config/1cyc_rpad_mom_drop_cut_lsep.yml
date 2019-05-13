@@ -30,10 +30,10 @@ aug:
     length: 0.5
 
 opt:
-  type: adam
+  type: momentum
   lr: 1e-3
   beta: 0.9
-  weight_decay: 1e-5
+  weight_decay: 0
 
 sched:
   type: onecycle
