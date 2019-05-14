@@ -30,10 +30,10 @@ class FocalLoss(nn.Module):
 def f2_loss(input, target, eps=1e-7):
     input = input.sigmoid()
 
-    tp = (target * input).sum(1)
-    # tn = ((1 - target) * (1 - input)).sum(1)
-    fp = ((1 - target) * input).sum(1)
-    fn = (target * (1 - input)).sum(1)
+    tp = (target * input).sum(-1)
+    # tn = ((1 - target) * (1 - input)).sum(-1)
+    fp = ((1 - target) * input).sum(-1)
+    fn = (target * (1 - input)).sum(-1)
 
     p = tp / (tp + fp + eps)
     r = tp / (tp + fn + eps)
@@ -50,7 +50,7 @@ def hinge_loss(input, target, delta=1.):
     negative_indices = (target <= 0.5).float()
 
     loss = 0.
-    for i in range(input.size()[0]):
+    for i in range(input.size(0)):
         pos = positive_indices[i].nonzero()
         neg = negative_indices[i].nonzero()
         pos_examples = input[i, pos]
@@ -60,12 +60,19 @@ def hinge_loss(input, target, delta=1.):
     return loss
 
 
+def bce_loss(input, target):
+    loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='sum')
+    loss /= input.size(0)
+
+    return loss
+
+
 def lsep_loss(input, target):
     positive_indices = (target > 0.5).float()
     negative_indices = (target <= 0.5).float()
 
     loss = 0.
-    for i in range(input.size()[0]):
+    for i in range(input.size(0)):
         pos = positive_indices[i].nonzero()
         neg = negative_indices[i].nonzero()
         pos_examples = input[i, pos]

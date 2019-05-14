@@ -13,7 +13,6 @@ import torchvision
 import torchvision.transforms as T
 from PIL import Image
 import argparse
-import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from lr_scheduler import OneCycleScheduler, CyclicLR
@@ -22,7 +21,7 @@ from optim import AdamW
 import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss, f2_loss, lovasz_loss
+from loss import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -118,11 +117,13 @@ def compute_loss(input, target, smoothing):
         logits, thresholds = input.split(input.size(-1) // 2, -1)
 
         class_loss = compute_class_loss(input=logits, target=target)
-        thresh_loss = F.binary_cross_entropy_with_logits(input=logits - thresholds, target=target, reduction='sum')
+        thresh_loss = bce_loss(input=logits - thresholds, target=target)
 
-        loss = (class_loss.mean() + thresh_loss.mean()) / 2  # TODO: remove mean?
+        loss = (class_loss + thresh_loss) / 2
     else:
         loss = compute_class_loss(input=input, target=target)
+
+    assert loss.dim() == 0
 
     return loss
 
@@ -359,12 +360,12 @@ def find_lr():
         if args.debug:
             break
 
+    writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
+
     with torch.no_grad():
         losses = np.clip(losses, 0, lim)
         minima_loss = losses[np.argmin(utils.smooth(losses))]
         minima_lr = lrs[np.argmin(utils.smooth(losses))]
-
-        writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
 
         step = 0
         for loss, loss_sm in zip(losses, utils.smooth(losses)):
@@ -448,10 +449,14 @@ def eval_epoch(model, data_loader, fold, epoch):
         targets = torch.cat(targets, 0)
         threshold, score, plot = find_threshold_global(input=predictions, target=targets)
 
+        scores = compute_score(input=predictions, target=targets, threshold=threshold)
+        sorted = scores.argsort()
+
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
+        writer.add_image('failure', torchvision.utils.make_grid(images[sorted[:32]], normalize=True), global_step=epoch)
         writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
 
         return score
@@ -494,7 +499,7 @@ def train_fold(fold, lr):
                 step_size_up=len(train_data_loader),
                 step_size_down=len(train_data_loader),
                 mode='triangular2',
-                cycle_momentum=False,
+                cycle_momentum=True,
                 base_momentum=config.sched.cyclic.beta[1],
                 max_momentum=config.sched.cyclic.beta[0]))
     elif config.sched.type == 'cawr':
@@ -534,14 +539,23 @@ def train_fold(fold, lr):
 
 
 def build_submission(folds, threshold):
+    writer = SummaryWriter(os.path.join(args.experiment_path, 'test'))
+
     with torch.no_grad():
         predictions = 0.
 
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold)
             fold_predictions = output_to_logits(fold_predictions)
-            predictions = predictions + fold_predictions.sigmoid().mean(1)
+            fold_predictions = fold_predictions.sigmoid().mean(1)
+
+            plt.hist(fold_predictions.data.cpu().numpy(), bins=100, alpha=1 / len(folds))
+
+            predictions = predictions + fold_predictions
             ids = fold_ids
+
+        plot = utils.plot_to_image()
+        writer.add_image('distribution', plot.transpose((2, 0, 1)), global_step=0)
 
         predictions = predictions / len(folds)
         submission = []
