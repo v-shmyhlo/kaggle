@@ -456,6 +456,10 @@ def eval_epoch(model, data_loader, fold, epoch):
         targets = torch.cat(targets, 0)
         threshold, score, plot = find_threshold_global(input=predictions, target=targets)
 
+        scores = compute_score(input=predictions, target=targets, threshold=threshold)
+        sorted = scores.argsort()[:32]
+        fail
+
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
