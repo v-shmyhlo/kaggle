@@ -70,24 +70,9 @@ def lsep_loss(input, target):
         neg = negative_indices[i].nonzero()
         pos_examples = input[i, pos]
         neg_examples = torch.transpose(input[i, neg], 0, 1)
-        loss += torch.sum(torch.exp(neg_examples - pos_examples))
-
-    loss = torch.log(1 + loss)
-
-    return loss
-
-
-def lsep2_loss(input, target):
-    positive_indices = (target > 0.5).float()
-    negative_indices = (target <= 0.5).float()
-
-    loss = 0.
-    for i in range(input.size()[0]):
-        pos = positive_indices[i].nonzero()
-        neg = negative_indices[i].nonzero()
-        pos_examples = input[i, pos]
-        neg_examples = torch.transpose(input[i, neg], 0, 1)
         loss += torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples)))
+
+    loss /= input.size(0)
 
     return loss
 

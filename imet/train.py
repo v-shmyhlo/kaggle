@@ -16,13 +16,13 @@ import argparse
 import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
-from lr_scheduler import OneCycleScheduler
+from lr_scheduler import OneCycleScheduler, CyclicLR
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, lsep_loss, lsep2_loss, f2_loss, lovasz_loss
+from loss import FocalLoss, lsep_loss, f2_loss, lovasz_loss
 from config import Config
 
 # TODO: try largest lr before diverging
@@ -106,8 +106,6 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = f2_loss
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
-    elif config.loss.type == 'lsep2':
-        compute_class_loss = lsep2_loss
     elif config.loss.type == 'lovasz':
         compute_class_loss = lovasz_loss
     else:
@@ -481,22 +479,24 @@ def train_fold(fold, lr):
         scheduler = lr_scheduler_wrapper.StepWrapper(
             OneCycleScheduler(
                 optimizer,
-                lr=(lr / 25, lr),
+                lr=(lr / 20, lr),
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
     elif config.sched.type == 'cyclic':
+        # TODO: add cyclic min/max momentum to config
+
         scheduler = lr_scheduler_wrapper.StepWrapper(
-            torch.optim.lr_scheduler.CyclicLR(
+            CyclicLR(
                 optimizer,
                 0.,
                 lr,
                 step_size_up=len(train_data_loader),
                 step_size_down=len(train_data_loader),
                 mode='triangular2',
-                cycle_momentum=True,
-                base_momentum=0.75,
-                max_momentum=0.95))
+                cycle_momentum=False,
+                base_momentum=config.sched.cyclic.beta[1],
+                max_momentum=config.sched.cyclic.beta[0]))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
