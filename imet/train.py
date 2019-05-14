@@ -429,6 +429,8 @@ def eval_epoch(model, data_loader, fold, epoch):
     with torch.no_grad():
         predictions = []
         targets = []
+        failure = torch.zeros(0, 3, config.image_size, config.image_size).to(DEVICE)
+        scores = torch.zeros(0).to(DEVICE)
 
         for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
@@ -440,6 +442,11 @@ def eval_epoch(model, data_loader, fold, epoch):
             loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
             metrics['loss'].update(loss.data.cpu().numpy())
 
+            failure = torch.cat([failure, images], 0)
+            scores = torch.cat([scores, compute_score(input=logits, target=labels)], 0)
+            failure = failure[scores.argsort()[:32]]
+            scores = scores[scores.argsort()[:32]]
+
             if args.debug:
                 break
 
@@ -449,14 +456,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         targets = torch.cat(targets, 0)
         threshold, score, plot = find_threshold_global(input=predictions, target=targets)
 
-        scores = compute_score(input=predictions, target=targets, threshold=threshold)
-        sorted = scores.argsort()
-
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
-        writer.add_image('failure', torchvision.utils.make_grid(images[sorted[:32]], normalize=True), global_step=epoch)
+        writer.add_image('failure', torchvision.utils.make_grid(failure, normalize=True), global_step=epoch)
         writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
 
         return score
