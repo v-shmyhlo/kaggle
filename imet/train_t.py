@@ -164,6 +164,7 @@ def compute_loss(input, target, smoothing):
 
     if config.model.predict_thresh:
         logits, thresholds = input.split(input.size(-1) // 2, -1)
+        thresholds = thresholds[:, :1]
 
         class_loss = compute_class_loss(input=logits, target=target)
         thresh_loss = bce_loss(input=logits - thresholds, target=target)
@@ -180,6 +181,8 @@ def compute_loss(input, target, smoothing):
 def output_to_logits(input):
     if config.model.predict_thresh:
         logits, thresholds = input.split(input.size(-1) // 2, -1)
+        thresholds = thresholds[:, :1]
+
         logits = logits - thresholds
     else:
         logits = input

@@ -1,6 +1,6 @@
 seed: 42
 epochs: 3
-image_size: 224
+image_size: 320
 batch_size: 4
 label_smooth:
 mixup:
