@@ -11,7 +11,7 @@ import torch.utils.data
 import torch.distributions
 import torchvision
 import torchvision.transforms as T
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
@@ -29,6 +29,8 @@ from config import Config
 # TODO: better minimum for lr
 
 FOLDS = list(range(1, 5 + 1))
+MEAN = [0.485, 0.456, 0.406]
+STD = [0.229, 0.224, 0.225]
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -96,6 +98,51 @@ def load_image(path):
     image = Image.open(path)
 
     return image
+
+
+def draw_errors(images, true, pred):
+    def draw_text(draw, ylim, lines, fill):
+        font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=10)
+
+        y = ylim[0]
+        for line in lines:
+            size = draw.textsize(line, font=font)
+            if y + size[1] >= ylim[1]:
+                break
+
+            draw.rectangle(((5, y), (5 + size[0], y + size[1])), fill=(0, 0, 0))
+            draw.text((5, y), line, font=font, fill=fill)
+
+            y += size[1] + 2
+
+    def draw_error(image, t, p):
+        image = image * std + mean
+        image = image.data.cpu().numpy()
+        image = image.transpose((1, 2, 0))
+        image = (image * 255).round().astype(np.uint8)
+
+        fp = ((1 - t) * p).nonzero()
+        fn = (t * (1 - p)).nonzero()
+        fp = [id_to_class[id.item()] for id in fp.data.cpu().numpy()]
+        fn = [id_to_class[id.item()] for id in fn.data.cpu().numpy()]
+
+        image = Image.fromarray(image)
+        draw = ImageDraw.Draw(image)
+        draw_text(draw, (5, image.size[1] // 2 - 5), fp, fill=(0, 255, 0))
+        draw_text(draw, (image.size[1] // 2 + 5, image.size[1] - 5), fn, fill=(255, 0, 0))
+
+        image = to_tensor_and_norm(image)
+        image = image.to(DEVICE)
+
+        return image
+
+    mean = torch.tensor(MEAN).view(3, 1, 1).to(DEVICE)
+    std = torch.tensor(STD).view(3, 1, 1).to(DEVICE)
+
+    images = [draw_error(image, t, p) for image, t, p in zip(images, true, pred)]
+    images = torch.stack(images, 0)
+
+    return images
 
 
 def compute_loss(input, target, smoothing):
@@ -246,7 +293,7 @@ else:
 
 to_tensor_and_norm = T.Compose([
     T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    T.Normalize(mean=MEAN, std=STD)
 ])
 train_transform = T.Compose([
     train_transform,
@@ -431,7 +478,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         predictions = []
         targets = []
 
-        for i, (images, labels, ids) in enumerate(tqdm(data_loader, desc='epoch {} evaluation'.format(epoch))):
+        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             logits = model(images)
 
@@ -441,16 +488,8 @@ def eval_epoch(model, data_loader, fold, epoch):
             loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
             metrics['loss'].update(loss.data.cpu().numpy())
 
-            # indices = torch.cat([indices, torch.arange(i * config.batch_size, (i + 1) * config.batch_size)], 0)
-            # scores = torch.cat([scores, compute_score(input=logits, target=labels)], 0)
-            # indices = indices[scores.argsort()[:32]]
-            # scores = scores[scores.argsort()[:32]]
-
             if args.debug:
                 break
-
-            # if i > 10:
-            #     break
 
         loss = metrics['loss'].compute_and_reset()
 
@@ -458,22 +497,20 @@ def eval_epoch(model, data_loader, fold, epoch):
         targets = torch.cat(targets, 0)
         threshold, score, fig = find_threshold_global(input=predictions, target=targets)
 
-        # print(indices)
-        # print(scores)
-        # failure = [data_loader.dataset[i.item()][0] for i in indices]
-        # failure = torch.stack(failure, 0)
-        # print(failure.shape)
-        # fail
-
-        # scores = compute_score(input=predictions, target=targets, threshold=threshold)
-        # sorted = scores.argsort()[:32]
-        # fail
+        scores = compute_score(input=predictions, target=targets, threshold=threshold)
+        indices = scores.argsort()[:32]
+        failure = [data_loader.dataset[i.item()][0] for i in indices]
+        failure = torch.stack(failure, 0).to(DEVICE)
+        failure = draw_errors(
+            failure,
+            true=(output_to_logits(predictions[indices]).sigmoid() > threshold).float(),
+            pred=targets[indices])
 
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
-        # writer.add_image('failure', torchvision.utils.make_grid(failure, normalize=True), global_step=epoch)
+        writer.add_image('failure', torchvision.utils.make_grid(failure, normalize=True), global_step=epoch)
         writer.add_figure('thresholds', fig, global_step=epoch)
 
         return score
@@ -663,7 +700,7 @@ def find_threshold_for_folds(folds):
         # TODO: check aggregated correctly
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
+        threshold, score, _ = find_threshold_global(input=predictions, target=targets)
 
         print('threshold: {:.4f}, score: {:.4f}'.format(threshold, score))
 

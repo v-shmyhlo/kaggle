@@ -21,10 +21,10 @@ class FocalLoss(nn.Module):
         invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
         loss = (invprobs * self.gamma).exp() * loss
 
-        if len(loss.size()) == 2:
-            loss = loss.sum(dim=1)
+        loss = loss.sum(-1)
+        loss = loss.mean()
 
-        return loss.mean()
+        return loss
 
 
 def f2_loss(input, target, eps=1e-7):

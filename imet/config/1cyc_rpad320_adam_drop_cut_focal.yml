@@ -6,14 +6,14 @@ label_smooth:
 mixup:
 
 loss:
-  type: lsep
+  type: focal
 
   focal:
     gamma: 2.0
 
 model:
   type: seresnext50
-  predict_thresh: True
+  predict_thresh: False
   dropout: 0.2
 
 aug:
