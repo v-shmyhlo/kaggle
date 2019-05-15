@@ -1,4 +1,5 @@
 import random
+import warnings
 import matplotlib.pyplot as plt
 from PIL import Image
 import tempfile
@@ -68,6 +69,8 @@ def seed_everything(seed):
 
 
 def plot_to_image():
+    warnings.warn('use SummaryWriter.add_figure', DeprecationWarning)
+
     with tempfile.TemporaryFile() as f:
         plt.savefig(f)
         plt.close()

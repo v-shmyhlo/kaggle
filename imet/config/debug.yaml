@@ -1,5 +1,5 @@
 seed: 42
-epochs: 10
+epochs: 3
 image_size: 224
 batch_size: 4
 label_smooth:
@@ -20,6 +20,7 @@ aug:
   type: rpad
   crop_scale: 0.875 # 224 / 256
   scale: True
+  grayscale: 0.33
   color:
     brightness: 0.3
     contrast: 0.3

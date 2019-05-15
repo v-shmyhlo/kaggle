@@ -164,12 +164,12 @@ def find_threshold_global(input, target):
     threshold = thresholds[np.argmax(scores)]
     score = scores[np.argmax(scores)]
 
+    fig = plt.figure()
     plt.plot(thresholds, scores)
     plt.axvline(threshold)
     plt.title('score: {:.4f}, threshold: {:.4f}'.format(score.item(), threshold))
-    plot = utils.plot_to_image()
 
-    return threshold, score, plot
+    return threshold, score, fig
 
 
 NUM_CLASSES = len(classes)
@@ -257,6 +257,7 @@ train_transform = T.Compose([
         contrast=config.aug.color.contrast,
         saturation=config.aug.color.saturation,
         hue=config.aug.color.hue),
+    T.RandomGrayscale(p=config.aug.grayscale),
     to_tensor_and_norm,
     Cutout(n_holes=config.aug.cutout.n_holes, length=round(config.image_size * config.aug.cutout.length)),
 ])
@@ -373,13 +374,13 @@ def find_lr():
             writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
             step += config.batch_size
 
+        fig = plt.figure()
         plt.plot(lrs, losses)
         plt.plot(lrs, utils.smooth(losses))
         plt.axvline(minima_lr)
         plt.xscale('log')
         plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima_loss, minima_lr))
-        plot = utils.plot_to_image()
-        writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
+        writer.add_figure('search', fig, global_step=0)
 
         return minima_lr
 
@@ -429,10 +430,8 @@ def eval_epoch(model, data_loader, fold, epoch):
     with torch.no_grad():
         predictions = []
         targets = []
-        failure = torch.zeros(0, 3, config.image_size, config.image_size).to(DEVICE)
-        scores = torch.zeros(0).to(DEVICE)
 
-        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+        for i, (images, labels, ids) in enumerate(tqdm(data_loader, desc='epoch {} evaluation'.format(epoch))):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             logits = model(images)
 
@@ -442,30 +441,40 @@ def eval_epoch(model, data_loader, fold, epoch):
             loss = compute_loss(input=logits, target=labels, smoothing=config.label_smooth)
             metrics['loss'].update(loss.data.cpu().numpy())
 
-            failure = torch.cat([failure, images], 0)
-            scores = torch.cat([scores, compute_score(input=logits, target=labels)], 0)
-            failure = failure[scores.argsort()[:32]]
-            scores = scores[scores.argsort()[:32]]
+            # indices = torch.cat([indices, torch.arange(i * config.batch_size, (i + 1) * config.batch_size)], 0)
+            # scores = torch.cat([scores, compute_score(input=logits, target=labels)], 0)
+            # indices = indices[scores.argsort()[:32]]
+            # scores = scores[scores.argsort()[:32]]
 
             if args.debug:
                 break
+
+            # if i > 10:
+            #     break
 
         loss = metrics['loss'].compute_and_reset()
 
         predictions = torch.cat(predictions, 0)
         targets = torch.cat(targets, 0)
-        threshold, score, plot = find_threshold_global(input=predictions, target=targets)
+        threshold, score, fig = find_threshold_global(input=predictions, target=targets)
 
-        scores = compute_score(input=predictions, target=targets, threshold=threshold)
-        sorted = scores.argsort()[:32]
-        fail
+        # print(indices)
+        # print(scores)
+        # failure = [data_loader.dataset[i.item()][0] for i in indices]
+        # failure = torch.stack(failure, 0)
+        # print(failure.shape)
+        # fail
+
+        # scores = compute_score(input=predictions, target=targets, threshold=threshold)
+        # sorted = scores.argsort()[:32]
+        # fail
 
         print('[FOLD {}][EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(fold, epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
         writer.add_image('image', torchvision.utils.make_grid(images[:32], normalize=True), global_step=epoch)
-        writer.add_image('failure', torchvision.utils.make_grid(failure, normalize=True), global_step=epoch)
-        writer.add_image('thresholds', plot.transpose((2, 0, 1)), global_step=epoch)
+        # writer.add_image('failure', torchvision.utils.make_grid(failure, normalize=True), global_step=epoch)
+        writer.add_figure('thresholds', fig, global_step=epoch)
 
         return score
 
@@ -557,13 +566,10 @@ def build_submission(folds, threshold):
             fold_predictions = output_to_logits(fold_predictions)
             fold_predictions = fold_predictions.sigmoid().mean(1)
 
-            plt.hist(fold_predictions.data.cpu().numpy(), bins=100, alpha=1 / len(folds))
+            writer.add_histogram('distribution', fold_predictions, global_step=fold)
 
             predictions = predictions + fold_predictions
             ids = fold_ids
-
-        plot = utils.plot_to_image()
-        writer.add_image('distribution', plot.transpose((2, 0, 1)), global_step=0)
 
         predictions = predictions / len(folds)
         submission = []
