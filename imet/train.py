@@ -148,6 +148,10 @@ def draw_errors(images, true, pred):
     return images
 
 
+def lsepfoc_loss(input, target):
+    return lsep_loss(input=input, target=target) + FocalLoss(gamma=config.loss.focal.gamma)(input=input, target=target)
+
+
 def compute_loss(input, target, smoothing):
     if config.loss.type == 'focal':
         compute_class_loss = FocalLoss(gamma=config.loss.focal.gamma)
@@ -155,6 +159,8 @@ def compute_loss(input, target, smoothing):
         compute_class_loss = f2_loss
     elif config.loss.type == 'lsep':
         compute_class_loss = lsep_loss
+    elif config.loss.type == 'lsepfoc':
+        compute_class_loss = lsepfoc_loss
     elif config.loss.type == 'lovasz':
         compute_class_loss = lovasz_loss
     else:
