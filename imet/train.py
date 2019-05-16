@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
+from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from lr_scheduler import OneCycleScheduler, CyclicLR
 import lr_scheduler_wrapper
 from optim import AdamW
@@ -372,6 +373,20 @@ def indices_for_fold(fold, dataset_size):
     assert len(train_indices) + len(eval_indices) == dataset_size
 
     return train_indices, eval_indices
+
+
+# def indices_for_fold(fold, dataset_size):
+#     labels = np.zeros((dataset_size, NUM_CLASSES))
+#     for i in tqdm(range(dataset_size), desc='stratification'):
+#         row = train_data.iloc[i]
+#         labels[i, row['attribute_ids']] = 1.
+#
+#     kfold = MultilabelStratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
+#     splits = list(kfold.split(np.zeros(dataset_size), labels))
+#     train_indices, eval_indices = splits[fold - 1]
+#     assert len(train_indices) + len(eval_indices) == dataset_size
+#
+#     return train_indices, eval_indices
 
 
 class MixupDataLoader(object):

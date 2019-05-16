@@ -52,37 +52,30 @@ id_to_class = {row['attribute_id']: row['attribute_name'] for _, row in classes.
 class_to_id = {id_to_class[k]: k for k in id_to_class}
 
 
-class BatchSampler(torch.utils.data.Sampler):
-    def __init__(self, data, batch_size):
+class Sampler(torch.utils.data.Sampler):
+    def __init__(self, data):
         self.data = data
-        self.batch_size = batch_size
+        self.buckets = {c: [] for c in range(NUM_CLASSES)}
 
-        self.buckets = {}
-        for i in tqdm(range(len(self.data)), desc='building sampler'):
-            row = self.data.iloc[i]
+        for id in tqdm(range(len(self.data)), desc='building sampler'):
+            row = self.data.iloc[id]
             for c in row['attribute_ids']:
-                if c not in self.buckets:
-                    self.buckets[c] = []
+                self.buckets[c].append(id)
 
-                self.buckets[c].append(i)
+        assert len(self.buckets) == NUM_CLASSES
 
     def __iter__(self):
-        # print([len(self.buckets[c]) for c in self.buckets])
-        #
-        fail
-        #
-        # yield 1
+        for _ in range(len(self)):
+            while True:
+                c = np.random.randint(NUM_CLASSES)
+                ids = self.buckets[c]
 
-        # indices = []
-        # while
-        #
-        # return  indices
-        #
-        # label = np.zeros(NUM_CLASSES, dtype=np.float32)
-        # label[row['attribute_ids']] = 1.
+                if len(ids) > 0:
+                    yield np.random.choice(ids)
+                    break
 
     def __len__(self):
-        return math.floor(len(self.data) / self.batch_size)
+        return len(self.data)
 
 
 class TrainEvalDataset(torch.utils.data.Dataset):
@@ -590,7 +583,9 @@ def train_fold(fold, lr):
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_sampler=BatchSampler(train_data.iloc[train_indices], batch_size=config.batch_size),
+        batch_size=config.batch_size,
+        drop_last=True,
+        sampler=Sampler(train_data.iloc[train_indices]),
         num_workers=args.workers)
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
