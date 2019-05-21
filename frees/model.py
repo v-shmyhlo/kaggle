@@ -39,7 +39,7 @@ class MaxPoolModel(nn.Module):
         #     nn.Linear(512 * block.expansion, num_classes))
 
         self.model = pretrainedmodels.resnet18()
-        self.model.conv1 = nn.Conv2d(1, 64, kernel_size=5, stride=2, padding=3, bias=False)
+        self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.avgpool = nn.AdaptiveMaxPool2d(1)
         self.model.last_linear = nn.Sequential(
             nn.Dropout(dropout),
@@ -145,7 +145,7 @@ class Spectrogram(nn.Module):
         super().__init__()
 
         self.n_fft = round(0.025 * rate)
-        self.hop_length = round(0.025 / 2 * rate)
+        self.hop_length = round(0.01 * rate)
 
         filters = librosa.filters.mel(rate, self.n_fft)
         filters = filters.reshape((*filters.shape, 1))
