@@ -1,13 +1,14 @@
 seed: 42
 epochs: 10
 batch_size: 32
-image_size: 512
 pad: silence
-mixup:
 
 model:
-  type: max
+  type: attn
   dropout: 0.5
+
+  attn:
+    mask: False
 
 aug:
   type: crop

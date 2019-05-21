@@ -598,8 +598,6 @@ def train_fold(fold, lr):
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
     elif config.sched.type == 'cyclic':
-        # TODO: add cyclic min/max momentum to config
-
         scheduler = lr_scheduler_wrapper.StepWrapper(
             CyclicLR(
                 optimizer,

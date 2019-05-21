@@ -1,3 +1,4 @@
+from functools import partial
 import shutil
 import numpy as np
 from config import Config
@@ -17,22 +18,13 @@ import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from .model import Model
-from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
+from .dataset import NUM_CLASSES, ID_TO_CLASS, EPS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
 from .utils import collate_fn
 from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop
+from frees.transform import RandomCrop, LoadSpectra
 from frees.metric import calculate_per_class_lwlrap
 
 
-# TODO: resnext
-# TODO: nfft, hop len
-# TODO: no mel fiters
-# TODO: check how spectras built
-# TODO: mixup
-
-# TODO: remove unused code
-# TODO: bucketing
-# TODO: remove paddding
 # TODO: crop signal, not spectra
 # TODO: crop to average curated len
 # TODO: rename train_eval to train_curated
@@ -53,16 +45,15 @@ class MixupDataLoader(object):
         # TODO: speedup
 
     def __iter__(self):
-        for (sigs_1, labels_1, ids_1), (sigs_2, labels_2, ids_2) \
+        for (images_1, labels_1, ids_1), (images_2, labels_2, ids_2) \
                 in zip(self.data_loader, self.data_loader):
             lam = self.dist.sample().to(DEVICE)
 
-            sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-            # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
-            labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
-            ids = None
+            images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
+            labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
+            ids = ids_1 if lam > 0.5 else ids_2
 
-            yield sigs, labels, ids
+            yield images, labels, ids
 
     def __len__(self):
         return len(self.data_loader)
@@ -76,7 +67,6 @@ class MixupDataLoader(object):
 # TODO: adamw
 
 FOLDS = list(range(1, 5 + 1))
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -89,30 +79,38 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-# TODO: normalizes
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+MEAN, STD = np.load(os.path.join(args.dataset_path, 'stats.npy'))
+
+if config.pad == 'silence':
+    PAD_VALUE = (np.log(EPS) - MEAN) / STD
+elif config.pad == 'zeros':
+    PAD_VALUE = 0.
+else:
+    raise AssertionError('invalid pad {}'.format(config.pad))
 
 to_tensor_and_norm = T.Compose([
-    ToTensor(),
-    # T.Normalize(mean=[MEAN], std=[STD])
+    T.ToTensor(),
+    T.Normalize(mean=[MEAN], std=[STD])
 ])
 
 if config.aug.type == 'pad':
     train_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
+        LoadSpectra(augmented=True),
         to_tensor_and_norm,
     ])
     test_transform = eval_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
+        LoadSpectra(),
         to_tensor_and_norm,
     ])
 elif config.aug.type == 'crop':
     train_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
-        RandomCrop(config.aug.crop.size * config.model.sample_rate),
+        LoadSpectra(augmented=True),
+        RandomCrop(config.image_size),
         to_tensor_and_norm,
     ])
     test_transform = eval_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
+        LoadSpectra(),
         to_tensor_and_norm,
     ])
 else:
@@ -144,15 +142,6 @@ def get_nrow(images):
     nrow = np.ceil(nrow).astype(np.int32)
 
     return nrow
-
-
-def add_audio(writer, tag, audio, sample_rate, global_step):
-    for i in range(audio.size(0)):
-        writer.add_audio(
-            '{}_{}'.format(tag, i),
-            audio[i],
-            sample_rate=sample_rate,
-            global_step=global_step)
 
 
 # TODO: pin memory
@@ -194,8 +183,6 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         return AdamW(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
     elif optimizer == 'momentum':
         return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
-    elif optimizer == 'rmsprop':
-        return torch.optim.RMSprop(parameters, lr, momentum=beta, weight_decay=weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
@@ -222,7 +209,7 @@ def find_lr(train_eval_data, train_noisy_data):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)
+        collate_fn=partial(collate_fn, pad_value=PAD_VALUE))
     if config.mixup is not None:
         train_eval_data_loader = MixupDataLoader(train_eval_data_loader, config.mixup)
 
@@ -241,9 +228,9 @@ def find_lr(train_eval_data, train_noisy_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for sigs, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
-        sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, _, _ = model(sigs)
+    for images, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        logits, _ = model(images)
 
         loss = compute_loss(input=logits, target=labels)
 
@@ -296,9 +283,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for sigs, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, images, weights = model(sigs)
+    for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        logits, weights = model(images)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -323,10 +310,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
             'image',
             torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
             global_step=epoch)
-        writer.add_histogram(
-            'distribution',
-            images[:32],
-            global_step=epoch)
         writer.add_image(
             'weights',
             torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
@@ -344,9 +327,9 @@ def eval_epoch(model, data_loader, fold, epoch):
     targets = []
     model.eval()
     with torch.no_grad():
-        for sigs, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-            logits, images, weights = model(sigs)
+        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            logits, weights = model(images)
 
             targets.append(labels)
             predictions.append(logits)
@@ -370,10 +353,6 @@ def eval_epoch(model, data_loader, fold, epoch):
             'image',
             torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
             global_step=epoch)
-        writer.add_histogram(
-            'distribution',
-            images[:32],
-            global_step=epoch)
         writer.add_image(
             'weights',
             torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
@@ -395,16 +374,16 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad_value=PAD_VALUE))  # TODO: all args
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad_value=PAD_VALUE))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -438,7 +417,7 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=3, verbose=True))
+                optimizer, mode='max', factor=0.5, patience=0, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
@@ -488,7 +467,7 @@ def predict_on_test_using_fold(fold, test_data):
         test_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad_value=PAD_VALUE))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -498,9 +477,9 @@ def predict_on_test_using_fold(fold, test_data):
     with torch.no_grad():
         fold_predictions = []
         fold_ids = []
-        for sigs, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            sigs = sigs.to(DEVICE)
-            logits, _, _ = model(sigs)
+        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images = images.to(DEVICE)
+            logits, _ = model(images)
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -518,9 +497,9 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad_value=PAD_VALUE))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -531,9 +510,9 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_targets = []
         fold_predictions = []
         fold_ids = []
-        for sigs, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
-            sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-            logits, _, _ = model(sigs)
+        for images, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            logits, _ = model(images)
 
             fold_targets.append(labels)
             fold_predictions.append(logits)

@@ -1,3 +1,4 @@
+from functools import partial
 import shutil
 import numpy as np
 from config import Config
@@ -17,30 +18,15 @@ import lr_scheduler_wrapper
 from optim import AdamW
 import utils
 from .model import Model
-from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
-from .utils import collate_fn
+from .dataset import NUM_CLASSES, EPS, TrainEvalDataset, TestDataset
 from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop
+from frees.transform import RandomCrop
 from frees.metric import calculate_per_class_lwlrap
 
 
-# TODO: resnext
-# TODO: nfft, hop len
-# TODO: no mel fiters
-# TODO: check how spectras built
-# TODO: mixup
-
-# TODO: remove unused code
-# TODO: bucketing
-# TODO: remove paddding
-# TODO: crop signal, not spectra
-# TODO: crop to average curated len
-# TODO: rename train_eval to train_curated
-# TODO: remove CyclicLR
+# TODO: remove masks
 # TODO: cutout
 # TODO: resample silence
-# TODO: benchmark stft
-# TODO: scipy stft
 
 
 class MixupDataLoader(object):
@@ -53,16 +39,16 @@ class MixupDataLoader(object):
         # TODO: speedup
 
     def __iter__(self):
-        for (sigs_1, labels_1, ids_1), (sigs_2, labels_2, ids_2) \
+        for (images_1, masks_1, labels_1, ids_1), (images_2, masks_2, labels_2, ids_2) \
                 in zip(self.data_loader, self.data_loader):
             lam = self.dist.sample().to(DEVICE)
 
-            sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-            # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
-            labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
-            ids = None
+            images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
+            masks = lam * masks_1.to(DEVICE) + (1 - lam) * masks_2.to(DEVICE)
+            labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
+            ids = ids_1 if lam > 0.5 else ids_2
 
-            yield sigs, labels, ids
+            yield images, masks, labels, ids
 
     def __len__(self):
         return len(self.data_loader)
@@ -76,7 +62,6 @@ class MixupDataLoader(object):
 # TODO: adamw
 
 FOLDS = list(range(1, 5 + 1))
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -89,32 +74,25 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-# TODO: normalizes
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+(MEAN, STD), _ = np.load(os.path.join(args.dataset_path, 'stats.npy'))
 
 to_tensor_and_norm = T.Compose([
-    ToTensor(),
-    # T.Normalize(mean=[MEAN], std=[STD])
+    T.ToTensor(),
+    T.Normalize(mean=[MEAN], std=[STD])
 ])
 
 if config.aug.type == 'pad':
-    train_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
-    ])
-    test_transform = eval_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
-    ])
+    train_transform = to_tensor_and_norm
+    eval_transform = to_tensor_and_norm
+    test_transform = to_tensor_and_norm
 elif config.aug.type == 'crop':
     train_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
-        RandomCrop(config.aug.crop.size * config.model.sample_rate),
-        to_tensor_and_norm,
+        RandomCrop(config.image_size),
+        to_tensor_and_norm
     ])
-    test_transform = eval_transform = T.Compose([
-        LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
-    ])
+    eval_transform = to_tensor_and_norm
+    test_transform = to_tensor_and_norm
 else:
     raise AssertionError('invalid aug {}'.format(config.aug.type))
 
@@ -133,6 +111,44 @@ def compute_score(input, target):
     return np.sum(per_class_lwlrap * weight_per_class)
 
 
+def collate_fn(batch, pad):
+    if pad == 'silence':
+        pad = (np.log(EPS) - MEAN) / STD
+    elif pad == 'zeros':
+        pad = 0.
+    else:
+        raise AssertionError('invalid pad {}'.format(pad))
+
+    batch = list(zip(*batch))
+
+    if len(batch) == 3:
+        images, labels, ids = batch
+        labels = torch.tensor(labels).float()
+        rest = (labels,)
+    else:
+        images, ids = batch
+        rest = ()
+
+    images_tensor = torch.zeros(
+        len(images),
+        1,
+        images[0].size(1),
+        max(image.size(2) for image in images))
+    images_tensor.fill_(pad)
+    masks_tensor = torch.zeros(
+        len(images),
+        max(image.size(2) for image in images),
+        dtype=torch.uint8)
+
+    for i, image in enumerate(images):
+        if args.debug and i % 2 == 0:
+            image = image[:, :, ::2]
+        images_tensor[i, :, :, :image.size(2)] = image
+        masks_tensor[i, :image.size(2)] = torch.ones(image.size(2), dtype=torch.uint8)
+
+    return (images_tensor, masks_tensor, *rest, ids)
+
+
 def get_nrow(images):
     h = images.size(0) * images.size(2)
     w = images.size(3)
@@ -144,15 +160,6 @@ def get_nrow(images):
     nrow = np.ceil(nrow).astype(np.int32)
 
     return nrow
-
-
-def add_audio(writer, tag, audio, sample_rate, global_step):
-    for i in range(audio.size(0)):
-        writer.add_audio(
-            '{}_{}'.format(tag, i),
-            audio[i],
-            sample_rate=sample_rate,
-            global_step=global_step)
 
 
 # TODO: pin memory
@@ -194,8 +201,6 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         return AdamW(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
     elif optimizer == 'momentum':
         return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
-    elif optimizer == 'rmsprop':
-        return torch.optim.RMSprop(parameters, lr, momentum=beta, weight_decay=weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
@@ -222,7 +227,7 @@ def find_lr(train_eval_data, train_noisy_data):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)
+        collate_fn=partial(collate_fn, pad=config.pad))
     if config.mixup is not None:
         train_eval_data_loader = MixupDataLoader(train_eval_data_loader, config.mixup)
 
@@ -241,9 +246,9 @@ def find_lr(train_eval_data, train_noisy_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for sigs, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
-        sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, _, _ = model(sigs)
+    for images, masks, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
+        images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+        logits, _ = model(images, masks)
 
         loss = compute_loss(input=logits, target=labels)
 
@@ -296,9 +301,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for sigs, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, images, weights = model(sigs)
+    for images, masks, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+        logits, weights = model(images, masks)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -323,10 +328,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
             'image',
             torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
             global_step=epoch)
-        writer.add_histogram(
-            'distribution',
-            images[:32],
-            global_step=epoch)
         writer.add_image(
             'weights',
             torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
@@ -344,9 +345,9 @@ def eval_epoch(model, data_loader, fold, epoch):
     targets = []
     model.eval()
     with torch.no_grad():
-        for sigs, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-            logits, images, weights = model(sigs)
+        for images, masks, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+            logits, weights = model(images, masks)
 
             targets.append(labels)
             predictions.append(logits)
@@ -370,10 +371,6 @@ def eval_epoch(model, data_loader, fold, epoch):
             'image',
             torchvision.utils.make_grid(images[:32], nrow=get_nrow(images[:32]), normalize=True),
             global_step=epoch)
-        writer.add_histogram(
-            'distribution',
-            images[:32],
-            global_step=epoch)
         writer.add_image(
             'weights',
             torchvision.utils.make_grid(weights[:32], nrow=get_nrow(weights[:32])),
@@ -395,16 +392,16 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -415,26 +412,10 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         scheduler = lr_scheduler_wrapper.StepWrapper(
             OneCycleScheduler(
                 optimizer,
-                lr=(lr / 20, lr),
+                lr=(lr / 25, lr),
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
-    elif config.sched.type == 'cyclic':
-        scheduler = lr_scheduler_wrapper.StepWrapper(
-            torch.optim.lr_scheduler.CyclicLR(
-                optimizer,
-                0.,
-                lr,
-                step_size_up=len(train_data_loader),
-                step_size_down=len(train_data_loader),
-                mode='triangular2',
-                cycle_momentum=True,
-                base_momentum=config.sched.cyclic.beta[1],
-                max_momentum=config.sched.cyclic.beta[0]))
-    elif config.sched.type == 'cawr':
-        scheduler = lr_scheduler_wrapper.StepWrapper(
-            torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=len(train_data_loader), T_mult=2))
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -452,13 +433,11 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
             data_loader=train_data_loader,
             fold=fold,
             epoch=epoch)
-        gc.collect()
         score = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
             fold=fold,
             epoch=epoch)
-        gc.collect()
 
         scheduler.step_epoch()
         scheduler.step_score(score)
@@ -488,7 +467,7 @@ def predict_on_test_using_fold(fold, test_data):
         test_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -498,9 +477,9 @@ def predict_on_test_using_fold(fold, test_data):
     with torch.no_grad():
         fold_predictions = []
         fold_ids = []
-        for sigs, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            sigs = sigs.to(DEVICE)
-            logits, _, _ = model(sigs)
+        for images, masks, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images, masks = images.to(DEVICE), masks.to(DEVICE)
+            logits, _ = model(images, masks)
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -518,9 +497,9 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=partial(collate_fn, pad=config.pad))  # TODO: all args
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -531,9 +510,9 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_targets = []
         fold_predictions = []
         fold_ids = []
-        for sigs, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
-            sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-            logits, _, _ = model(sigs)
+        for images, masks, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            images, masks, labels = images.to(DEVICE), masks.to(DEVICE), labels.to(DEVICE)
+            logits, _ = model(images, masks)
 
             fold_targets.append(labels)
             fold_predictions.append(logits)
@@ -567,18 +546,37 @@ def evaluate_folds(folds, train_eval_data):
 
 # TODO: check FOLDS usage
 
+def load_train_eval_data(name, class_to_id):
+    data = pd.read_csv(os.path.join(args.dataset_path, '{}.csv'.format(name)))
+    data['fname'] = data['fname'].apply(lambda x: os.path.join(args.dataset_path, name, x))
+    data['labels'] = data['labels'].apply(lambda x: [class_to_id[c] for c in x.split(',')])
+
+    if args.debug:
+        data['fname'] = './frees/sample.wav'
+
+    return data
+
+
+def load_test_data(name):
+    data = pd.DataFrame({'fname': os.listdir(os.path.join(args.dataset_path, name))})
+    data['fname'] = data['fname'].apply(lambda x: os.path.join(args.dataset_path, name, x))
+
+    if args.debug:
+        data['fname'] = './frees/sample.wav'
+
+    return data
+
 
 def main():
     # TODO: refactor seed
     utils.seed_everything(config.seed)
 
-    train_eval_data = load_train_eval_data(args.dataset_path, 'train_curated')
-    train_noisy_data = load_train_eval_data(args.dataset_path, 'train_noisy')
-    test_data = load_test_data(args.dataset_path, 'test')
+    id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
+    class_to_id = {c: i for i, c in enumerate(id_to_class)}
 
-    for data in [train_eval_data, train_noisy_data, test_data]:
-        if args.debug:
-            data['path'] = './frees/sample.wav'
+    train_eval_data = load_train_eval_data('train_curated', class_to_id)
+    train_noisy_data = load_train_eval_data('train_noisy', class_to_id)
+    test_data = load_test_data('test')
 
     if config.opt.lr is None:
         lr = find_lr(train_eval_data, train_noisy_data)
@@ -602,7 +600,7 @@ def main():
     predictions = predictions.cpu()
     submission = {
         'fname': ids,
-        **{ID_TO_CLASS[i]: predictions[:, i] for i in range(NUM_CLASSES)}
+        **{id_to_class[i]: predictions[:, i] for i in range(NUM_CLASSES)}
     }
     submission = pd.DataFrame(submission)
     submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
