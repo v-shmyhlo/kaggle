@@ -8,6 +8,7 @@ import numpy as np
 ID_TO_CLASS = list(pd.read_csv(os.path.join(os.path.dirname(__file__), 'sample_submission.csv')).columns[1:])
 CLASS_TO_ID = {c: i for i, c in enumerate(ID_TO_CLASS)}
 NUM_CLASSES = len(ID_TO_CLASS)
+EPS = 1e-7
 
 
 class TrainEvalDataset(torch.utils.data.Dataset):
@@ -52,22 +53,29 @@ class TestDataset(torch.utils.data.Dataset):
 def load_train_eval_data(path, name):
     data = pd.read_csv(os.path.join(path, '{}.csv'.format(name)))
     data = data.rename({'fname': 'id'}, axis='columns')
-    data['path'] = data['id'].apply(lambda x: os.path.join(path, name, x))
-    data['labels'] = data['labels'].apply(lambda x: [CLASS_TO_ID[c] for c in x.split(',')])
+    data['path'] = data['id'].apply(
+        lambda x: os.path.join(path, name, x))
+    data['spectra_path'] = data['id'].apply(
+        lambda x: os.path.join(path, '{}_spectra'.format(name), '{}.pkl'.format(x)))
+    data['spectra_aug_path'] = data['id'].apply(
+        lambda x: os.path.join(path, '{}_spectra_aug'.format(name), '{}.pkl'.format(x)))
+    data['labels'] = data['labels'].apply(
+        lambda x: [CLASS_TO_ID[c] for c in x.split(',')])
 
     return data
 
 
 def load_test_data(path, name):
     data = pd.DataFrame({'id': os.listdir(os.path.join(path, name))})
-    data['path'] = data['id'].apply(lambda x: os.path.join(path, name, x))
+    data['path'] = data['id'].apply(
+        lambda x: os.path.join(path, name, x))
+    data['spectra_path'] = data['id'].apply(
+        lambda x: os.path.join(path, '{}_spectra'.format(name), '{}.pkl'.format(x)))
 
     return data
 
 
 def main():
-    fail
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset-path', type=str, required=True)
     args = parser.parse_args()
