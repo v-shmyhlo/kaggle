@@ -12,6 +12,7 @@ import torchvision.transforms as T
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
+from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
@@ -20,7 +21,7 @@ from .model import Model
 from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
 from .utils import collate_fn
 from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop
+from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout
 from frees.metric import calculate_per_class_lwlrap
 
 
@@ -53,16 +54,19 @@ class MixupDataLoader(object):
         # TODO: speedup
 
     def __iter__(self):
-        for (sigs_1, labels_1, ids_1), (sigs_2, labels_2, ids_2) \
-                in zip(self.data_loader, self.data_loader):
-            lam = self.dist.sample().to(DEVICE)
+        for (sigs_1, labels_1, ids_1), (sigs_2, labels_2, ids_2) in zip(self.data_loader, self.data_loader):
+            if np.random.uniform(0, 1) < 0.5:
+                yield sigs_1, labels_1, ids_1
 
-            sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-            # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
-            labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
-            ids = None
+            else:
+                lam = self.dist.sample().to(DEVICE)
 
-            yield sigs, labels, ids
+                sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
+                # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
+                labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
+                ids = None
+
+                yield sigs, labels, ids
 
     def __len__(self):
         return len(self.data_loader)
@@ -109,6 +113,8 @@ elif config.aug.type == 'crop':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
+        # Cutout(config.aug.cutout.fraction),
+        RandomSplitConcat(config.aug.split_concat.splits),
         to_tensor_and_norm,
     ])
     test_transform = eval_transform = T.Compose([
@@ -200,9 +206,19 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
-def indices_for_fold(fold, dataset_size):
-    kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
-    splits = list(kfold.split(np.zeros(dataset_size)))
+# def indices_for_fold(fold, dataset_size):
+#     kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
+#     splits = list(kfold.split(np.zeros(dataset_size)))
+#     train_indices, eval_indices = splits[fold - 1]
+#     assert len(train_indices) + len(eval_indices) == dataset_size
+#
+#     return train_indices, eval_indices
+
+
+def indices_for_fold(fold, labels):
+    dataset_size = labels.shape[0]
+    kfold = MultilabelStratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
+    splits = list(kfold.split(np.zeros(dataset_size), labels))
     train_indices, eval_indices = splits[fold - 1]
     assert len(train_indices) + len(eval_indices) == dataset_size
 
@@ -383,7 +399,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 
 
 def train_fold(fold, train_eval_data, train_noisy_data, lr):
-    train_indices, eval_indices = indices_for_fold(fold, len(train_eval_data))
+    train_indices, eval_indices = indices_for_fold(fold, collect_labels(train_eval_data))
 
     train_dataset = torch.utils.data.ConcatDataset([
         TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform),
@@ -513,7 +529,7 @@ def predict_on_test_using_fold(fold, test_data):
 
 
 def predict_on_eval_using_fold(fold, train_eval_data):
-    _, eval_indices = indices_for_fold(fold, len(train_eval_data))
+    _, eval_indices = indices_for_fold(fold, collect_labels(train_eval_data))
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
@@ -546,6 +562,15 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_predictions = torch.cat(fold_predictions, 0)
 
     return fold_targets, fold_predictions, fold_ids
+
+
+def collect_labels(data):
+    labels = np.zeros((len(data), NUM_CLASSES))
+    for i in tqdm(range(len(data)), desc='stratification'):
+        row = data.iloc[i]
+        labels[i, row['labels']] = 1.
+
+    return labels
 
 
 def evaluate_folds(folds, train_eval_data):

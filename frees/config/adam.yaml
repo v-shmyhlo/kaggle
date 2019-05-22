@@ -12,7 +12,14 @@ aug:
   type: crop
 
   crop:
-    size: 4
+    size: 8
+
+  split_concat:
+    splits: 8
+
+  cutout:
+    fraction: 0.25
+
 
 opt:
   type: adam

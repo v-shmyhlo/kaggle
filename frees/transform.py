@@ -40,6 +40,35 @@ class RandomCrop(object):
 
         return input
 
+
+class RandomSplitConcat(object):
+    def __init__(self, splits):
+        self.splits = splits
+
+    def __call__(self, input):
+        size, = input.shape
+        window = size // self.splits
+
+        chunks = [input[i * window:(i + 1) * window] for i in range(self.splits)]
+        np.random.shuffle(chunks)
+        input = np.concatenate(chunks, 0)
+
+        return input
+
+
+class Cutout(object):
+    def __init__(self, fraction):
+        self.fraction = fraction
+
+    def __call__(self, input):
+        size, = input.shape
+        window = round(size * self.fraction)
+
+        start = np.random.randint(-window, size)
+        input[np.clip(start, 0, size):np.clip(start + window, 0, size)] = 0.
+
+        return input
+
 # class AugmentSignal(object):
 #     def __call__(self, input):
 #         # effect = AudioEffectsChain()
