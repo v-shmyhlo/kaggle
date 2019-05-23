@@ -56,6 +56,22 @@ class RandomSplitConcat(object):
         return input
 
 
+# class RandomSplitConcat(object):
+#     def __init__(self, splits):
+#         self.splits = splits
+#
+#     def __call__(self, input, recur=True):
+#         size, = input.shape
+#
+#         i = np.random.randint(size // 8, size - size // 8)
+#         left, right = np.split(input, [i], 0)
+#         if recur:
+#             left, right = self(left, recur=False), self(right, recur=False)
+#         input = np.concatenate([right, left], 0)
+#
+#         return input
+
+
 class Cutout(object):
     def __init__(self, fraction):
         self.fraction = fraction

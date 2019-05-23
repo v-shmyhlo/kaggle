@@ -654,7 +654,7 @@ def find_threshold_for_folds(folds):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(config.seed)
+    utils.seed_python(config.seed)
 
     if config.opt.lr is None:
         lr = find_lr()

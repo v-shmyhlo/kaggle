@@ -549,7 +549,7 @@ def evaluate_folds(folds, train_eval_data):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(config.seed)
+    utils.seed_python(config.seed)
 
     train_eval_data = load_train_eval_data(args.dataset_path, 'train_curated')
     train_noisy_data = load_train_eval_data(args.dataset_path, 'train_noisy')

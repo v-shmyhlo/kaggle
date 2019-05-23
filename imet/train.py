@@ -25,6 +25,8 @@ from .model import Model
 from loss import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
 from config import Config
 
+fail  # TODO: modify seeds
+
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
 # TODO: better minimum for lr
@@ -764,7 +766,7 @@ def find_threshold_for_folds(folds):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(config.seed)
+    utils.seed_python(config.seed)
 
     if config.opt.lr is None:
         lr = find_lr()

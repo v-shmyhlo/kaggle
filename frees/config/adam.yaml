@@ -15,7 +15,7 @@ aug:
     size: 8
 
   split_concat:
-    splits: 8
+    splits: 4
 
   cutout:
     fraction: 0.25

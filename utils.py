@@ -58,14 +58,19 @@ def smooth(x, ksize=None):
     return x
 
 
-def seed_everything(seed):
+def seed_python(seed):
+    # os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    #     tf.set_random_seed(seed)
+    # tf.set_random_seed(seed)
     np.random.seed(seed)
+
+
+def seed_torch(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def plot_to_image():

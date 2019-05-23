@@ -93,21 +93,14 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-# TODO: normalizes
-
-to_tensor_and_norm = T.Compose([
-    ToTensor(),
-    # T.Normalize(mean=[MEAN], std=[STD])
-])
-
 if config.aug.type == 'pad':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
+        ToTensor(),
     ])
     test_transform = eval_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
+        ToTensor(),
     ])
 elif config.aug.type == 'crop':
     train_transform = T.Compose([
@@ -115,11 +108,11 @@ elif config.aug.type == 'crop':
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         # Cutout(config.aug.cutout.fraction),
         RandomSplitConcat(config.aug.split_concat.splits),
-        to_tensor_and_norm,
+        ToTensor(),
     ])
     test_transform = eval_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
-        to_tensor_and_norm,
+        ToTensor(),
     ])
 else:
     raise AssertionError('invalid aug {}'.format(config.aug.type))
@@ -137,6 +130,10 @@ def compute_score(input, target):
         truth=target.data.cpu().numpy(), scores=input.data.cpu().numpy())
 
     return np.sum(per_class_lwlrap * weight_per_class)
+
+
+def worker_init_fn(_):
+    utils.seed_python(torch.initial_seed() % 2**32)
 
 
 def get_nrow(images):
@@ -206,15 +203,6 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
-# def indices_for_fold(fold, dataset_size):
-#     kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
-#     splits = list(kfold.split(np.zeros(dataset_size)))
-#     train_indices, eval_indices = splits[fold - 1]
-#     assert len(train_indices) + len(eval_indices) == dataset_size
-#
-#     return train_indices, eval_indices
-
-
 def indices_for_fold(fold, labels):
     dataset_size = labels.shape[0]
     kfold = MultilabelStratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
@@ -238,7 +226,8 @@ def find_lr(train_eval_data, train_noisy_data):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
     if config.mixup is not None:
         train_eval_data_loader = MixupDataLoader(train_eval_data_loader, config.mixup)
 
@@ -411,7 +400,8 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
@@ -420,7 +410,8 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         eval_dataset,
         batch_size=config.batch_size // 2,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -504,7 +495,8 @@ def predict_on_test_using_fold(fold, test_data):
         test_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -536,7 +528,8 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         eval_dataset,
         batch_size=config.batch_size // 2,
         num_workers=args.workers,
-        collate_fn=collate_fn)  # TODO: all args
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -594,8 +587,8 @@ def evaluate_folds(folds, train_eval_data):
 
 
 def main():
-    # TODO: refactor seed
-    utils.seed_everything(config.seed)
+    utils.seed_python(config.seed)
+    utils.seed_torch(config.seed)
 
     train_eval_data = load_train_eval_data(args.dataset_path, 'train_curated')
     train_noisy_data = load_train_eval_data(args.dataset_path, 'train_noisy')

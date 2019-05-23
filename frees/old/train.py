@@ -569,7 +569,7 @@ def load_test_data(name):
 
 def main():
     # TODO: refactor seed
-    utils.seed_everything(config.seed)
+    utils.seed_python(config.seed)
 
     id_to_class = list(pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv')).columns[1:])
     class_to_id = {c: i for i, c in enumerate(id_to_class)}
