@@ -21,7 +21,7 @@ from .model import Model
 from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
 from .utils import collate_fn
 from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout
+from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout, AudioEffect
 from frees.metric import calculate_per_class_lwlrap
 
 
@@ -106,8 +106,9 @@ elif config.aug.type == 'crop':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
+        # RandomSplitConcat(config.aug.split_concat.splits),
         # Cutout(config.aug.cutout.fraction),
-        RandomSplitConcat(config.aug.split_concat.splits),
+        AudioEffect(),
         ToTensor(),
     ])
     test_transform = eval_transform = T.Compose([

@@ -1,9 +1,7 @@
 import soundfile
 import numpy as np
 import torch
-
-
-# from pysndfx import AudioEffectsChain
+from pysndfx import AudioEffectsChain
 
 
 class LoadSignal(object):
@@ -85,15 +83,14 @@ class Cutout(object):
 
         return input
 
-# class AugmentSignal(object):
-#     def __call__(self, input):
-#         # effect = AudioEffectsChain()
-#         # effect = effect.pitch(np.random.uniform(-100, 100))
-#         # effect = effect.tempo(np.random.uniform(0.8, 1.2))
-#
-#         # return effect(input)
-#
-#         return input
+
+class AudioEffect(object):
+    def __call__(self, input):
+        effect = AudioEffectsChain()
+        effect = effect.pitch(np.random.uniform(-100, 100))
+        effect = effect.tempo(np.random.uniform(0.8, 1.2))
+
+        return effect(input)
 
 # class LoadSpectra(object):
 #     def __init__(self, augmented=False):
