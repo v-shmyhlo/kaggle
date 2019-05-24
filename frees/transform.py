@@ -87,9 +87,13 @@ class Cutout(object):
 class AudioEffect(object):
     def __call__(self, input):
         effect = AudioEffectsChain()
-        effect = effect.pitch(np.random.uniform(-300, 300))
-        effect = effect.tempo(np.random.uniform(0.8, 1.2))
-        effect = effect.reverb(np.random.uniform(0, 100))
+
+        if np.random.uniform() > 0.5:
+            effect = effect.pitch(np.random.uniform(-300, 300))
+        if np.random.uniform() > 0.5:
+            effect = effect.tempo(np.random.uniform(0.8, 1.2))
+        if np.random.uniform() > 0.5:
+            effect = effect.reverb(np.random.uniform(0, 100))
 
         return effect(input)
 
