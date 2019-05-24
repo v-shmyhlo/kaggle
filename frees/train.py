@@ -109,6 +109,7 @@ elif config.aug.type == 'crop':
         # RandomSplitConcat(config.aug.split_concat.splits),
         # Cutout(config.aug.cutout.fraction),
         AudioEffect(),
+        RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
     ])
     test_transform = eval_transform = T.Compose([
