@@ -106,9 +106,9 @@ elif config.aug.type == 'crop':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
-        # RandomSplitConcat(config.aug.split_concat.splits),
         # Cutout(config.aug.cutout.fraction),
         AudioEffect(),
+        RandomSplitConcat(config.aug.split_concat.splits),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
     ])
