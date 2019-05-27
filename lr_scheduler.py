@@ -13,7 +13,7 @@ class LRScheduler(object):
 
 
 class OneCycleScheduler(LRScheduler):
-    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=5 / 15, end_pos=13 / 15):
+    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.4, end_pos=0.9):
         assert peak_pos < end_pos, '{} should be less than {}'.format(peak_pos, end_pos)
 
         if annealing == 'linear':

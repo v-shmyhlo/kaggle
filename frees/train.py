@@ -86,6 +86,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/frees')
 parser.add_argument('--dataset-path', type=str, required=True)
+parser.add_argument('--noisy-meta', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--debug', action='store_true')
@@ -107,7 +108,7 @@ elif config.aug.type == 'crop':
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         # Cutout(config.aug.cutout.fraction),
-        AudioEffect(),
+        # AudioEffect(),
         RandomSplitConcat(config.aug.split_concat.splits),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
@@ -477,13 +478,29 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
             torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
+def evaluate_noisy(folds, train_noisy_data):
+    with torch.no_grad():
+        predictions = 0.
+
+        for fold in folds:
+            fold_targets, fold_predictions, fold_ids = predict_on_noisy_using_fold(fold, train_noisy_data)
+            targets = fold_targets
+            predictions = predictions + fold_predictions  # .sigmoid()
+            ids = fold_ids
+
+        predictions = predictions / len(folds)
+        scores = [compute_score(input=predictions[i:i + 1], target=targets[i:i + 1]) for i in range(len(ids))]
+
+        return scores, ids
+
+
 def build_submission(folds, test_data):
     with torch.no_grad():
         predictions = 0.
 
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold, test_data)
-            predictions = predictions + fold_predictions.sigmoid()
+            predictions = predictions + fold_predictions  # .sigmoid()
             ids = fold_ids
 
         predictions = predictions / len(folds)
@@ -559,6 +576,41 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     return fold_targets, fold_predictions, fold_ids
 
 
+def predict_on_noisy_using_fold(fold, train_noisy_data):
+    eval_dataset = TrainEvalDataset(train_noisy_data, transform=eval_transform)
+    eval_data_loader = torch.utils.data.DataLoader(
+        eval_dataset,
+        batch_size=config.batch_size // 2,
+        num_workers=args.workers,
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn)
+
+    model = Model(config.model, NUM_CLASSES)
+    model = model.to(DEVICE)
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+
+    model.eval()
+    with torch.no_grad():
+        fold_targets = []
+        fold_predictions = []
+        fold_ids = []
+        for sigs, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
+            logits, _, _ = model(sigs)
+
+            fold_targets.append(labels)
+            fold_predictions.append(logits)
+            fold_ids.extend(ids)
+
+            if args.debug:
+                break
+
+        fold_targets = torch.cat(fold_targets, 0)
+        fold_predictions = torch.cat(fold_predictions, 0)
+
+    return fold_targets, fold_predictions, fold_ids
+
+
 def collect_labels(data):
     labels = np.zeros((len(data), NUM_CLASSES))
     for i in tqdm(range(len(data)), desc='stratification'):
@@ -596,12 +648,16 @@ def main():
     train_noisy_data = load_train_eval_data(args.dataset_path, 'train_noisy')
     test_data = load_test_data(args.dataset_path, 'test')
 
+    noisy_meta = pd.read_csv(args.noisy_meta)
+    noisy_indices = np.argsort(-noisy_meta.score)[:2000]
+    noisy_indices = []
+
     for data in [train_eval_data, train_noisy_data, test_data]:
         if args.debug:
             data['path'] = './frees/sample.wav'
 
     if config.opt.lr is None:
-        lr = find_lr(train_eval_data, train_noisy_data)
+        lr = find_lr(train_eval_data, train_noisy_data.iloc[noisy_indices])
         gc.collect()
 
     else:
@@ -613,11 +669,15 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(fold, train_eval_data, train_noisy_data, lr)
+        train_fold(fold, train_eval_data, train_noisy_data.iloc[noisy_indices], lr)
 
     # TODO: check and refine
     # TODO: remove?
     evaluate_folds(folds, train_eval_data)
+    scores, ids = evaluate_noisy(folds, train_noisy_data)
+    noisy_meta = pd.DataFrame({'fname': ids, 'score': scores})
+    noisy_meta.to_csv(os.path.join(args.experiment_path, 'noisy_meta.csv'), index=False)
+
     predictions, ids = build_submission(folds, test_data)
     predictions = predictions.cpu()
     submission = {
