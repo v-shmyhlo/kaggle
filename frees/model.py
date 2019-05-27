@@ -1,4 +1,5 @@
 import torch
+from gammatone.fftweight import fft_weights
 import torch.distributions
 import torchvision
 import librosa
@@ -118,6 +119,13 @@ class MaxPoolModel(nn.Module):
             nn.Dropout(dropout),
             self.model.fc)
 
+        for m in self.model.layer0.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, input):
         b, _, h, w = input.size()
 
@@ -233,6 +241,8 @@ class Spectrogram(nn.Module):
         self.hop_length = round(0.01 * rate)
 
         filters = librosa.filters.mel(rate, self.n_fft)
+        # filters, _ = fft_weights(self.n_fft, rate, 128, width=1, fmin=0, fmax=rate / 2, maxlen=self.n_fft / 2 + 1)
+
         filters = filters.reshape((*filters.shape, 1))
         filters = torch.tensor(filters).float()
 

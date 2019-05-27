@@ -1,6 +1,6 @@
 seed: 42
 epochs: 30
-batch_size: 90
+batch_size: 50
 mixup:
 
 model:
@@ -12,7 +12,7 @@ aug:
   type: crop
 
   crop:
-    size: 8
+    size: 15
 
   split_concat:
     splits: 4
@@ -22,7 +22,7 @@ aug:
 
 opt:
   type: adam
-  lr: 16e-4
+  lr: 8e-4
   beta: 0.9
   weight_decay: 1e-4
 
