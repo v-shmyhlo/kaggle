@@ -20,7 +20,6 @@ aug:
   cutout:
     fraction: 0.25
 
-
 opt:
   type: adam
   lr: 16e-4

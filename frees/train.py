@@ -54,19 +54,18 @@ class MixupDataLoader(object):
         # TODO: speedup
 
     def __iter__(self):
-        for (sigs_1, labels_1, ids_1), (sigs_2, labels_2, ids_2) in zip(self.data_loader, self.data_loader):
-            if np.random.uniform(0, 1) < 0.5:
-                yield sigs_1, labels_1, ids_1
+        for sigs_1, labels_1, ids in self.data_loader:
+            indices = np.random.permutation(len(ids))
+            sigs_2, labels_2 = sigs_1[indices], labels_1[indices]
 
-            else:
-                lam = self.dist.sample().to(DEVICE)
+            lam = self.dist.sample().to(DEVICE)
+            lam = torch.max(lam, 1 - lam)
 
-                sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-                # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
-                labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
-                ids = None
+            sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
+            # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
+            labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
 
-                yield sigs, labels, ids
+            yield sigs, labels, ids
 
     def __len__(self):
         return len(self.data_loader)
@@ -650,7 +649,6 @@ def main():
 
     noisy_meta = pd.read_csv(args.noisy_meta)
     noisy_indices = np.argsort(-noisy_meta.score)[:2000]
-    noisy_indices = []
 
     for data in [train_eval_data, train_noisy_data, test_data]:
         if args.debug:
