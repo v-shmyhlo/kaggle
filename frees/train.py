@@ -85,7 +85,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/frees')
 parser.add_argument('--dataset-path', type=str, required=True)
-parser.add_argument('--noisy-meta', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--debug', action='store_true')
@@ -647,7 +646,7 @@ def main():
     train_noisy_data = load_train_eval_data(args.dataset_path, 'train_noisy')
     test_data = load_test_data(args.dataset_path, 'test')
 
-    noisy_meta = pd.read_csv(args.noisy_meta)
+    noisy_meta = pd.read_csv('./noisy_meta.csv')
     noisy_indices = np.argsort(-noisy_meta.score)[:2000]
 
     for data in [train_eval_data, train_noisy_data, test_data]:
