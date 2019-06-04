@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
-from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+# from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
@@ -24,8 +24,6 @@ from transform import SquarePad, RatioPad, Cutout
 from .model import Model
 from loss import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
 from config import Config
-
-fail  # TODO: modify seeds
 
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
@@ -148,6 +146,10 @@ def draw_errors(images, true, pred):
     images = torch.stack(images, 0)
 
     return images
+
+
+def worker_init_fn(_):
+    utils.seed_python(torch.initial_seed() % 2**32)
 
 
 def lsepfoc_loss(input, target):
@@ -384,6 +386,7 @@ def indices_for_fold(fold, dataset_size):
     return train_indices, eval_indices
 
 
+# TODO: strat
 # def indices_for_fold(fold, dataset_size):
 #     labels = np.zeros((dataset_size, NUM_CLASSES))
 #     for i in tqdm(range(dataset_size), desc='stratification'):
@@ -424,7 +427,12 @@ class MixupDataLoader(object):
 def find_lr():
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        train_dataset,
+        batch_size=config.batch_size,
+        drop_last=True,
+        shuffle=True,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
@@ -579,13 +587,22 @@ def train_fold(fold, lr):
 
     train_dataset = TrainEvalDataset(train_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=config.batch_size, drop_last=True, shuffle=True, num_workers=args.workers)
+        train_dataset,
+        batch_size=config.batch_size,
+        drop_last=True,
+        shuffle=True,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
+
     if config.mixup is not None:
         train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
+        eval_dataset,
+        batch_size=config.batch_size,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -682,7 +699,10 @@ def build_submission(folds, threshold):
 def predict_on_test_using_fold(fold):
     test_dataset = TestDataset(transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=config.batch_size // 2, num_workers=args.workers)
+        test_dataset,
+        batch_size=config.batch_size // 2,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -716,7 +736,10 @@ def predict_on_eval_using_fold(fold):
 
     eval_dataset = TrainEvalDataset(train_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
-        eval_dataset, batch_size=config.batch_size, num_workers=args.workers)
+        eval_dataset,
+        batch_size=config.batch_size,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
@@ -766,8 +789,8 @@ def find_threshold_for_folds(folds):
 # TODO: check FOLDS usage
 
 def main():
-    # TODO: refactor seed
     utils.seed_python(config.seed)
+    utils.seed_torch(config.seed)
 
     if config.opt.lr is None:
         lr = find_lr()

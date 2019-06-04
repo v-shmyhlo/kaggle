@@ -257,7 +257,7 @@ def find_lr(train_eval_data, train_noisy_data):
         losses.append(loss.data.cpu().numpy().mean())
 
         if lim is None:
-            lim = losses[0] * 1.1
+            lim = losses[0] * 2.
 
         if lim < losses[-1]:
             break

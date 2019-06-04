@@ -78,11 +78,13 @@ class ConvNormRelu1d(nn.Sequential):
 
 
 class ConvNorm2d(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1):
         super().__init__(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
+            nn.Conv2d(
+                in_channels, out_channels, kernel_size, stride=stride, padding=padding, dilation=dilation,
+                groups=groups, bias=False),
             nn.BatchNorm2d(out_channels))
-
+       
 
 class ConvNormRelu2d(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
@@ -190,37 +192,62 @@ class SplitConv(nn.Module):
 #         return input
 
 
+# class CustomBlock(nn.Sequential):
+#     def __init__(self, in_channels, out_channels, kernel_size=5, stride=1):
+#         super().__init__()
+# 
+#         padding = kernel_size // 2
+# 
+#         self.a = nn.Sequential(
+#             ConvNormRelu2d(in_channels, out_channels, (kernel_size, 1), stride=(stride, 1), padding=(padding, 0)),
+#             ConvNorm2d(out_channels, out_channels, (1, kernel_size), stride=(1, stride), padding=(0, padding)))
+#         self.b = nn.Sequential(
+#             ConvNormRelu2d(in_channels, out_channels, (1, kernel_size), stride=(1, stride), padding=(0, padding)),
+#             ConvNorm2d(out_channels, out_channels, (kernel_size, 1), stride=(stride, 1), padding=(padding, 0)))
+#         self.w = nn.Sequential(
+#             nn.MaxPool2d(kernel_size, stride=stride, padding=padding),
+#             ConvNormRelu2d(in_channels, out_channels // 4, 1),
+#             ConvNorm2d(out_channels // 4, out_channels, 1),
+#             nn.Sigmoid())
+#         self.relu = ReLU(inplace=True)
+# 
+#     def forward(self, input):
+#         a = self.a(input)
+#         b = self.b(input)
+#         w = self.w(input)
+#         input = w * a + (1 - w) * b
+#         input = self.relu(input)
+# 
+#         return input
+
+
+# class CustomBlock(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, stride=1):
+#         super().__init__()
+#
+#         self.input = nn.Sequential(
+#             ConvNorm2d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2),
+#             ReLU(inplace=True))
+#
+#         if in_channels == out_channels:
+#             self.identity = nn.Sequential()
+#         else:
+#             self.identity = ConvNorm2d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2)
+#
+#         self.relu = ReLU(inplace=True)
+#
+#     def forward(self, input):
+#         input = self.input(input) + self.identity(input)
+#         input = self.relu(input)
+#
+#         return input
+
+
 class CustomBlock(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size=5, stride=1):
-        super().__init__()
-
-        padding = kernel_size // 2
-
-        self.a = ConvNormRelu2d(in_channels, out_channels, (kernel_size, 1), stride=stride, padding=(padding, 0))
-        self.b = ConvNormRelu2d(in_channels, out_channels, (1, kernel_size), stride=stride, padding=(0, padding))
-        self.w = nn.Sequential(
-            ConvNorm2d(in_channels, out_channels, 1),
-            ReLU(inplace=True),
-            ConvNorm2d(in_channels, out_channels, 1),
-            nn.Sigmoid())
-
-    def forward(self, input):
-        a = self.a(input)
-        b = self.b(input)
-
-        print(input.size())
-        kernel_size = input.size(2)
-        padding = 0
-        if kernel_size % 2 == 0:
-            kernel_size += 1
-            padding = 1
-        input = F.max_pool2d(input, kernel_size, 1, padding=(padding, kernel_size // 2))
-        print(input.size())
-
-        w = self.w(input)
-        input = w * a + (1 - w) * b
-
-        return input
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1):
+        super().__init__(
+            ConvNorm2d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2),
+            ReLU(inplace=True))
 
 
 class CustomModel(nn.Module):
@@ -278,7 +305,7 @@ class MaxPoolModel(nn.Module):
 
         for m in self.model.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=(1 / 8 + 1 / 3) / 2)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
