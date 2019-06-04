@@ -1,18 +1,18 @@
 seed: 42
 epochs: 10
-image_size: 320
-batch_size: 38
+image_size: 300
+batch_size: 24
 label_smooth:
 mixup:
 
 loss:
-  type: lsepfoc
+  type: lsep
 
   focal:
     gamma: 2.0
 
 model:
-  type: seresnext50
+  type: effnet3
   predict_thresh: True
   dropout: 0.2
 

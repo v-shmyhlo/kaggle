@@ -1,0 +1,38 @@
+seed: 42
+epochs: 30
+batch_size: 32
+mixup:
+
+model:
+  type: max
+  dropout: 0.2
+  sample_rate: 44100
+
+aug:
+  type: crop
+
+  crop:
+    size: 10
+
+  split_concat:
+    splits: 4
+
+  cutout:
+    fraction: 0.25
+
+opt:
+  type: adam
+  lr: 8e-4
+  beta: 0.9
+  weight_decay: 1e-4
+
+sched:
+  type: onecycle
+
+  onecycle:
+    anneal: linear
+    beta: [0.95, 0.85]
+
+  cyclic:
+    beta: [0.9, 0.8]
+

@@ -16,7 +16,7 @@ import argparse
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
-from lr_scheduler import OneCycleScheduler, CyclicLR
+from lr_scheduler import OneCycleScheduler
 import lr_scheduler_wrapper
 from optim import AdamW
 import utils
@@ -374,6 +374,7 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
+# TODO: strat
 def indices_for_fold(fold, dataset_size):
     kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
     splits = list(kfold.split(np.zeros(dataset_size)))

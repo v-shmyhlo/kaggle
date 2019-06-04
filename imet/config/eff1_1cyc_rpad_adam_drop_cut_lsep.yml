@@ -1,7 +1,7 @@
 seed: 42
-epochs: 15
-image_size: 320
-batch_size: 38
+epochs: 10
+image_size: 240
+batch_size: 56
 label_smooth:
 mixup:
 
@@ -12,7 +12,7 @@ loss:
     gamma: 2.0
 
 model:
-  type: seresnext50
+  type: effnet1
   predict_thresh: True
   dropout: 0.2
 
@@ -32,7 +32,7 @@ aug:
 
 opt:
   type: adam
-  lr: 5e-4
+  lr: 2.5e-4
   beta: 0.9
   weight_decay: 1e-4
 
