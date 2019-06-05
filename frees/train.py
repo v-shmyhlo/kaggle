@@ -62,7 +62,6 @@ class MixupDataLoader(object):
             lam = torch.max(lam, 1 - lam)
 
             sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-            # labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
             labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
 
             yield sigs, labels, ids
@@ -105,8 +104,8 @@ elif config.aug.type == 'crop':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
-        # Cutout(config.aug.cutout.fraction),
         # AudioEffect(),
+        # Cutout(config.aug.cutout.fraction),
         RandomSplitConcat(config.aug.split_concat.splits),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),

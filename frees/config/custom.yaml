@@ -1,6 +1,6 @@
 seed: 42
 epochs: 30
-batch_size: 140
+batch_size: 88
 mixup:
 
 model:
@@ -22,7 +22,7 @@ aug:
 
 opt:
   type: adam
-  lr: 64e-4
+  lr: 32e-4
   beta: 0.9
   weight_decay: 1e-4
 

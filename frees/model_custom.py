@@ -30,7 +30,7 @@ class Model(nn.Module):
         logits, weights = self.model(images)
 
         return logits, images, weights
-
+   
 
 class ConvNorm1d(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1):
@@ -238,7 +238,7 @@ class CustomBlock(nn.Module):
         kernel_size = 3
 
         self.identity = nn.Sequential(
-            ConvNorm2d(in_channels, out_channels, kernel_size, stride=2, padding=kernel_size // 2))
+            ConvNorm2d(in_channels, out_channels, 1, stride=2))
         self.input = nn.Sequential(
             ConvNorm2d(in_channels, out_channels, kernel_size, stride=2, padding=kernel_size // 2),
             ReLU(inplace=True),
@@ -248,9 +248,7 @@ class CustomBlock(nn.Module):
     def forward(self, input):
         identity = self.identity(input)
         input = self.input(input)
-
-        input = input + identity
-        input = self.relu(input)
+        input = self.relu(input + identity)
 
         return input
 
@@ -304,6 +302,22 @@ class Attention(nn.Module):
         return c
 
 
+class HeightCoord(nn.Module):
+    def __init__(self, height):
+        super().__init__()
+
+        self.coord = nn.Parameter(torch.linspace(-1, 1, height).view(1, 1, height, 1))
+
+    def forward(self, input):
+        b, _, h, w = input.size()
+
+        coord = torch.ones(b, 1, h, w).to(input.device)
+        coord = coord * self.coord
+        input = torch.cat([input, coord], 1)
+
+        return input
+
+
 class CustomModel(nn.Module):
     def __init__(self, num_classes, dropout):
         super().__init__()
@@ -311,7 +325,7 @@ class CustomModel(nn.Module):
         channels = 16
 
         self.blocks = nn.Sequential(
-            ConvNorm2d(1, channels * 1, 3, padding=3 // 2),
+            ConvNorm2d(3, channels * 1, 3, padding=3 // 2),
             nn.ReLU(inplace=True),
             CustomBlock(channels * 1, channels * 2),
             CustomBlock(channels * 2, channels * 4),
@@ -339,21 +353,6 @@ class CustomModel(nn.Module):
 class MaxPoolModel(nn.Module):
     def __init__(self, num_classes, dropout):
         super().__init__()
-
-        # self.model = pretrainedmodels.resnet18(pretrained=None)
-        # self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # self.model.avgpool = nn.AdaptiveMaxPool2d(1)
-        # self.model.last_linear = nn.Sequential(
-        #     nn.Dropout(dropout),
-        #     nn.Linear(512, num_classes))
-
-        # self.model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
-        # # self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # self.model.layer0 = SplitConv(1, 64)
-        # self.model.avgpool = nn.AdaptiveMaxPool2d(1)
-        # self.model.fc = nn.Sequential(
-        #     nn.Dropout(dropout),
-        #     self.model.fc)
 
         self.model = CustomModel(num_classes, dropout)
 
@@ -479,26 +478,34 @@ class Spectrogram(nn.Module):
         self.hop_length = round(0.01 * rate)
 
         filters = librosa.filters.mel(rate, self.n_fft)
-        # filters, _ = fft_weights(self.n_fft, rate, 128, width=1, fmin=0, fmax=rate / 2, maxlen=self.n_fft / 2 + 1)
-
-        filters = filters.reshape((*filters.shape, 1))
-        filters = torch.tensor(filters).float()
-
         self.mel = nn.Conv1d(512, 128, 1, bias=False)
-        self.mel.weight.data = filters
+        self.mel.weight.data = filters_to_tensor(filters)
         self.mel.weight.requires_grad = False
 
-        self.norm = nn.BatchNorm2d(1)
+        filters, _ = fft_weights(self.n_fft, rate, 128, width=1, fmin=0, fmax=rate / 2, maxlen=self.n_fft / 2 + 1)
+        self.gamma = nn.Conv1d(512, 128, 1, bias=False)
+        self.gamma.weight.data = filters_to_tensor(filters)
+        self.gamma.weight.requires_grad = False
+
+        self.coord = HeightCoord(128)
+        self.norm = nn.BatchNorm2d(3)
 
     def forward(self, input):
         input = torch.stft(input, n_fft=self.n_fft, hop_length=self.hop_length)
         input = torch.norm(input, 2, -1)**2  # TODO:
-        input = self.mel(input)
 
+        input = torch.stack([self.mel(input), self.gamma(input)], 1)
         amin = torch.tensor(1e-10).to(input.device)
         input = 10.0 * torch.log10(torch.max(amin, input))
 
-        input = input.unsqueeze(1)
+        input = self.coord(input)
         input = self.norm(input)
 
         return input
+
+
+def filters_to_tensor(filters):
+    filters = filters.reshape((*filters.shape, 1))
+    filters = torch.tensor(filters).float()
+
+    return filters
