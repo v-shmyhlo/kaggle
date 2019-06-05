@@ -32,49 +32,13 @@ class Model(nn.Module):
         return logits, images, weights
 
 
-# class Model(nn.Module):
-#     def __init__(self, model, num_classes):
-#         super().__init__()
-#
-#         self.l1 = nn.Sequential(
-#             Conv1dNormRelu(1, 16, 64, stride=2),
-#             nn.MaxPool1d(8, 8))
-#         self.l2 = nn.Sequential(
-#             Conv1dNormRelu(16, 32, 32, stride=2),
-#             nn.MaxPool1d(8, 8))
-#         self.l3 = nn.Sequential(
-#             Conv1dNormRelu(32, 64, 16, stride=2),
-#             Conv1dNormRelu(64, 128, 8, stride=2),
-#             Conv1dNormRelu(128, 256, 4, stride=2),
-#             nn.AdaptiveMaxPool1d(1))
-#         self.output = nn.Linear(256, num_classes)
-#
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv1d):
-#                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-#             elif isinstance(m, nn.BatchNorm1d):
-#                 nn.init.constant_(m.weight, 1)
-#                 nn.init.constant_(m.bias, 0)
-#
-#     def forward(self, input):
-#         input = input.unsqueeze(1)
-#
-#         input = self.l1(input)
-#         input = self.l2(input)
-#         input = self.l3(input)
-#
-#         input = input.squeeze(2)
-#         input = self.output(input)
-#
-#         return input, torch.zeros(input.size(0), 1, 1, 1), torch.zeros(input.size(0), 1, 1, 1)
-
-
-class ConvNormRelu1d(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
+class ConvNorm1d(nn.Sequential):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1):
         super().__init__(
-            nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
-            nn.BatchNorm1d(out_channels),
-            ReLU(inplace=True))
+            nn.Conv1d(
+                in_channels, out_channels, kernel_size, stride=stride, padding=padding, dilation=dilation,
+                groups=groups, bias=False),
+            nn.BatchNorm1d(out_channels))
 
 
 class ConvNorm2d(nn.Sequential):
@@ -84,13 +48,14 @@ class ConvNorm2d(nn.Sequential):
                 in_channels, out_channels, kernel_size, stride=stride, padding=padding, dilation=dilation,
                 groups=groups, bias=False),
             nn.BatchNorm2d(out_channels))
-       
+
 
 class ConvNormRelu2d(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1):
         super().__init__(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
-            nn.BatchNorm2d(out_channels),
+            ConvNorm2d(
+                in_channels, out_channels, kernel_size, stride=stride, padding=padding, dilation=dilation,
+                groups=groups),
             ReLU(inplace=True))
 
 
@@ -243,38 +208,127 @@ class SplitConv(nn.Module):
 #         return input
 
 
-class CustomBlock(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1):
-        super().__init__(
-            ConvNorm2d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2),
-            ReLU(inplace=True))
+# class CustomBlock(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size):
+#         super().__init__()
+#
+#         self.identity = nn.Sequential(
+#             ConvNorm2d(in_channels, out_channels, kernel_size, stride=2, padding=kernel_size // 2))
+#         self.input = nn.Sequential(
+#             ConvNorm2d(in_channels, out_channels // 4, 1),
+#             ReLU(inplace=True),
+#             ConvNorm2d(out_channels // 4, out_channels // 4, kernel_size, stride=2, padding=kernel_size // 2),
+#             ReLU(inplace=True),
+#             ConvNorm2d(out_channels // 4, out_channels, 1))
+#         self.relu = ReLU(inplace=True)
+#
+#     def forward(self, input):
+#         identity = self.identity(input)
+#         input = self.input(input)
+#
+#         input = input + identity
+#         input = self.relu(input)
+#
+#         return input
+
+class CustomBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        kernel_size = 3
+
+        self.identity = nn.Sequential(
+            ConvNorm2d(in_channels, out_channels, kernel_size, stride=2, padding=kernel_size // 2))
+        self.input = nn.Sequential(
+            ConvNorm2d(in_channels, out_channels, kernel_size, stride=2, padding=kernel_size // 2),
+            ReLU(inplace=True),
+            ConvNorm2d(out_channels, out_channels, kernel_size, padding=kernel_size // 2))
+        self.relu = ReLU(inplace=True)
+
+    def forward(self, input):
+        identity = self.identity(input)
+        input = self.input(input)
+
+        input = input + identity
+        input = self.relu(input)
+
+        return input
+
+
+class HeightPool(nn.Module):
+    def forward(self, input):
+        input = F.max_pool2d(input, (input.size(2), 1))
+        input = input.squeeze(2)
+
+        return input
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        self.q = ConvNorm1d(in_channels, out_channels, 1)
+        self.k = ConvNorm1d(in_channels, out_channels, 1)
+        self.v = ConvNorm1d(in_channels, out_channels, 1)
+
+    def forward(self, input):
+        q = self.q(input)
+        k = self.k(input)
+        v = self.v(input)
+
+        w = torch.bmm(q.permute(0, 2, 1), k)
+
+        v = v.unsqueeze(2)
+        w = w.unsqueeze(1)
+
+        c = v * w.softmax(3)
+        c = c.sum(3)
+
+        return c
+
+
+class Attention(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+
+        self.v = ConvNorm1d(channels, channels, 1)
+        self.w = ConvNorm1d(channels, 1, 1)
+
+    def forward(self, input):
+        v = self.v(input)
+        w = self.w(input)
+
+        c = v * w.softmax(2)
+        c = c.sum(2)
+
+        return c
 
 
 class CustomModel(nn.Module):
     def __init__(self, num_classes, dropout):
         super().__init__()
 
-        in_channels = 1
-        channels = 32
+        channels = 16
 
         self.blocks = nn.Sequential(
-            CustomBlock(in_channels, channels * 1, 5, 2),
-            CustomBlock(channels * 1, channels * 1, 3, 1),
-            CustomBlock(channels * 1, channels * 2, 5, 2),
-            CustomBlock(channels * 2, channels * 2, 3, 1),
-            CustomBlock(channels * 2, channels * 4, 5, 2),
-            CustomBlock(channels * 4, channels * 4, 3, 1),
-            CustomBlock(channels * 4, channels * 8, 5, 2),
-            CustomBlock(channels * 8, channels * 8, 3, 1),
-            CustomBlock(channels * 8, channels * 16, 5, 2),
-            CustomBlock(channels * 16, channels * 16, 3, 1))
+            ConvNorm2d(1, channels * 1, 3, padding=3 // 2),
+            nn.ReLU(inplace=True),
+            CustomBlock(channels * 1, channels * 2),
+            CustomBlock(channels * 2, channels * 4),
+            CustomBlock(channels * 4, channels * 8),
+            CustomBlock(channels * 8, channels * 16),
+            CustomBlock(channels * 16, channels * 32))
         self.pool = nn.AdaptiveMaxPool2d(1)
         self.output = nn.Sequential(
             nn.Dropout2d(dropout),
-            nn.Linear(channels * 16, num_classes))
+            nn.Linear(channels * 32, num_classes))
+
+        assert self.output[1].in_features == 512
 
     def forward(self, input):
         input = self.blocks(input)
+        assert input.size(2) == 128 / (2**5)
+
         input = self.pool(input)
         input = input.view(input.size(0), input.size(1))
         input = self.output(input)
@@ -304,9 +358,9 @@ class MaxPoolModel(nn.Module):
         self.model = CustomModel(num_classes, dropout)
 
         for m in self.model.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu', a=(1 / 8 + 1 / 3) / 2)
-            elif isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, (nn.Conv1d, nn.Conv2d)):
+                nn.init.kaiming_normal_(m.weight, a=(1 / 8 + 1 / 3) / 2)
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
