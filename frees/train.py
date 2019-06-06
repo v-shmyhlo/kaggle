@@ -7,6 +7,8 @@ import pandas as pd
 import os
 from tqdm import tqdm
 import torch
+import torch.utils
+import torch.utils.data
 import torchvision
 import torchvision.transforms as T
 import argparse
@@ -42,6 +44,20 @@ from frees.metric import calculate_per_class_lwlrap
 # TODO: resample silence
 # TODO: benchmark stft
 # TODO: scipy stft
+
+
+def mixup(sigs_1, labels_1, ids, alpha=0.5):
+    dist = torch.distributions.beta.Beta(alpha, alpha)
+    indices = np.random.permutation(len(ids))
+    sigs_2, labels_2 = sigs_1[indices], labels_1[indices]
+
+    lam = dist.sample().to(DEVICE)
+    lam = torch.max(lam, 1 - lam)
+
+    sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
+    labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
+
+    return sigs, labels, ids
 
 
 class MixupDataLoader(object):
@@ -105,7 +121,7 @@ elif config.aug.type == 'crop':
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         # AudioEffect(),
-        # Cutout(config.aug.cutout.fraction),
+        Cutout(config.aug.cutout.fraction),
         RandomSplitConcat(config.aug.split_concat.splits),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
@@ -300,8 +316,20 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         'loss': utils.Mean(),
     }
 
+    if epoch >= config.epochs * (5 / 6):
+        for ds in data_loader.dataset.datasets:
+            ds.transform = T.Compose([
+                LoadSignal(config.model.sample_rate),
+                RandomCrop(config.aug.crop.size * config.model.sample_rate),
+                ToTensor(),
+            ])
+
     model.train()
     for sigs, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        if epoch >= config.epochs * (5 / 6):
+            if np.random.random() > ((epoch) / (config.epochs * (5 / 6))):
+                sigs, labels, ids = mixup(sigs, labels, ids)
+
         sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
         logits, images, weights = model(sigs)
 

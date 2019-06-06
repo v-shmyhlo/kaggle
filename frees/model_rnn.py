@@ -316,6 +316,34 @@ class HeightCoord(nn.Module):
         return input
 
 
+class RNNPool(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+
+        self.pool = nn.MaxPool2d((4, 1), 1)
+        self.rnn = nn.LSTM(in_channels, in_channels // 2, bidirectional=True)
+
+    def forward(self, input):
+        # print(input.size())
+        input = self.pool(input)
+        # print(input.size())
+        input = input.squeeze(2)
+        # print(input.size())
+        input = input.permute(2, 0, 1)
+        # print(input.size())
+        _, (input, _) = self.rnn(input)
+
+        # print(input.shape)
+        # input = input.permute(1, 0, 2)
+        input = torch.cat([input[0], input[1]], 1)
+        # print(input.shape)
+        # input = input.view(input.size(0), input.size(1) * input.size(2))
+        # print(input.shape)
+        # fail
+
+        return input
+
+
 class CustomModel(nn.Module):
     def __init__(self, num_classes, dropout):
         super().__init__()
@@ -329,18 +357,26 @@ class CustomModel(nn.Module):
             CustomBlock(channels * 2, channels * 4),
             CustomBlock(channels * 4, channels * 8),
             CustomBlock(channels * 8, channels * 16),
-            CustomBlock(channels * 16, channels * 32))
+            CustomBlock(channels * 16, channels * 32),
+            ConvNorm2d(channels * 32, channels * 16, 1))
         self.pool = nn.AdaptiveMaxPool2d(1)
+        self.rnn = RNNPool(channels * 16)
         self.output = nn.Sequential(
             nn.Dropout2d(dropout),
-            nn.Linear(channels * 32, num_classes))
+            nn.Linear(channels * 16, num_classes))
 
-        assert self.output[1].in_features == 512
+        assert self.output[1].in_features == 256
 
     def forward(self, input):
         input = self.blocks(input)
-        input = self.pool(input)
-        input = input.view(input.size(0), input.size(1))
+        assert input.size(2) == 128 / (2**5)
+
+        pool = self.pool(input)
+        pool = pool.view(pool.size(0), pool.size(1))
+
+        rnn = self.rnn(input)
+
+        input = rnn + pool
         input = self.output(input)
 
         return input
