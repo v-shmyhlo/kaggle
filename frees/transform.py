@@ -1,5 +1,6 @@
 import soundfile
 import numpy as np
+import itertools
 import torch
 from pysndfx import AudioEffectsChain
 
@@ -40,34 +41,33 @@ class RandomCrop(object):
 
 
 class RandomSplitConcat(object):
-    def __init__(self, splits):
-        self.splits = splits
+    def __init__(self, min_size):
+        self.min_size = min_size
 
     def __call__(self, input):
-        size, = input.shape
-        window = size // self.splits
+        shape = input.shape
 
-        chunks = [input[i * window:(i + 1) * window] for i in range(self.splits)]
-        np.random.shuffle(chunks)
-        input = np.concatenate(chunks, 0)
+        splits = self.random_split(input)
+        splits = itertools.chain.from_iterable(self.random_split(s) for s in splits)
+        splits = list(splits)
+
+        np.random.shuffle(splits)
+        input = np.concatenate(splits)
+        assert input.shape == shape
 
         return input
 
+    def random_split(self, input):
+        size, = input.shape
 
-# class RandomSplitConcat(object):
-#     def __init__(self, splits):
-#         self.splits = splits
-#
-#     def __call__(self, input, recur=True):
-#         size, = input.shape
-#
-#         i = np.random.randint(size // 8, size - size // 8)
-#         left, right = np.split(input, [i], 0)
-#         if recur:
-#             left, right = self(left, recur=False), self(right, recur=False)
-#         input = np.concatenate([right, left], 0)
-#
-#         return input
+        if size < self.min_size * 2:
+            return input,
+
+        i = np.random.randint(self.min_size, size - self.min_size + 1)
+        splits = np.split(input, [i])
+        assert all(s.shape[0] >= self.min_size for s in splits)
+
+        return splits
 
 
 class Cutout(object):

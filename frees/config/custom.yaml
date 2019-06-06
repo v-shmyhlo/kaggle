@@ -15,10 +15,10 @@ aug:
     size: 15
 
   split_concat:
-    splits: 4
+    min_size: 1
 
   cutout:
-    fraction: 0.25
+    fraction: 0.1
 
 opt:
   type: adam

@@ -4,6 +4,7 @@ import torch.distributions
 import torchvision
 import librosa
 import torch.nn as nn
+import spec_augment
 
 
 class ReLU(nn.RReLU):
@@ -21,59 +22,14 @@ class Model(nn.Module):
         else:
             raise AssertionError('invalid model {}'.format(model.type))
 
-    def forward(self, input):
-        images = self.spectrogram(input)
+    def forward(self, input, aug=False):
+        images = self.spectrogram(input, aug=aug)
         logits, weights = self.model(images)
 
         return logits, images, weights
 
 
-# class Model(nn.Module):
-#     def __init__(self, model, num_classes):
-#         super().__init__()
-#
-#         self.l1 = nn.Sequential(
-#             Conv1dNormRelu(1, 16, 64, stride=2),
-#             nn.MaxPool1d(8, 8))
-#         self.l2 = nn.Sequential(
-#             Conv1dNormRelu(16, 32, 32, stride=2),
-#             nn.MaxPool1d(8, 8))
-#         self.l3 = nn.Sequential(
-#             Conv1dNormRelu(32, 64, 16, stride=2),
-#             Conv1dNormRelu(64, 128, 8, stride=2),
-#             Conv1dNormRelu(128, 256, 4, stride=2),
-#             nn.AdaptiveMaxPool1d(1))
-#         self.output = nn.Linear(256, num_classes)
-#
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv1d):
-#                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-#             elif isinstance(m, nn.BatchNorm1d):
-#                 nn.init.constant_(m.weight, 1)
-#                 nn.init.constant_(m.bias, 0)
-#
-#     def forward(self, input):
-#         input = input.unsqueeze(1)
-#
-#         input = self.l1(input)
-#         input = self.l2(input)
-#         input = self.l3(input)
-#
-#         input = input.squeeze(2)
-#         input = self.output(input)
-#
-#         return input, torch.zeros(input.size(0), 1, 1, 1), torch.zeros(input.size(0), 1, 1, 1)
-
-
-class Conv1dNormRelu(nn.Sequential):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
-        super().__init__(
-            nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
-            nn.BatchNorm1d(out_channels),
-            ReLU(inplace=True))
-
-
-class Conv2dNormRelu(nn.Sequential):
+class ConvNormRelu2d(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
         super().__init__(
             nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=False),
@@ -85,12 +41,16 @@ class SplitConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
 
+        out_channels = out_channels // 2
+        kernel_size = 7
+        padding = kernel_size // 2
+
         self.a = nn.Sequential(
-            Conv2dNormRelu(in_channels, out_channels // 2, (7, 1), stride=(2, 1), padding=(3, 0)),
-            Conv2dNormRelu(out_channels // 2, out_channels // 2, (1, 7), stride=(1, 2), padding=(0, 3)))
+            ConvNormRelu2d(in_channels, out_channels, (kernel_size, 1), stride=(2, 1), padding=(padding, 0)),
+            ConvNormRelu2d(out_channels, out_channels, (1, kernel_size), stride=(1, 2), padding=(0, padding)))
         self.b = nn.Sequential(
-            Conv2dNormRelu(in_channels, out_channels // 2, (1, 7), stride=(1, 2), padding=(0, 3)),
-            Conv2dNormRelu(out_channels // 2, out_channels // 2, (7, 1), stride=(2, 1), padding=(3, 0)))
+            ConvNormRelu2d(in_channels, out_channels, (1, kernel_size), stride=(1, 2), padding=(0, padding)),
+            ConvNormRelu2d(out_channels, out_channels, (kernel_size, 1), stride=(2, 1), padding=(padding, 0)))
 
     def forward(self, input):
         a = self.a(input)
@@ -119,7 +79,7 @@ class MaxPoolModel(nn.Module):
             nn.Dropout(dropout),
             self.model.fc)
 
-        for m in self.model.layer0.modules():
+        for m in self.model.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm2d):
@@ -241,26 +201,58 @@ class Spectrogram(nn.Module):
         self.hop_length = round(0.01 * rate)
 
         filters = librosa.filters.mel(rate, self.n_fft)
+        self.mel = self.filters_to_conv(filters)
+
         # filters, _ = fft_weights(self.n_fft, rate, 128, width=1, fmin=0, fmax=rate / 2, maxlen=self.n_fft / 2 + 1)
+        # self.gamma = self.filters_to_conv(filters)
 
-        filters = filters.reshape((*filters.shape, 1))
-        filters = torch.tensor(filters).float()
-
-        self.mel = nn.Conv1d(512, 128, 1, bias=False)
-        self.mel.weight.data = filters
-        self.mel.weight.requires_grad = False
-
+        # self.coord = HeightCoord(128)
         self.norm = nn.BatchNorm2d(1)
 
-    def forward(self, input):
+    def forward(self, input, aug):
         input = torch.stft(input, n_fft=self.n_fft, hop_length=self.hop_length)
         input = torch.norm(input, 2, -1)**2  # TODO:
-        input = self.mel(input)
 
+        input = torch.stack([
+            self.mel(input),
+            # self.gamma(input)
+        ], 1)
         amin = torch.tensor(1e-10).to(input.device)
         input = 10.0 * torch.log10(torch.max(amin, input))
 
-        input = input.unsqueeze(1)
+        # input = self.coord(input)
         input = self.norm(input)
+
+        if self.training and aug:
+            for i in range(input.shape[0]):
+                spec_augment.spec_augment(input[i])
+
+        return input
+
+    @staticmethod
+    def filters_to_conv(filters):
+        filters = filters.reshape((*filters.shape, 1))
+        filters = torch.tensor(filters).float()
+
+        conv = nn.Conv1d(1, 1, 1, bias=False)
+        conv.weight.data = filters
+        conv.weight.requires_grad = False
+
+        return conv
+
+
+class HeightCoord(nn.Module):
+    def __init__(self, height):
+        super().__init__()
+
+        self.coord = nn.Parameter(torch.linspace(-1, 1, height).view(1, 1, height, 1))
+        self.coord.requires_grad = False
+
+    def forward(self, input):
+        b, _, h, w = input.size()
+
+        coord = torch.ones(b, 1, h, w).to(input.device)
+        coord = coord * self.coord
+        input = torch.cat([input, coord], 1)
 
         return input

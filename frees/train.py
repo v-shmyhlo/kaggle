@@ -46,7 +46,7 @@ from frees.metric import calculate_per_class_lwlrap
 # TODO: scipy stft
 
 
-def mixup(sigs_1, labels_1, ids, alpha=0.5):
+def mixup(sigs_1, labels_1, ids, alpha):
     dist = torch.distributions.beta.Beta(alpha, alpha)
     indices = np.random.permutation(len(ids))
     sigs_2, labels_2 = sigs_1[indices], labels_1[indices]
@@ -58,32 +58,6 @@ def mixup(sigs_1, labels_1, ids, alpha=0.5):
     labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
 
     return sigs, labels, ids
-
-
-class MixupDataLoader(object):
-    def __init__(self, data_loader, alpha):
-        self.data_loader = data_loader
-        self.dist = torch.distributions.beta.Beta(alpha, alpha)
-
-        # TODO: handle ids
-        # TODO: sample beta for each sample
-        # TODO: speedup
-
-    def __iter__(self):
-        for sigs_1, labels_1, ids in self.data_loader:
-            indices = np.random.permutation(len(ids))
-            sigs_2, labels_2 = sigs_1[indices], labels_1[indices]
-
-            lam = self.dist.sample().to(DEVICE)
-            lam = torch.max(lam, 1 - lam)
-
-            sigs = lam * sigs_1.to(DEVICE) + (1 - lam) * sigs_2.to(DEVICE)
-            labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
-
-            yield sigs, labels, ids
-
-    def __len__(self):
-        return len(self.data_loader)
 
 
 # TODO: try max pool
@@ -121,8 +95,16 @@ elif config.aug.type == 'crop':
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         # AudioEffect(),
-        Cutout(config.aug.cutout.fraction),
-        RandomSplitConcat(config.aug.split_concat.splits),
+        T.RandomChoice([
+            T.Compose([
+                # Cutout(config.aug.cutout.fraction),
+                RandomSplitConcat(min_size=config.model.sample_rate * config.aug.split_concat.min_size),
+            ]),
+            T.Compose([
+                RandomSplitConcat(min_size=config.model.sample_rate * config.aug.split_concat.min_size),
+                # Cutout(config.aug.cutout.fraction),
+            ]),
+        ]),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
     ])
@@ -230,6 +212,8 @@ def indices_for_fold(fold, labels):
 
 
 def find_lr(train_eval_data, train_noisy_data):
+    fail  # TODO: mixup
+
     train_eval_dataset = torch.utils.data.ConcatDataset([
         TrainEvalDataset(train_eval_data, transform=train_transform),
         TrainEvalDataset(train_noisy_data, transform=train_transform)
@@ -244,8 +228,6 @@ def find_lr(train_eval_data, train_noisy_data):
         num_workers=args.workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
-    if config.mixup is not None:
-        train_eval_data_loader = MixupDataLoader(train_eval_data_loader, config.mixup)
 
     min_lr = 1e-7
     max_lr = 10.
@@ -323,15 +305,16 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
                 RandomCrop(config.aug.crop.size * config.model.sample_rate),
                 ToTensor(),
             ])
-
+          
     model.train()
     for sigs, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        if epoch >= config.epochs * (5 / 6):
-            if np.random.random() > ((epoch) / (config.epochs * (5 / 6))):
-                sigs, labels, ids = mixup(sigs, labels, ids)
+        if config.mixup is not None:
+            if epoch < config.epochs * (5 / 6):
+                if np.random.random() > (epoch / (config.epochs * (5 / 6))):
+                    sigs, labels, ids = mixup(sigs, labels, ids, alpha=config.mixup)
 
         sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, images, weights = model(sigs)
+        logits, images, weights = model(sigs, aug=epoch < config.epochs * (5 / 6))
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -430,8 +413,6 @@ def train_fold(fold, train_eval_data, train_noisy_data, lr):
         num_workers=args.workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
-    if config.mixup is not None:
-        train_data_loader = MixupDataLoader(train_data_loader, config.mixup)
 
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
