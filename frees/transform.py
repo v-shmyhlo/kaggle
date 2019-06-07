@@ -94,6 +94,14 @@ class AudioEffect(object):
             effect = effect.tempo(np.random.uniform(0.8, 1.2))
         if np.random.uniform() > 0.5:
             effect = effect.reverb(np.random.uniform(0, 100))
+        # if np.random.uniform() > 0.5:
+        #     effect = effect.overdrive(np.random.uniform(0, 10))
+        # if np.random.uniform() > 0.5:
+        #     effect = effect.limiter(np.random.uniform(-10, 10))
+        # if np.random.uniform() > 0.5:
+        #     effect = effect.lowshelf()
+        # if np.random.uniform() > 0.5:
+        #     effect = effect.highshelf()
 
         return effect(input)
 
