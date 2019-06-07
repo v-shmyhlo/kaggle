@@ -5,6 +5,7 @@ import torchvision
 import librosa
 import torch.nn as nn
 import spec_augment
+from frees.model_1d import ResNet18MaxPool1d
 
 
 class ReLU(nn.RReLU):
@@ -15,16 +16,24 @@ class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
-        self.spectrogram = Spectrogram(model.sample_rate)
+        self.model_type = model.type
 
-        if model.type == 'max':
-            self.model = MaxPoolModel(num_classes, dropout=model.dropout)
+        if model.type == 'resnet18-maxpool-2d':
+            self.spectrogram = Spectrogram(model.sample_rate)
+            self.model = ResNet18MaxPool2d(num_classes, dropout=model.dropout)
+        elif model.type == 'resnet18-maxpool-1d':
+            self.model = ResNet18MaxPool1d(num_classes, dropout=model.dropout)
         else:
             raise AssertionError('invalid model {}'.format(model.type))
 
-    def forward(self, input, aug=False):
-        images = self.spectrogram(input, aug=aug)
-        logits, weights = self.model(images)
+    def forward(self, input, spec_aug=False):
+        if self.model_type == 'resnet18-maxpool-2d':
+            images = self.spectrogram(input, spec_aug=spec_aug)
+            logits, weights = self.model(images)
+        elif self.model_type == 'resnet18-maxpool-1d':
+            logits, images, weights = self.model(input)
+        else:
+            raise AssertionError('invalid model {}'.format(self.model_type))
 
         return logits, images, weights
 
@@ -60,19 +69,11 @@ class SplitConv(nn.Module):
         return input
 
 
-class MaxPoolModel(nn.Module):
+class ResNet18MaxPool2d(nn.Module):
     def __init__(self, num_classes, dropout):
         super().__init__()
 
-        # self.model = pretrainedmodels.resnet18(pretrained=None)
-        # self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # self.model.avgpool = nn.AdaptiveMaxPool2d(1)
-        # self.model.last_linear = nn.Sequential(
-        #     nn.Dropout(dropout),
-        #     nn.Linear(512, num_classes))
-
         self.model = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
-        # self.model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.layer0 = SplitConv(1, 64)
         self.model.avgpool = nn.AdaptiveMaxPool2d(1)
         self.model.fc = nn.Sequential(
@@ -209,7 +210,7 @@ class Spectrogram(nn.Module):
         # self.coord = HeightCoord(128)
         self.norm = nn.BatchNorm2d(1)
 
-    def forward(self, input, aug):
+    def forward(self, input, spec_aug):
         input = torch.stft(input, n_fft=self.n_fft, hop_length=self.hop_length)
         input = torch.norm(input, 2, -1)**2  # TODO:
 
@@ -223,7 +224,7 @@ class Spectrogram(nn.Module):
         # input = self.coord(input)
         input = self.norm(input)
 
-        if self.training and aug:
+        if self.training and spec_aug:
             for i in range(input.shape[0]):
                 spec_augment.spec_augment(input[i])
 

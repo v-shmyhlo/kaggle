@@ -1,10 +1,11 @@
 seed: 42
-epochs: 30
-batch_size: 88
-mixup:
+epochs: 90
+finetune_epoch: 75
+batch_size: 50
+mixup: 0.5
 
 model:
-  type: max
+  type: resnet18-maxpool-2d
   dropout: 0.2
   sample_rate: 44100
 
@@ -20,9 +21,12 @@ aug:
   cutout:
     fraction: 0.1
 
+  effects: True
+  spec_aug: True
+
 opt:
   type: adam
-  lr: 32e-4
+  lr: 8e-4
   beta: 0.9
   weight_decay: 1e-4
 

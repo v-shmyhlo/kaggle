@@ -81,6 +81,11 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
+if config.aug.effects:
+    extra_augs = [AudioEffect()]
+else:
+    extra_augs = []
+
 if config.aug.type == 'pad':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
@@ -94,7 +99,7 @@ elif config.aug.type == 'crop':
     train_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
-        # AudioEffect(),
+        *extra_augs,
         T.RandomChoice([
             T.Compose([
                 # Cutout(config.aug.cutout.fraction),
@@ -298,23 +303,22 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         'loss': utils.Mean(),
     }
 
-    if epoch >= config.epochs * (5 / 6):
+    if epoch >= config.finetune_epoch:
         for ds in data_loader.dataset.datasets:
             ds.transform = T.Compose([
                 LoadSignal(config.model.sample_rate),
                 RandomCrop(config.aug.crop.size * config.model.sample_rate),
                 ToTensor(),
             ])
-          
+
     model.train()
     for sigs, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        if config.mixup is not None:
-            if epoch < config.epochs * (5 / 6):
-                if np.random.random() > (epoch / (config.epochs * (5 / 6))):
-                    sigs, labels, ids = mixup(sigs, labels, ids, alpha=config.mixup)
+        if config.mixup is not None and epoch < config.finetune_epoch:
+            if np.random.random() > (epoch / config.finetune_epoch):
+                sigs, labels, ids = mixup(sigs, labels, ids, alpha=config.mixup)
 
         sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
-        logits, images, weights = model(sigs, aug=epoch < config.epochs * (5 / 6))
+        logits, images, weights = model(sigs, spec_aug=config.aug.spec_aug and epoch < config.finetune_epoch)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
