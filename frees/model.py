@@ -21,6 +21,11 @@ class Model(nn.Module):
         if model.type == 'resnet18-maxpool-2d':
             self.spectrogram = Spectrogram(model.sample_rate)
             self.model = ResNet18MaxPool2d(num_classes, dropout=model.dropout)
+        elif model.type == 'mobnetv2-maxpool-2d':
+            # TODO: dropout, pretrained
+            self.spectrogram = Spectrogram(model.sample_rate)
+            self.model = torchvision.models.mobilenet_v2(num_classes=num_classes)
+            self.model.features[0][0] = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, bias=False)
         elif model.type == 'resnet18-maxpool-1d':
             self.model = ResNet18MaxPool1d(num_classes, dropout=model.dropout)
         else:
@@ -30,6 +35,10 @@ class Model(nn.Module):
         if self.model_type == 'resnet18-maxpool-2d':
             images = self.spectrogram(input, spec_aug=spec_aug)
             logits, weights = self.model(images)
+        elif self.model_type == 'mobnetv2-maxpool-2d':
+            images = self.spectrogram(input, spec_aug=spec_aug)
+            logits = self.model(images)
+            weights = torch.zeros(logits.size(0), 1, 1, 1)
         elif self.model_type == 'resnet18-maxpool-1d':
             logits, images, weights = self.model(input)
         else:
