@@ -23,7 +23,7 @@ from .model import Model
 from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
 from .utils import collate_fn
 from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout, AudioEffect
+from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout, AudioEffect, TTA
 from frees.metric import calculate_per_class_lwlrap
 
 
@@ -91,9 +91,14 @@ if config.aug.type == 'pad':
         LoadSignal(config.model.sample_rate),
         ToTensor(),
     ])
-    test_transform = eval_transform = T.Compose([
+    eval_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         ToTensor(),
+    ])
+    test_transform = T.Compose([
+        LoadSignal(config.model.sample_rate),
+        TTA(),
+        T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
     ])
 elif config.aug.type == 'crop':
     train_transform = T.Compose([
@@ -113,9 +118,14 @@ elif config.aug.type == 'crop':
         RandomCrop(config.aug.crop.size * config.model.sample_rate),
         ToTensor(),
     ])
-    test_transform = eval_transform = T.Compose([
+    eval_transform = T.Compose([
         LoadSignal(config.model.sample_rate),
         ToTensor(),
+    ])
+    test_transform = T.Compose([
+        LoadSignal(config.model.sample_rate),
+        TTA(),
+        T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
     ])
 else:
     raise AssertionError('invalid aug {}'.format(config.aug.type))
@@ -294,6 +304,11 @@ def find_lr(train_eval_data, train_noisy_data):
         writer.add_image('search', plot.transpose((2, 0, 1)), global_step=0)
 
         return minima_lr
+
+
+def rankdata(input, axis=None):
+    return input
+    # return input.argsort(axis).argsort(axis).float()
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
@@ -510,7 +525,7 @@ def build_submission(folds, test_data):
 
         for fold in folds:
             fold_predictions, fold_ids = predict_on_test_using_fold(fold, test_data)
-            predictions = predictions + fold_predictions  # .sigmoid()
+            predictions = predictions + fold_predictions
             ids = fold_ids
 
         predictions = predictions / len(folds)
@@ -519,10 +534,10 @@ def build_submission(folds, test_data):
 
 
 def predict_on_test_using_fold(fold, test_data):
-    test_dataset = TestDataset(test_data, transform=eval_transform)
+    test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=config.batch_size,
+        batch_size=config.batch_size // 3,
         num_workers=args.workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
@@ -536,8 +551,13 @@ def predict_on_test_using_fold(fold, test_data):
         fold_predictions = []
         fold_ids = []
         for sigs, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            b, n, w = sigs.size()
+            sigs = sigs.view(b * n, w)
             sigs = sigs.to(DEVICE)
             logits, _, _ = model(sigs)
+            logits = logits.view(b, n, NUM_CLASSES)
+            logits = rankdata(logits, -1).mean(1)
+
             fold_predictions.append(logits)
             fold_ids.extend(ids)
 
@@ -552,10 +572,10 @@ def predict_on_test_using_fold(fold, test_data):
 def predict_on_eval_using_fold(fold, train_eval_data):
     _, eval_indices = indices_for_fold(fold, collect_labels(train_eval_data))
 
-    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=test_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size // 3,
         num_workers=args.workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
@@ -570,8 +590,12 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_predictions = []
         fold_ids = []
         for sigs, labels, ids in tqdm(eval_data_loader, desc='fold {} best model evaluation'.format(fold)):
+            b, n, w = sigs.size()
+            sigs = sigs.view(b * n, w)
             sigs, labels = sigs.to(DEVICE), labels.to(DEVICE)
             logits, _, _ = model(sigs)
+            logits = logits.view(b, n, NUM_CLASSES)
+            logits = rankdata(logits, -1).mean(1)
 
             fold_targets.append(labels)
             fold_predictions.append(logits)
@@ -659,7 +683,7 @@ def main():
     test_data = load_test_data(args.dataset_path, 'test')
 
     noisy_meta = pd.read_csv('./noisy_meta.csv')
-    noisy_indices = np.argsort(-noisy_meta.score)[:2000]
+    noisy_indices = np.argsort(-noisy_meta.score)[:config.noisy_topk]
 
     for data in [train_eval_data, train_noisy_data, test_data]:
         if args.debug:

@@ -1,10 +1,10 @@
 import torch
-from gammatone.fftweight import fft_weights
+# from gammatone.fftweight import fft_weights
 import torch.distributions
 import torchvision
 import librosa
 import torch.nn as nn
-import spec_augment
+from frees.spec_augment import spec_augment
 from frees.model_1d import ResNet18MaxPool1d
 
 
@@ -226,7 +226,7 @@ class Spectrogram(nn.Module):
 
         if self.training and spec_aug:
             for i in range(input.shape[0]):
-                spec_augment.spec_augment(input[i])
+                spec_augment(input[i])
 
         return input
 

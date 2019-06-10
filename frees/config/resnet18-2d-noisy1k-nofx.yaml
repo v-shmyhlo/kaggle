@@ -3,7 +3,7 @@ epochs: 90
 finetune_epoch: 75
 batch_size: 50
 mixup: 0.5
-noisy_topk: 2000
+noisy_topk: 1000
 
 model:
   type: resnet18-maxpool-2d
@@ -22,7 +22,7 @@ aug:
   cutout:
     fraction: 0.1
 
-  effects: True
+  effects: False
   spec_aug: True
 
 opt:

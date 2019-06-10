@@ -1,7 +1,8 @@
-import soundfile
 import numpy as np
+import librosa
 import itertools
 import torch
+
 from pysndfx import AudioEffectsChain
 
 
@@ -10,8 +11,7 @@ class LoadSignal(object):
         self.sample_rate = sample_rate
 
     def __call__(self, input):
-        # TODO: soundfile vs librosa
-        sig, rate = soundfile.read(input['path'], dtype=np.float32)
+        sig, rate = librosa.core.load(input['path'], sr=None, dtype=np.float32)
         assert rate == self.sample_rate
 
         return sig
@@ -104,6 +104,11 @@ class AudioEffect(object):
         #     effect = effect.highshelf()
 
         return effect(input)
+
+
+class TTA(object):
+    def __call__(self, input):
+        return [input]
 
 # class LoadSpectra(object):
 #     def __init__(self, augmented=False):

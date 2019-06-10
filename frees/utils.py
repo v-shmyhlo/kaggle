@@ -12,10 +12,10 @@ def collate_fn(batch):
         images, ids = batch
         rest = ()
 
-    images_tensor = torch.zeros(len(images), max(image.size(0) for image in images))
+    images_tensor = torch.zeros(len(images), *images[0].size()[:-1], max(image.size(-1) for image in images))
     images_tensor.fill_(0.)
 
     for i, image in enumerate(images):
-        images_tensor[i, :image.size(0)] = image
+        images_tensor[i, ..., :image.size(-1)] = image
 
     return (images_tensor, *rest, ids)

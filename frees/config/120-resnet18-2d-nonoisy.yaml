@@ -1,9 +1,9 @@
 seed: 42
-epochs: 90
+epochs: 120
 finetune_epoch: 75
 batch_size: 50
 mixup: 0.5
-noisy_topk: 2000
+noisy_topk: 0
 
 model:
   type: resnet18-maxpool-2d
