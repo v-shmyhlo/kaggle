@@ -9,18 +9,22 @@ from tqdm import tqdm
 # print(dataset[0])
 
 import pandas as pd
+import os
 from torch_geometric.data import Data
 from mol.dataset import Dataset
 
-graphs = {}
-train = pd.read_csv('./data/mol/train.csv')
-for _, row in tqdm(train.iterrows()):
-    if row['molecule_name'] not in graphs:
-        graphs[row['molecule_name']] = {'x': [], 'edge_index': [], 'edge_attr': [], 'y': []}
+graphs = './data/mol/structures'
+graphs = [os.path.join(path, graphs) for path in os.listdir(graphs)]
 
-    graph = graphs[row['molecule_name']]
-
-    graph['x'].append()
+# graphs = {}
+# train = pd.read_csv('./data/mol/train.csv')
+# for _, row in tqdm(train.iterrows()):
+#     if row['molecule_name'] not in graphs:
+#         graphs[row['molecule_name']] = {'x': [], 'edge_index': [], 'edge_attr': [], 'y': []}
+#
+#     graph = graphs[row['molecule_name']]
+#
+#     graph['x'].append()
 
 graphs = [
     Data(
