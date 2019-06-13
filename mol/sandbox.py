@@ -61,61 +61,100 @@ class Dataset(torch.utils.data.Dataset):
         return torch.load(path)
 
 
+# class ReLU(nn.SELU):
+#     pass
+
+class ReLU(nn.PReLU):
+    def __init__(self, inplace):
+        super().__init__()
+
+
 class Layer(nn.Module):
     class NodeModel(nn.Module):
-        def __init__(self, in_features, out_features):
+        def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
             self.layer1 = nn.Sequential(
-                nn.Linear(in_features, out_features),
-                nn.ReLU(inplace=True))
+                nn.Linear(node_features[0] + edge_features[0], node_features[1]),
+                ReLU(inplace=True))
 
             self.layer2 = nn.Sequential(
-                nn.Linear(out_features, out_features),
-                nn.ReLU(inplace=True))
+                nn.Linear(node_features[1] + global_features[0], node_features[1]),
+                ReLU(inplace=True))
 
-        def forward(self, input, edge_index, edge_attr, _, batch):
+        def forward(self, x, edge_index, edge_attr, u, batch):
             row, col = edge_index
-            input = torch.cat([input[col], edge_attr], dim=1)
-            input = self.layer1(input)
-            input = scatter_mean(input, row, dim=0, dim_size=input.size(0))
-            input = self.layer2(input)
+            out = torch.cat([x[col], edge_attr], dim=1)
+            out = self.layer1(out)
+            out = scatter_mean(out, row, dim=0, dim_size=x.size(0))
+            out = torch.cat([out, u[batch]], dim=1)
+            out = self.layer2(out)
 
-            return input
+            return out
 
     class EdgeModel(nn.Module):
-        def __init__(self, in_features, out_features):
+        def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
             self.layer1 = nn.Sequential(
-                nn.Linear(in_features, out_features),
-                nn.ReLU(inplace=True))
+                nn.Linear(node_features[0] + edge_features[0], edge_features[1]),
+                ReLU(inplace=True))
 
         def forward(self, src, dst, edge_attr, _, batch):
             edge_attr = torch.cat([(src + dst) / 2, edge_attr], 1)
+            print(edge_attr.shape, self.layer1)
+            fiail
             edge_attr = self.layer1(edge_attr)
 
             return edge_attr
 
-    def __init__(self, node_features, edge_features):
+    class GlobalModel(nn.Module):
+        def __init__(self, node_features, edge_features, global_features):
+            super().__init__()
+
+            self.layer1 = nn.Sequential(
+                nn.Linear(global_features[0] + node_features[0], global_features[1]),
+                ReLU(inplace=True))
+
+        def forward(self, x, edge_index, edge_attr, u, batch):
+            # print(x.shape, edge_attr.shape, batch.shape, )
+            print(u.shape, scatter_mean(x, batch, dim=0).shape)
+            # fail
+            input = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
+            input = self.layer1(input)
+            print(input.shape)
+            fail
+
+            return input
+
+    def __init__(self, node_features, edge_features, global_features):
         super().__init__()
 
         if node_features[1] is None:
             node_model = None
         else:
-            node_model = self.NodeModel(node_features[0] + edge_features[1], node_features[1])
+            node_model = self.NodeModel(
+                node_features=node_features, edge_features=edge_features, global_features=global_features)
 
         if edge_features[1] is None:
             edge_model = None
         else:
-            edge_model = self.EdgeModel(node_features[0] + edge_features[0], edge_features[1])
+            edge_model = self.EdgeModel(
+                node_features=node_features, edge_features=edge_features, global_features=global_features)
+
+        if global_features[1] is None:
+            global_model = None
+        else:
+            global_model = self.GlobalModel(
+                node_features=node_features, edge_features=edge_features, global_features=global_features)
 
         self.op = MetaLayer(
+            edge_model=edge_model,
             node_model=node_model,
-            edge_model=edge_model)
+            global_model=global_model)
 
-    def forward(self, x, edge_index, edge_attr, batch):
-        return self.op(x, edge_index, edge_attr, None, batch)
+    def forward(self, x, edge_index, edge_attr, u, batch):
+        return self.op(x, edge_index, edge_attr, u, batch)
 
 
 # TODO: embed size
@@ -123,21 +162,29 @@ class Model(nn.Module):
     def __init__(self, model):
         super().__init__()
 
-        size = 32
-
         self.nodes = nn.Embedding(5, 8)
         self.edges = nn.Embedding(8, 8)
 
-        self.layer1 = Layer(node_features=(8 + 3, size), edge_features=(8 + 4, size))
-        self.layer2 = Layer(node_features=(size, size), edge_features=(size, size))
-        self.layer3 = Layer(node_features=(size, size), edge_features=(size, size))
-        self.layer4 = Layer(node_features=(size, size), edge_features=(size, size))
-        self.layer5 = Layer(node_features=(size, None), edge_features=(size, size))
-       
-        self.output = nn.Linear(size, 1)
+        self.layers = nn.ModuleList([
+            Layer(
+                node_features=(8 + 6, model.size),
+                edge_features=(8 + 4, model.size),
+                global_features=(14, model.size)),
+            *[Layer(
+                node_features=(model.size, model.size),
+                edge_features=(model.size, model.size),
+                global_features=(model.size, model.size))
+                for _ in range(8)],
+            Layer(
+                node_features=(model.size, None),
+                edge_features=(model.size, model.size),
+                global_features=(model.size, None))
+        ])
+
+        self.output = nn.Linear(model.size, 1)
 
     def forward(self, batch):
-        x, edge_index, edge_attr, batch = batch.x, batch.edge_index, batch.edge_attr, batch.batch
+        x, edge_index, edge_attr, u, batch = batch.x, batch.edge_index, batch.edge_attr, batch.u, batch.batch
 
         x = torch.cat([
             self.nodes(x[:, 0].long()),
@@ -149,11 +196,13 @@ class Model(nn.Module):
             edge_attr[:, 1:]
         ], 1)
 
-        x, edge_attr, _ = self.layer1(x, edge_index, edge_attr, batch)
-        x, edge_attr, _ = self.layer2(x, edge_index, edge_attr, batch)
-        x, edge_attr, _ = self.layer3(x, edge_index, edge_attr, batch)
-        x, edge_attr, _ = self.layer4(x, edge_index, edge_attr, batch)
-        x, edge_attr, _ = self.layer5(x, edge_index, edge_attr, batch)
+        print(x.shape, edge_attr.shape)
+        fail
+
+        # print(x.shape, edge_attr.shape, batch.shape, )
+
+        for l in self.layers:
+            x, edge_attr, u = l(x, edge_index, edge_attr, u, batch)
 
         edge_attr = self.output(edge_attr)
 

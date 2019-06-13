@@ -49,12 +49,22 @@ def graph_to_data(pair, symbol_to_index, bond_to_index):
 
     # building y
     y = torch.tensor(coupling)
+   
+    # building u
+    u = [*nodes.positions.mean(0), *nodes.positions.std(0)]
+    dist = np.linalg.norm(nodes.positions[i] - nodes.positions[j], axis=-1)
+    u = [*u, dist.mean(), dist.std()]
+    dist = np.abs(nodes.positions[i] - nodes.positions[j])
+    u = [*u, *dist.mean(0), *dist.std(0)]
+    u = torch.tensor([u])
+    u[u != u] = 0.
 
     data = Data(
         x=x.float(),
         edge_index=edge_index.long(),
         edge_attr=edge_attr.float(),
-        y=y.float())
+        y=y.float(),
+        u=u.float())
 
     path = './data/mol/graphs/{}.pth'.format(mol_name)
     torch.save(data, path)
