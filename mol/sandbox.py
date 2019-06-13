@@ -70,12 +70,26 @@ class ReLU(nn.PReLU):
 
 
 class Layer(nn.Module):
+    class EdgeModel(nn.Module):
+        def __init__(self, node_features, edge_features, global_features):
+            super().__init__()
+
+            self.layer1 = nn.Sequential(
+                nn.Linear(node_features[0] + edge_features[0] + global_features[0], edge_features[1]),
+                ReLU(inplace=True))
+
+        def forward(self, src, dst, edge_attr, u, batch):
+            edge_attr = torch.cat([(src + dst) / 2, edge_attr, u[batch]], 1)
+            edge_attr = self.layer1(edge_attr)
+
+            return edge_attr
+
     class NodeModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
             self.layer1 = nn.Sequential(
-                nn.Linear(node_features[0] + edge_features[0], node_features[1]),
+                nn.Linear(node_features[0] + edge_features[1], node_features[1]),
                 ReLU(inplace=True))
 
             self.layer2 = nn.Sequential(
@@ -84,48 +98,27 @@ class Layer(nn.Module):
 
         def forward(self, x, edge_index, edge_attr, u, batch):
             row, col = edge_index
-            out = torch.cat([x[col], edge_attr], dim=1)
-            out = self.layer1(out)
-            out = scatter_mean(out, row, dim=0, dim_size=x.size(0))
-            out = torch.cat([out, u[batch]], dim=1)
-            out = self.layer2(out)
+            x = torch.cat([x[col], edge_attr], dim=1)
+            x = self.layer1(x)
+            x = scatter_mean(x, row, dim=0, dim_size=x.size(0))
+            x = torch.cat([x, u[batch]], dim=1)
+            x = self.layer2(x)
 
-            return out
-
-    class EdgeModel(nn.Module):
-        def __init__(self, node_features, edge_features, global_features):
-            super().__init__()
-
-            self.layer1 = nn.Sequential(
-                nn.Linear(node_features[0] + edge_features[0], edge_features[1]),
-                ReLU(inplace=True))
-
-        def forward(self, src, dst, edge_attr, _, batch):
-            edge_attr = torch.cat([(src + dst) / 2, edge_attr], 1)
-            print(edge_attr.shape, self.layer1)
-            fiail
-            edge_attr = self.layer1(edge_attr)
-
-            return edge_attr
+            return x
 
     class GlobalModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
             self.layer1 = nn.Sequential(
-                nn.Linear(global_features[0] + node_features[0], global_features[1]),
+                nn.Linear(global_features[0] + node_features[1], global_features[1]),
                 ReLU(inplace=True))
 
         def forward(self, x, edge_index, edge_attr, u, batch):
-            # print(x.shape, edge_attr.shape, batch.shape, )
-            print(u.shape, scatter_mean(x, batch, dim=0).shape)
-            # fail
-            input = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
-            input = self.layer1(input)
-            print(input.shape)
-            fail
-
-            return input
+            u = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
+            u = self.layer1(u)
+           
+            return u
 
     def __init__(self, node_features, edge_features, global_features):
         super().__init__()
@@ -167,7 +160,7 @@ class Model(nn.Module):
 
         self.layers = nn.ModuleList([
             Layer(
-                node_features=(8 + 6, model.size),
+                node_features=(8 + 3, model.size),
                 edge_features=(8 + 4, model.size),
                 global_features=(14, model.size)),
             *[Layer(
@@ -195,9 +188,6 @@ class Model(nn.Module):
             self.edges(edge_attr[:, 0].long()),
             edge_attr[:, 1:]
         ], 1)
-
-        print(x.shape, edge_attr.shape)
-        fail
 
         # print(x.shape, edge_attr.shape, batch.shape, )
 
