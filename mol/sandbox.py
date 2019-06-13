@@ -98,9 +98,10 @@ class Layer(nn.Module):
 
         def forward(self, x, edge_index, edge_attr, u, batch):
             row, col = edge_index
+            dim_size, _ = x.size()
             x = torch.cat([x[col], edge_attr], dim=1)
             x = self.layer1(x)
-            x = scatter_mean(x, row, dim=0, dim_size=x.size(0))
+            x = scatter_mean(x, row, dim=0, dim_size=dim_size)
             x = torch.cat([x, u[batch]], dim=1)
             x = self.layer2(x)
 
@@ -117,7 +118,7 @@ class Layer(nn.Module):
         def forward(self, x, edge_index, edge_attr, u, batch):
             u = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
             u = self.layer1(u)
-           
+
             return u
 
     def __init__(self, node_features, edge_features, global_features):
@@ -188,8 +189,6 @@ class Model(nn.Module):
             self.edges(edge_attr[:, 0].long()),
             edge_attr[:, 1:]
         ], 1)
-
-        # print(x.shape, edge_attr.shape, batch.shape, )
 
         for l in self.layers:
             x, edge_attr, u = l(x, edge_index, edge_attr, u, batch)
