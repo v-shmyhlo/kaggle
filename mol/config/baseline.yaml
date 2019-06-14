@@ -1,5 +1,5 @@
 seed: 42
-epochs: 50
+epochs: 100
 batch_size: 256
 
 model:
@@ -7,7 +7,7 @@ model:
 
 opt:
   type: adam
-  lr: 1e-2
+  lr: 1e-3
   beta: 0.9
   weight_decay: 1e-7
 

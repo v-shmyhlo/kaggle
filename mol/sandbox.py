@@ -69,14 +69,20 @@ class ReLU(nn.PReLU):
         super().__init__()
 
 
+class LinNormRelu(nn.Sequential):
+    def __init__(self, in_features, out_features):
+        super().__init__(
+            nn.Linear(in_features, out_features, bias=False),
+            nn.BatchNorm1d(out_features),
+            ReLU(inplace=True))
+
+
 class Layer(nn.Module):
     class EdgeModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
-            self.layer1 = nn.Sequential(
-                nn.Linear(node_features[0] + edge_features[0] + global_features[0], edge_features[1]),
-                ReLU(inplace=True))
+            self.layer1 = LinNormRelu(node_features[0] + edge_features[0] + global_features[0], edge_features[1])
 
         def forward(self, src, dst, edge_attr, u, batch):
             edge_attr = torch.cat([(src + dst) / 2, edge_attr, u[batch]], 1)
@@ -88,13 +94,8 @@ class Layer(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
-            self.layer1 = nn.Sequential(
-                nn.Linear(node_features[0] + edge_features[1], node_features[1]),
-                ReLU(inplace=True))
-
-            self.layer2 = nn.Sequential(
-                nn.Linear(node_features[1] + global_features[0], node_features[1]),
-                ReLU(inplace=True))
+            self.layer1 = LinNormRelu(node_features[0] + edge_features[1], node_features[1])
+            self.layer2 = LinNormRelu(node_features[1] + global_features[0], node_features[1])
 
         def forward(self, x, edge_index, edge_attr, u, batch):
             row, col = edge_index
@@ -111,9 +112,7 @@ class Layer(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
-            self.layer1 = nn.Sequential(
-                nn.Linear(global_features[0] + node_features[1], global_features[1]),
-                ReLU(inplace=True))
+            self.layer1 = LinNormRelu(global_features[0] + node_features[1], global_features[1])
 
         def forward(self, x, edge_index, edge_attr, u, batch):
             u = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
@@ -156,12 +155,17 @@ class Model(nn.Module):
     def __init__(self, model):
         super().__init__()
 
+        # TODO: rename
         self.nodes = nn.Embedding(5, 8)
         self.edges = nn.Embedding(8, 8)
 
+        self.x_norm = nn.BatchNorm1d(8 + 7)
+        self.edge_attr_norm = nn.BatchNorm1d(8 + 4)
+        self.u_norm = nn.BatchNorm1d(14)
+
         self.layers = nn.ModuleList([
             Layer(
-                node_features=(8 + 3, model.size),
+                node_features=(8 + 7, model.size),
                 edge_features=(8 + 4, model.size),
                 global_features=(14, model.size)),
             *[Layer(
@@ -175,7 +179,7 @@ class Model(nn.Module):
                 global_features=(model.size, None))
         ])
 
-        self.output = nn.Linear(model.size, 1)
+        self.output = nn.Linear(model.size, 5)
 
     def forward(self, batch):
         x, edge_index, edge_attr, u, batch = batch.x, batch.edge_index, batch.edge_attr, batch.u, batch.batch
@@ -190,27 +194,16 @@ class Model(nn.Module):
             edge_attr[:, 1:]
         ], 1)
 
+        x = self.x_norm(x)
+        edge_attr = self.edge_attr_norm(edge_attr)
+        u = self.u_norm(u)
+
         for l in self.layers:
             x, edge_attr, u = l(x, edge_index, edge_attr, u, batch)
 
         edge_attr = self.output(edge_attr)
 
-        edge_attr = edge_attr.squeeze(1)
-
         return edge_attr
-
-        # def forward(self, data):
-    # 
-    # 
-    #     x = self.conv1(x, edge_index)
-    #     x = F.relu(x)
-    #     x = self.conv2(x, edge_index)
-    #     x = F.relu(x)
-    #     x = self.conv3(x, edge_index)
-    # 
-    #     x = x.squeeze(1)
-    # 
-    #     return x
 
 
 def worker_init_fn(_):
@@ -259,9 +252,8 @@ def train_fold(fold, train_eval_data, args, config):
 
     model = Model(config.model)
     model = model.to(DEVICE)
-    lr = 1e-3
     optimizer = build_optimizer(
-        config.opt.type, model.parameters(), lr, config.opt.beta, weight_decay=config.opt.weight_decay)
+        config.opt.type, model.parameters(), config.opt.lr, config.opt.beta, weight_decay=config.opt.weight_decay)
 
     if config.sched.type == 'onecycle':
         scheduler = lr_scheduler_wrapper.StepWrapper(
@@ -328,7 +320,7 @@ def compute_loss(input, target, groups):
     groups = groups.long()
 
     error = torch.abs(input - target)
-    error = scatter_mean(error, groups)
+    error = scatter_mean(error, groups, dim=0)
     error = torch.clamp(error, 1e-9)
     loss = error.log().mean()
 
@@ -336,6 +328,9 @@ def compute_loss(input, target, groups):
 
 
 def compute_score(input, target, groups):
+    input = input[:, 0]
+    target = target[:, 0]
+
     groups = groups.long()
 
     error = torch.abs(input - target)
@@ -422,82 +417,9 @@ def eval_epoch(model, data_loader, fold, epoch, args, config):
 def main(**args):
     config = Config.from_yaml(args['config_path'])
 
-    # graphs = './data/mol/structures'
-    # graphs = sorted(os.path.join(graphs, path) for path in os.listdir(graphs))
-    # paths = graphs
-    # with Pool(os.cpu_count()) as pool:
-    #     graphs = pool.map(ase.io.read, tqdm(graphs))
-    #
-    # symbol_to_index = {}
-    # for g in tqdm(graphs):
-    #     for a in g:
-    #         if a.symbol not in symbol_to_index:
-    #             symbol_to_index[a.symbol] = len(symbol_to_index)
-    #
-    # print(symbol_to_index)
-    #
-    # with Pool(os.cpu_count()) as pool:
-    #     graphs = pool.map(partial(graph_to_data, symbol_to_index=symbol_to_index), tqdm(list(zip(graphs, paths))))
-
-    graphs = sorted(os.path.splitext(path)[0] for path in os.listdir('./data/mol/structures'))
-    print(len(graphs))
-
-    train_fold(1, graphs, args=args, config=config)
-
-    # print(graphs[0])
-    # bonds =[ ase.neighborlist.neighbor_list('ij', g, ase.utils.natural_cutoffs(g))
-
-    # struct_file = pd.read_csv('./data/mol/structures.csv')
-    # molecule = struct_file[struct_file['molecule_name'] == 'dsgdb9nsd_133882']
-    # atoms = molecule.iloc[:, 3:].values
-    # symbols = molecule.iloc[:, 2].values
-    # system = Atoms(positions=atoms, symbols=symbols)
-    # print(system)
-    #
-    # graphs = {}
-
-    # from mol.xyz2mol import xyz2mol, read_xyz_file
-    #
-    # charged_fragments = True
-    # quick = True
-    # atomicNumList, charge, xyz_coordinates = read_xyz_file(filename)
-    # mol = xyz2mol(atomicNumList, charge, xyz_coordinates, charged_fragments, quick)
-    # print(mol)
-
-    # from torch_geometric.datasets import TUDataset
-    #
-    # from tqdm import tqdm
-
-    # dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
-
-    # from torch_geometric.datasets import Planetoid
-    #
-
-    # dataset = Planetoid(root='/tmp/Cora', name='Cora')
-    # print(dataset[0])
-
-    # import pandas as pd
-    # import os
-    # from mol.dataset import Dataset
-    #
-    # graphs = './data/mol/structures'
-    # graphs = [os.path.join(path, graphs) for path in os.listdir(graphs)]
-    #
-    # # graphs = {}
-    # # train = pd.read_csv('./data/mol/train.csv')
-    # # for _, row in tqdm(train.iterrows()):
-    # #     if row['molecule_name'] not in graphs:
-    # #         graphs[row['molecule_name']] = {'x': [], 'edge_index': [], 'edge_attr': [], 'y': []}
-    # #
-    # #     graph = graphs[row['molecule_name']]
-    # #
-    # #     graph['x'].append()
-    #
-    # graphs = [
-    #
-    # dataset = Dataset(graphs)
-    #
-    # print(dataset[0])
+    mol_names = pd.read_csv('./data/mol/dipole_moments.csv')['molecule_name'].values
+    print(len(mol_names))
+    train_fold(1, mol_names, args=args, config=config)
 
 
 if __name__ == '__main__':

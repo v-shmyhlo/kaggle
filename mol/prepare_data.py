@@ -3,15 +3,11 @@ from functools import partial
 import pandas as pd
 from multiprocessing import Pool
 import ase.io
+import ase.data
 import torch
 import os
 from torch_geometric.data import Data
 import numpy as np
-
-# # building edge_index
-# i, j, d = ase.neighborlist.neighbor_list('ijd', nodes, ase.utils.natural_cutoffs(nodes))
-# num_edges = len(i)
-# edge_index = torch.tensor(np.stack([i, j], 0))
 
 structures_path = './data/mol/structures'
 
@@ -26,17 +22,28 @@ def graph_to_data(pair, symbol_to_index, bond_to_index):
     num_nodes = len(nodes)
     num_edges = len(edges)
 
+    # TODO: node mean stats
+
     # building x
-    x = torch.zeros(num_nodes, 4)  # symbol_type, x, y, z
+    x = torch.zeros(num_nodes, 8)  # symbol_type, x, y, z, am, cr, gsmm, vdwr
     for node in nodes:
         x[node.index, 0] = symbol_to_index[node.symbol]
-        x[node.index, 1:] = torch.tensor([node.x, node.y, node.z])
+        x[node.index, 1:4] = torch.tensor([node.x, node.y, node.z])
+        features = [
+            ase.data.atomic_masses,
+            ase.data.covalent_radii,
+            ase.data.ground_state_magnetic_moments,
+            ase.data.vdw_radii
+        ]
+        x[node.index, 4:] = torch.tensor([f[node.number] for f in features])
+
+    # extracting fields
+    i = edges['atom_index_0'].values
+    j = edges['atom_index_1'].values
+    bond = edges['type'].values
+    coupling = edges[['scalar_coupling_constant', 'fc', 'sd', 'pso', 'dso']].values
 
     # building edge_index
-    if len(edges) > 0:
-        i, j, bond, coupling = map(list, zip(*edges))
-    else:
-        i, j, bond, coupling = [], [], [], []
     edge_index = torch.tensor(np.array([i, j]))
 
     # building edge_attr
@@ -70,55 +77,37 @@ def graph_to_data(pair, symbol_to_index, bond_to_index):
     torch.save(data, path)
 
 
-def collect_edges(edges, mol_name):
+def collect_edges(mol_name, edges):
     return edges[edges['molecule_name'] == mol_name]
 
 
 def main():
-    mol_names = sorted(os.path.splitext(path)[0] for path in os.listdir(structures_path))
+    num_workers = os.cpu_count()
+    mol_names = pd.read_csv('./data/mol/dipole_moments.csv')['molecule_name'].values
 
-    with Pool(os.cpu_count()) as pool:
-        nodes = pool.map(load_mol, tqdm(mol_names, desc='loading molecules'))
-        # graphs = {mol_name: (nodes, []) for mol_name, nodes in zip(mol_names, mols)}
+    with Pool(num_workers) as pool:
+        nodes = pool.map(load_mol, tqdm(mol_names, desc='loading nodes'))
 
     edges = pd.read_csv('./data/mol/train.csv')
     contribs = pd.read_csv('./data/mol/scalar_coupling_contributions.csv')
     edges[['fc', 'sd', 'pso', 'dso']] = contribs[['fc', 'sd', 'pso', 'dso']]
-
-    with Pool(os.cpu_count()) as pool:
-        edges = pool.map(partial(collect_edges, edges=edges), mol_names)
+    edges = edges.set_index('molecule_name')
+    edges = [edges.loc[[mol_name]] for mol_name in tqdm(mol_names, desc='loading edges')]
 
     graphs = {mol_name: (ns, es) for mol_name, ns, es in zip(mol_names, nodes, edges)}
-
-    fail
-
-    # edges = {mol_names}
-
-    # edge = [row[c] for c in
-    #         ['atom_index_0', 'atom_index_1', 'type', 'scalar_coupling_constant', 'fc', 'sd', 'pso', 'dso']]
-    # edges = edges.iloc[:1000]
-    # for _, row in tqdm(edges.iterrows(), total=len(edges), desc='loading edges'):
-    #     mol_name = row['molecule_name']
-    #     graphs[mol_name][1].append(row)
-
-    # graphs[mol]
-
-    # for mol_name in mol_names:
 
     symbol_to_index = set()
     bond_to_index = set()
     for nodes, edges in tqdm(graphs.values(), 'building mapping'):
-        for node in nodes:
-            symbol_to_index.add(node.symbol)
-        for _, _, bond, _ in edges:
-            bond_to_index.add(bond)
+        symbol_to_index.update(node.symbol for node in nodes)
+        bond_to_index.update(edges['type'].values)
 
     symbol_to_index = {s: i for i, s in enumerate(sorted(symbol_to_index))}
     bond_to_index = {b: i for i, b in enumerate(sorted(bond_to_index))}
     print('symbol_to_index', symbol_to_index)
     print('bond_to_index', bond_to_index)
 
-    with Pool(os.cpu_count()) as pool:
+    with Pool(num_workers) as pool:
         pool.map(
             partial(graph_to_data, symbol_to_index=symbol_to_index, bond_to_index=bond_to_index),
             tqdm(graphs.items(), desc='saving data'))
