@@ -70,6 +70,10 @@ def graph_to_data(pair, symbol_to_index, bond_to_index):
     torch.save(data, path)
 
 
+def collect_edges(edges, mol_name):
+    return edges[edges['molecule_name'] == mol_name]
+
+
 def main():
     mol_names = sorted(os.path.splitext(path)[0] for path in os.listdir(structures_path))
 
@@ -81,7 +85,12 @@ def main():
     contribs = pd.read_csv('./data/mol/scalar_coupling_contributions.csv')
     edges[['fc', 'sd', 'pso', 'dso']] = contribs[['fc', 'sd', 'pso', 'dso']]
 
+    with Pool(os.cpu_count()) as pool:
+        edges = pool.map(partial(collect_edges, edges=edges), mol_names)
+
     graphs = {mol_name: (ns, es) for mol_name, ns, es in zip(mol_names, nodes, edges)}
+
+    fail
 
     # edges = {mol_names}
 
