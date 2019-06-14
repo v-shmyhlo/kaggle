@@ -74,12 +74,17 @@ def main():
     mol_names = sorted(os.path.splitext(path)[0] for path in os.listdir(structures_path))
 
     with Pool(os.cpu_count()) as pool:
-        mols = pool.map(load_mol, tqdm(mol_names, desc='loading molecules'))
-        graphs = {mol_name: (nodes, []) for mol_name, nodes in zip(mol_names, mols)}
+        nodes = pool.map(load_mol, tqdm(mol_names, desc='loading molecules'))
+        # graphs = {mol_name: (nodes, []) for mol_name, nodes in zip(mol_names, mols)}
 
     edges = pd.read_csv('./data/mol/train.csv')
     contribs = pd.read_csv('./data/mol/scalar_coupling_contributions.csv')
     edges[['fc', 'sd', 'pso', 'dso']] = contribs[['fc', 'sd', 'pso', 'dso']]
+
+    graphs = {mol_name: (ns, es) for mol_name, ns, es in zip(mol_names, nodes, edges)}
+
+    # edges = {mol_names}
+
     # edge = [row[c] for c in
     #         ['atom_index_0', 'atom_index_1', 'type', 'scalar_coupling_constant', 'fc', 'sd', 'pso', 'dso']]
     # edges = edges.iloc[:1000]
