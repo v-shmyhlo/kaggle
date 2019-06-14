@@ -151,14 +151,15 @@ class Model(nn.Module):
                 node_features=(model.size, model.size),
                 edge_features=(model.size, model.size),
                 global_features=(model.size, model.size))
-                for _ in range(8)],
+                for _ in range(model.layers)],
             Layer(
                 node_features=(model.size, None),
                 edge_features=(model.size, model.size),
                 global_features=(model.size, None))
         ])
 
-        self.output = nn.Linear(model.size, 5)
+        self.output1 = nn.Linear(model.size, 4)
+        self.output2 = nn.Linear(4, 1)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -187,8 +188,11 @@ class Model(nn.Module):
         for l in self.layers:
             x, edge_attr, u = l(x, edge_index, edge_attr, u, batch)
 
-        edge_attr = self.output(edge_attr)
+        edge_attr1 = self.output1(edge_attr)
+        edge_attr2 = self.output2(edge_attr1)
 
+        edge_attr = torch.cat([edge_attr2, edge_attr1], 1)
+       
         return edge_attr
 
 

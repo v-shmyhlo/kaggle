@@ -4,10 +4,11 @@ batch_size: 256
 
 model:
   size: 256
+  layers: 3
 
 opt:
   type: adam
-  lr: 1e-3
+  lr: 1e-2
   beta: 0.9
   weight_decay: 1e-7
 
