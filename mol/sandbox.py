@@ -1,18 +1,7 @@
-# import pandas as pd lr
 from torch_scatter import scatter_mean
 from torch_geometric.data import DataLoader
 import click
-
-#
-# filename = './data/mol/structures/dsgdb9nsd_133882.xyz'
-#
-# from ase import Atoms
 import pandas as pd
-# import ase.visualize
-# # from ase.io import read
-#
-
-# # graphs = pd.read_csv('./data/mol/sample_submission.csv')
 
 # TODO: bidirectional edges
 # TODO: ohem
@@ -20,31 +9,21 @@ import pandas as pd
 
 import os
 import gc
-from multiprocessing import Pool
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 import lr_scheduler_wrapper
 from config import Config
-import torch
 from sklearn.model_selection import KFold
 import numpy as np
-import ase.io
-import ase.neighborlist
-import ase.utils
 import torch.nn as nn
 from lr_scheduler import OneCycleScheduler
 import torch.utils.data
 import utils
-from functools import partial
 import torch
-import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, MetaLayer
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-
-# torch.cuda.set_device(DEVICE)
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -180,6 +159,13 @@ class Model(nn.Module):
         ])
 
         self.output = nn.Linear(model.size, 5)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm1d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, batch):
         x, edge_index, edge_attr, u, batch = batch.x, batch.edge_index, batch.edge_attr, batch.u, batch.batch
