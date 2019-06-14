@@ -290,7 +290,7 @@ def train_fold(fold, train_eval_data, args, config):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='min', factor=0.5, patience=2, verbose=True))
+                optimizer, mode='min', factor=0.1, patience=2, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 

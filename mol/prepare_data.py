@@ -49,7 +49,7 @@ def graph_to_data(pair, symbol_to_index, bond_to_index):
 
     # building y
     y = torch.tensor(coupling)
-   
+
     # building u
     u = [*nodes.positions.mean(0), *nodes.positions.std(0)]
     dist = np.linalg.norm(nodes.positions[i] - nodes.positions[j], axis=-1)
@@ -78,10 +78,18 @@ def main():
         graphs = {mol_name: (nodes, []) for mol_name, nodes in zip(mol_names, mols)}
 
     edges = pd.read_csv('./data/mol/train.csv')
-    for _, row in tqdm(edges.iterrows(), total=len(edges), desc='loading edges'):
-        mol_name = row['molecule_name']
-        edge = row['atom_index_0'], row['atom_index_1'], row['type'], row['scalar_coupling_constant']
-        graphs[mol_name][1].append(edge)
+    contribs = pd.read_csv('./data/mol/scalar_coupling_contributions.csv')
+    edges[['fc', 'sd', 'pso', 'dso']] = contribs[['fc', 'sd', 'pso', 'dso']]
+    # edge = [row[c] for c in
+    #         ['atom_index_0', 'atom_index_1', 'type', 'scalar_coupling_constant', 'fc', 'sd', 'pso', 'dso']]
+    # edges = edges.iloc[:1000]
+    # for _, row in tqdm(edges.iterrows(), total=len(edges), desc='loading edges'):
+    #     mol_name = row['molecule_name']
+    #     graphs[mol_name][1].append(row)
+
+    # graphs[mol]
+
+    # for mol_name in mol_names:
 
     symbol_to_index = set()
     bond_to_index = set()
