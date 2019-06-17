@@ -1,0 +1,15 @@
+seed: 42
+epochs: 100
+batch_size: 8
+
+opt:
+  type: momentum
+  lr: 0.005
+  beta: 0.9
+  weight_decay: 1e-4
+
+sched:
+  type: multistep
+
+  multistep:
+    steps: [100]
