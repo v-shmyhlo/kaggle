@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from retinanet.transform import crop
+from detection.transform import crop
 
 
 def test_flip_left_right():

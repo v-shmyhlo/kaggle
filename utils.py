@@ -89,3 +89,7 @@ def mkdir(path):
     os.makedirs(path, exist_ok=True)
 
     return path
+
+
+def one_hot(input, num_classes):
+    return torch.eye(num_classes).to(input.device)[input]

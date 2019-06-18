@@ -42,14 +42,8 @@ def boxes_iou(a, b):
 def decode_boxes(input, anchors):
     class_output, regr_output = input
 
-    # TODO:
-    if class_output.dim() == 1:
-        scores = torch.ones_like(class_output).float()
-        class_ids = class_output - 1
-        fg = class_output > 0
-    else:
-        scores, class_ids = class_output.max(1)
-        fg = scores > 0.
+    scores, class_ids = class_output.max(1)
+    fg = scores > 0.
 
     yx = regr_output[:, :2] * anchors[:, 2:] + anchors[:, :2]
     hw = regr_output[:, 2:].exp() * anchors[:, 2:]

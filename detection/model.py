@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision
 
 BackboneOutput = namedtuple('BackboneOutput', ['c1', 'c2', 'c3', 'c4', 'c5'])
-FPNOutput = namedtuple('FPNOutput', ['p3', 'p4', 'p5', 'p6', 'p7'])
+FPNOutput = namedtuple('FPNOutput', ['p2', 'p3', 'p4', 'p5', 'p6', 'p7'])
 
 
 # TODO: init
@@ -77,26 +77,30 @@ class UpsampleMerge(nn.Module):
         return input
 
 
+# TODO: optimize level calculation
 class FPN(nn.Module):
-    def __init__(self):
+    def __init__(self, p2, p7):
         super().__init__()
 
         self.c5_to_p6 = ConvNorm(2048, 256, 3, stride=2)
         self.p6_to_p7 = nn.Sequential(
             ReLU(inplace=True),
-            ConvNorm(256, 256, 3, stride=2))
+            ConvNorm(256, 256, 3, stride=2)
+        ) if p7 else None
         self.c5_to_p5 = ConvNorm(2048, 256, 1)
         self.p5c4_to_p4 = UpsampleMerge(1024)
         self.p4c3_to_p3 = UpsampleMerge(512)
+        self.p3c2_to_p2 = UpsampleMerge(256)
 
     def forward(self, input: BackboneOutput):
         p6 = self.c5_to_p6(input.c5)
-        p7 = self.p6_to_p7(p6)
+        p7 = self.p6_to_p7(p6) if self.p6_to_p7 is not None else None
         p5 = self.c5_to_p5(input.c5)
         p4 = self.p5c4_to_p4(p5, input.c4)
         p3 = self.p4c3_to_p3(p4, input.c3)
+        p2 = self.p3c2_to_p2(p3, input.c2) if self.p3c2_to_p2 is not None else None
 
-        input = FPNOutput(p3=p3, p4=p4, p5=p5, p6=p6, p7=p7)
+        input = FPNOutput(p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7)
 
         return input
 
@@ -134,7 +138,7 @@ class RetinaNet(nn.Module):
         super().__init__()
 
         self.backbone = Backbone()
-        self.fpn = FPN()
+        self.fpn = FPN(p2=False, p7=True)
         self.class_head = HeadSubnet(256, num_anchors * num_classes)
         self.regr_head = HeadSubnet(256, num_anchors * 4)
         self.flatten = FlattenDetectionMap(num_anchors)
@@ -158,7 +162,71 @@ class RetinaNet(nn.Module):
         backbone_output = self.backbone(input)
         fpn_output = self.fpn(backbone_output)
 
-        class_output = torch.cat([self.flatten(self.class_head(x)) for x in fpn_output], 1)
-        regr_output = torch.cat([self.flatten(self.regr_head(x)) for x in fpn_output], 1)
+        class_output = torch.cat([self.flatten(self.class_head(x)) for x in fpn_output if x is not None], 1)
+        regr_output = torch.cat([self.flatten(self.regr_head(x)) for x in fpn_output if x is not None], 1)
 
         return class_output, regr_output
+
+
+class RPN(nn.Module):
+    def __init__(self, num_anchors):
+        super().__init__()
+
+        self.features = nn.Sequential(
+            ConvNorm(256, 512, 3),
+            ReLU(inplace=True))
+
+        self.class_head = nn.Conv2d(512, num_anchors * 2, 1)
+        self.regr_head = nn.Conv2d(512, num_anchors * 4, 1)
+
+    def forward(self, input):
+        input = self.features(input)
+
+        class_output = self.class_head(input)
+        regr_output = self.regr_head(input)
+
+        return class_output, regr_output
+
+
+# TODO: parameterize fpn
+class MaskRCNN(nn.Module):
+    def __init__(self, num_classes, num_anchors):
+        super().__init__()
+
+        self.backbone = Backbone()
+        self.fpn = FPN(p2=True, p7=False)
+        self.rpn = RPN(num_anchors)
+        self.flatten = FlattenDetectionMap(num_anchors)
+
+        modules = itertools.chain(
+            self.fpn.modules(),
+            self.rpn.modules())
+        for m in modules:
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, mean=0., std=0.01)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, input):
+        backbone_output = self.backbone(input)
+        fpn_output = self.fpn(backbone_output)
+
+        proposals = [self.rpn(x) for x in fpn_output if x is not None]
+        class_output, regr_output = zip(*proposals)
+
+        class_output = torch.cat([self.flatten(x) for x in class_output], 1)
+        regr_output = torch.cat([self.flatten(x) for x in regr_output], 1)
+
+        return {
+            'rpn': (class_output, regr_output)
+        }
+
+
+image = torch.zeros((1, 3, 600, 600))
+m = MaskRCNN(80, 3)
+out = m(image)
+
+print(out['rpn'][0].shape)
+print(out['rpn'][1].shape)

@@ -21,11 +21,11 @@ import lr_scheduler_wrapper
 import utils
 from config import Config
 from optim import AdamW
-from retinanet.dataset import Dataset, NUM_CLASSES
-from retinanet.model import RetinaNet
-from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
-    build_anchors_maps
-from retinanet.utils import decode_boxes
+from detection.dataset import Dataset, NUM_CLASSES
+from detection.model import RetinaNet
+from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
+    build_anchors_maps, denormalize
+from detection.utils import decode_boxes
 
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
@@ -49,7 +49,7 @@ ANCHORS = [
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
-parser.add_argument('--experiment-path', type=str, default='./tf_log/retinanet')
+parser.add_argument('--experiment-path', type=str, default='./tf_log/detection')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--restore-path', type=str)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
@@ -82,7 +82,7 @@ def focal_loss(input, target, gamma=2., alpha=0.25):
     norm = (target > 0).sum()
     assert norm > 0
 
-    target = torch.eye(NUM_CLASSES + 1).to(DEVICE)[target][:, 1:]
+    target = utils.one_hot(target, NUM_CLASSES + 2)[:, 2:]
 
     prob = input.sigmoid()
     prob_true = prob * target + (1 - prob) * (1 - target)
@@ -171,18 +171,17 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
-        # scheduler.step()
+        scheduler.step()
 
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
 
         image_size = images.size(2), images.size(3)
         anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
-        mean, std = [torch.tensor(x).view(3, 1, 1).to(DEVICE) for x in [MEAN, STD]]
-        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*labels)]
-        images_true = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
+        boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
+        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
         boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
-        images_pred = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -215,11 +214,10 @@ def eval_epoch(model, data_loader, epoch):
 
         image_size = images.size(2), images.size(3)
         anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
-        mean, std = [torch.tensor(x).view(3, 1, 1).to(DEVICE) for x in [MEAN, STD]]
-        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*labels)]
-        images_true = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
+        boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
+        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
         boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
-        images_pred = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)

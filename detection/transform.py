@@ -5,7 +5,7 @@ import torch
 import torchvision.transforms.functional as F
 from PIL import Image
 
-from retinanet.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr, encode_boxes
+from detection.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr, encode_boxes
 
 
 class Resize(object):
@@ -83,7 +83,7 @@ class BuildLabels(object):
         class_output, regr_output = encode_boxes((class_ids, boxes), anchor_maps)
 
         return image, (class_output, regr_output)
-  
+
 
 def build_anchors_maps(image_size, anchor_levels):
     h, w = image_size
@@ -127,6 +127,17 @@ def flip_left_right(input):
     boxes[:, 1] = w - boxes[:, 1]
 
     return image, (class_ids, boxes)
+
+
+def denormalize(tensor, mean, std, inplace=False):
+    if not inplace:
+        tensor = tensor.clone()
+
+    mean = torch.as_tensor(mean, dtype=torch.float32, device=tensor.device)
+    std = torch.as_tensor(std, dtype=torch.float32, device=tensor.device)
+    tensor.mul_(std[:, None, None]).add_(mean[:, None, None])
+
+    return tensor
 
 
 def crop(input, ij, hw):
