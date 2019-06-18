@@ -81,9 +81,9 @@ class BuildLabels(object):
         _, h, w = image.size()
         anchor_maps = build_anchors_maps((h, w), self.anchors)
         class_output, regr_output = encode_boxes((class_ids, boxes), anchor_maps)
-       
-        return image, (class_output, regr_output)
 
+        return image, (class_output, regr_output)
+  
 
 def build_anchors_maps(image_size, anchor_levels):
     h, w = image_size
