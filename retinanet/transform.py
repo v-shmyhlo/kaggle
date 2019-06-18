@@ -2,14 +2,10 @@ import math
 
 import numpy as np
 import torch
-import torchvision
 import torchvision.transforms.functional as F
 from PIL import Image
 
-from retinanet.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr
-
-MIN_IOU = 0.4
-MAX_IOU = 0.5
+from retinanet.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr, encode_boxes
 
 
 class Resize(object):
@@ -84,37 +80,9 @@ class BuildLabels(object):
 
         _, h, w = image.size()
         anchor_maps = build_anchors_maps((h, w), self.anchors)
-        class_output, regr_output = assign_anchors((class_ids, boxes), anchor_maps)
-
+        class_output, regr_output = encode_boxes((class_ids, boxes), anchor_maps)
+       
         return image, (class_output, regr_output)
-
-
-def assign_anchors(input, anchors):
-    (class_ids, boxes) = input
-
-    ious = boxes_iou(boxes, anchors)
-    iou_values, iou_indices = ious.max(0)
-
-    # build class_output
-    class_output = class_ids[iou_indices] + 1
-    class_output[iou_values < MIN_IOU] = 0
-    class_output[(iou_values >= MIN_IOU) & (iou_values <= MAX_IOU)] = -1
-
-    # build regr_output
-    boxes = boxes[iou_indices]
-    shifts = (boxes[:, :2] - anchors[:, :2]) / anchors[:, 2:]
-    scales = boxes[:, 2:] / anchors[:, 2:]
-    regr_output = torch.cat([shifts, scales.log()], 1)
-
-    return class_output, regr_output
-
-
-def boxes_iou(a, b):
-    a = boxes_yxhw_to_tlbr(a)
-    b = boxes_yxhw_to_tlbr(b)
-    iou = torchvision.ops.box_iou(boxes_yxhw_to_tlbr(a), boxes_yxhw_to_tlbr(b))
-
-    return iou
 
 
 def build_anchors_maps(image_size, anchor_levels):

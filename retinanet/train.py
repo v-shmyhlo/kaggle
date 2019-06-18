@@ -25,6 +25,7 @@ from retinanet.dataset import Dataset, NUM_CLASSES
 from retinanet.model import RetinaNet
 from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     build_anchors_maps
+from retinanet.utils import decode_boxes
 
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
@@ -137,30 +138,6 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
-def decode_boxes(image_size, input):
-    class_output, regr_output = input
-
-    anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
-
-    if class_output.dim() == 1:
-        scores = torch.ones_like(class_output).float()
-        class_ids = class_output - 1
-        fg = class_output > 0
-    else:
-        scores, class_ids = class_output.max(1)
-        fg = scores > 0.
-
-    yx = regr_output[:, :2] * anchors[:, 2:] + anchors[:, :2]
-    hw = regr_output[:, 2:].exp() * anchors[:, 2:]
-    boxes = torch.cat([yx, hw], 1)
-
-    boxes = boxes[fg]
-    class_ids = class_ids[fg]
-    scores = scores[fg]
-
-    return boxes, class_ids, scores
-
-
 def draw_boxes(image, boxes):
     device = image.device
 
@@ -200,10 +177,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         loss = metrics['loss'].compute_and_reset()
 
         image_size = images.size(2), images.size(3)
+        anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
         mean, std = [torch.tensor(x).view(3, 1, 1).to(DEVICE) for x in [MEAN, STD]]
-        boxes = [decode_boxes(image_size, (c, r))[0] for c, r in zip(*labels)]
+        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*labels)]
         images_true = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
-        boxes = [decode_boxes(image_size, (c, r))[0] for c, r in zip(*logits)]
+        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
         images_pred = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
@@ -236,10 +214,11 @@ def eval_epoch(model, data_loader, epoch):
         score = epoch  # TODO:
 
         image_size = images.size(2), images.size(3)
+        anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
         mean, std = [torch.tensor(x).view(3, 1, 1).to(DEVICE) for x in [MEAN, STD]]
-        boxes = [decode_boxes(image_size, (c, r))[0] for c, r in zip(*labels)]
+        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*labels)]
         images_true = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
-        boxes = [decode_boxes(image_size, (c, r))[0] for c, r in zip(*logits)]
+        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
         images_pred = [draw_boxes(i * std + mean, b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
