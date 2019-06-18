@@ -27,18 +27,16 @@ class Dataset(torch.utils.data.Dataset):
                      if len(self.coco.loadAnns(ids=self.coco.getAnnIds(imgIds=item['id'], iscrowd=False))) > 0]
 
     def __len__(self):
-        return len(self.data) * 2
+        return len(self.data)
 
     # TODO: check
     def __getitem__(self, item):
-        flip = item % 2 == 1
-        item = item // 2
-
         item = self.data[item]
 
         image = Image.open(os.path.join(self.path, item['file_name']))
         if image.mode == 'L':
             image = image.convert('RGB')
+
         annotation_ids = self.coco.getAnnIds(imgIds=item['id'], iscrowd=False)
         annotations = self.coco.loadAnns(ids=annotation_ids)
 
@@ -54,11 +52,6 @@ class Dataset(torch.utils.data.Dataset):
 
         class_ids = torch.tensor(class_ids).view(-1).long()
         boxes = torch.tensor(boxes).view(-1, 4).float()
-
-        if flip:
-            image = image.transpose(Image.FLIP_LEFT_RIGHT)
-            w, _ = image.size
-            boxes[:, 1] = w - boxes[:, 1]
 
         input = image, (class_ids, boxes)
 

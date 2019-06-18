@@ -23,11 +23,8 @@ from config import Config
 from optim import AdamW
 from retinanet.dataset import Dataset, NUM_CLASSES
 from retinanet.model import RetinaNet
-from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, build_anchors_maps
-
-# TODO: try largest lr before diverging
-# TODO: check all plots rendered
-
+from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
+    build_anchors_maps
 
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
@@ -62,6 +59,7 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 train_transform = T.Compose([
     Resize(600),
     RandomCrop(600),
+    RandomFlipLeftRight(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
     BuildLabels(ANCHORS)
@@ -131,33 +129,12 @@ def compute_loss(input, target):
     regr_loss = smooth_l1_loss(input=input_regr[regr_mask], target=target_regr[regr_mask])
     assert regr_loss.dim() == 0
 
-    # normalize by batch
-    b = input_class.size(0)
-    loss = (class_loss + regr_loss) / b
+    loss = class_loss + regr_loss
 
     return loss
 
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-
-# TODO: stochastic weight averaging
-# TODO: group images by buckets (size, ratio) and batch
-# TODO: hinge loss clamp instead of minimum
-# TODO: losses
-# TODO: better one cycle
-# TODO: cos vs lin
-# TODO: load and restore state after lr finder
-# TODO: shuffle split
-# TODO: tune on large size
-# TODO: cross val
-# TODO: cutout
-# TODO: larger model
-# TODO: load image as jpeg
-# TODO: min 1 tag?
-# TODO: speedup image loading
-# TODO: weight standartization
-# TODO: build sched for lr find
 
 
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
@@ -258,23 +235,15 @@ def eval_epoch(model, data_loader, epoch):
 
     model.eval()
     with torch.no_grad():
-        # predictions = []
-        # targets = []
-
         for images, labels in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, labels = images.to(DEVICE), [l.to(DEVICE) for l in labels]
             logits = model(images)
-
-            # targets.append(labels)
-            # predictions.append(logits)
 
             loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
 
-        # predictions = torch.cat(predictions, 0)
-        # targets = torch.cat(targets, 0)
         score = epoch  # TODO:
 
         image_size = images.size(2), images.size(3)
@@ -297,7 +266,7 @@ def eval_epoch(model, data_loader, epoch):
 
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
-    train_dataset = torch.utils.data.Subset(train_dataset, list(range(4000)))
+    train_dataset = torch.utils.data.Subset(train_dataset, list(range(40000)))
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -307,7 +276,7 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
-    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(400)))
+    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(4000)))
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,

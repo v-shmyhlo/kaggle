@@ -28,6 +28,7 @@ class Resize(object):
         return image, (class_ids, boxes)
 
 
+# TODO: test
 class RandomCrop(object):
     def __init__(self, size):
         self.size = size
@@ -39,21 +40,17 @@ class RandomCrop(object):
         i = np.random.randint(0, h - self.size + 1)
         j = np.random.randint(0, w - self.size + 1)
 
-        image = image.crop((j, i, j + self.size, i + self.size))
+        input = crop(input, (i, j), (self.size, self.size))
 
-        boxes = boxes_yxhw_to_tlbr(boxes)
-        boxes[:, [0, 2]] -= i
-        boxes[:, [1, 3]] -= j
-        boxes = boxes.clamp(0, self.size)
-        boxes = boxes_to_tlbr_yxhw(boxes)
-        boxes[:, 2:].clamp_(min=1.)  # FIXME:
+        return input
 
-        # TODO: fix keep
-        # keep = (boxes[:, 2] * boxes[:, 3]) > 1
-        # class_ids = class_ids[keep]
-        # boxes = boxes[keep]
 
-        return image, (class_ids, boxes)
+class RandomFlipLeftRight(object):
+    def __call__(self, input):
+        if np.random.random() > 0.5:
+            input = flip_left_right(input)
+
+        return input
 
 
 class ToTensor(object):
@@ -82,9 +79,6 @@ class BuildLabels(object):
 
     def __call__(self, input):
         image, (class_ids, boxes) = input
-
-        # class_ids = torch.ones(10).long()
-        # boxes = torch.ones(10, 4).float() * 100
 
         _, h, w = image.size()
         anchor_maps = build_anchors_maps((h, w), self.anchors)
@@ -134,7 +128,7 @@ def boxes_yxhw_to_tlbr(boxes):
     return boxes
 
 
-def boxes_to_tlbr_yxhw(boxes):
+def boxes_tlbr_to_yxhw(boxes):
     t, l, b, r = torch.split(boxes, 1, 1)
 
     h = b - t
@@ -178,3 +172,38 @@ def build_anchor_map(image_size, map_size, anchor):
     anchor_map = anchor_map.view(anchor_map.size(0), anchor_map.size(1) * anchor_map.size(2))
 
     return anchor_map
+
+
+# TODO: test
+def flip_left_right(input):
+    image, (class_ids, boxes) = input
+
+    image = image.transpose(Image.FLIP_LEFT_RIGHT)
+    w, _ = image.size
+    boxes[:, 1] = w - boxes[:, 1]
+
+    return image, (class_ids, boxes)
+
+
+def crop(input, ij, hw):
+    image, (class_ids, boxes) = input
+
+    i, j = ij
+    h, w = hw
+
+    image = image.crop((j, i, j + w, i + h))
+
+    boxes = boxes_yxhw_to_tlbr(boxes)
+    boxes[:, [0, 2]] -= i
+    boxes[:, [1, 3]] -= j
+    boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, h)
+    boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, w)
+    boxes = boxes_tlbr_to_yxhw(boxes)
+    boxes[:, 2:].clamp_(min=1.)  # FIXME:
+
+    # TODO: fix keep
+    # keep = (boxes[:, 2] * boxes[:, 3]) > 1
+    # class_ids = class_ids[keep]
+    # boxes = boxes[keep]
+
+    return image, (class_ids, boxes)
