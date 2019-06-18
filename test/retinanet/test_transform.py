@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from retinanet.transform import boxes_yxhw_to_tlbr, boxes_tlbr_to_yxhw, crop
+from retinanet.transform import crop
+from retinanet.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr
 
 
 def test_boxes_yxhw_to_tlbr():

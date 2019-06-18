@@ -23,32 +23,11 @@ from config import Config
 from optim import AdamW
 from retinanet.dataset import Dataset, NUM_CLASSES
 from retinanet.model import RetinaNet
-from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, build_anchors_maps
-
-# TODO: try largest lr before diverging
-# TODO: check all plots rendered
-
+from retinanet.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
+    build_anchors_maps
 
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
-
-
-# TODO: check
-class BatchSampler(torch.utils.data.Sampler):
-    def __init__(self, sampler):
-        super().__init__(sampler)
-
-        self.sampler = sampler
-
-    def __len__(self):
-        return len(self.sampler) // 2
-
-    def __iter__(self):
-        for i in self.sampler:
-            if i % 2 == 1:
-                continue
-
-            yield [i, i + 1]
 
 
 def compute_anchor(size, ratio, scale):
@@ -79,27 +58,19 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 train_transform = T.Compose([
     Resize(600),
+    RandomCrop(600),
+    RandomFlipLeftRight(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
     BuildLabels(ANCHORS)
 ])
 eval_transform = T.Compose([
     Resize(600),
+    RandomCrop(600),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
     BuildLabels(ANCHORS)
 ])
-
-
-def cat(a, b):
-    image_a, (class_ids_a, boxes_a) = a
-    image_b, (class_ids_b, boxes_b) = b
-
-    image = torch.stack([image_a, image_b], 0)
-    class_ids = torch.stack([class_ids_a, class_ids_b], 0)
-    boxes = torch.stack([boxes_a, boxes_b], 0)
-
-    return image, (class_ids, boxes)
 
 
 def worker_init_fn(_):
@@ -108,6 +79,7 @@ def worker_init_fn(_):
 
 def focal_loss(input, target, gamma=2., alpha=0.25):
     norm = (target > 0).sum()
+    assert norm > 0
 
     target = torch.eye(NUM_CLASSES + 1).to(DEVICE)[target][:, 1:]
 
@@ -117,8 +89,16 @@ def focal_loss(input, target, gamma=2., alpha=0.25):
     weight = alpha * (1 - prob_true)**gamma
 
     loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
-    loss = weight * loss
-    loss = loss.sum() / norm
+    loss = (weight * loss).sum() / norm
+
+    return loss
+
+
+def smooth_l1_loss(input, target):
+    assert input.numel() == target.numel()
+    assert input.numel() > 0
+
+    loss = F.smooth_l1_loss(input=input, target=target, reduction='mean')
 
     return loss
 
@@ -128,12 +108,14 @@ def compute_loss(input, target):
     input_class, input_regr = input
     target_class, target_regr = target
 
+    # classification loss
     class_mask = target_class != -1
     class_loss = focal_loss(input=input_class[class_mask], target=target_class[class_mask])
     assert class_loss.dim() == 0
 
+    # regression loss
     regr_mask = target_class > 0
-    regr_loss = F.smooth_l1_loss(input=input_regr[regr_mask], target=target_regr[regr_mask])
+    regr_loss = smooth_l1_loss(input=input_regr[regr_mask], target=target_regr[regr_mask])
     assert regr_loss.dim() == 0
 
     loss = class_loss + regr_loss
@@ -142,27 +124,6 @@ def compute_loss(input, target):
 
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-
-# TODO: stochastic weight averaging
-# TODO: group images by buckets (size, ratio) and batch
-# TODO: hinge loss clamp instead of minimum
-# TODO: losses
-# TODO: better one cycle
-# TODO: cos vs lin
-# TODO: load and restore state after lr finder
-# TODO: shuffle split
-# TODO: tune on large size
-# TODO: cross val
-# TODO: smart sampling
-# TODO: cutout
-# TODO: larger model
-# TODO: load image as jpeg
-# TODO: min 1 tag?
-# TODO: speedup image loading
-# TODO: smart sampling
-# TODO: weight standartization
-# TODO: build sched for lr find
 
 
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
@@ -248,8 +209,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
-        writer.add_image('images_true', torchvision.utils.make_grid(images_true, normalize=True), global_step=epoch)
-        writer.add_image('images_pred', torchvision.utils.make_grid(images_pred, normalize=True), global_step=epoch)
+        writer.add_image(
+            'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, epoch):
@@ -261,23 +224,15 @@ def eval_epoch(model, data_loader, epoch):
 
     model.eval()
     with torch.no_grad():
-        # predictions = []
-        # targets = []
-
         for images, labels in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, labels = images.to(DEVICE), [l.to(DEVICE) for l in labels]
             logits = model(images)
-
-            # targets.append(labels)
-            # predictions.append(logits)
 
             loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
 
-        # predictions = torch.cat(predictions, 0)
-        # targets = torch.cat(targets, 0)
         score = epoch  # TODO:
 
         image_size = images.size(2), images.size(3)
@@ -290,26 +245,30 @@ def eval_epoch(model, data_loader, epoch):
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
-        writer.add_image('images_true', torchvision.utils.make_grid(images_true, normalize=True), global_step=epoch)
-        writer.add_image('images_pred', torchvision.utils.make_grid(images_pred, normalize=True), global_step=epoch)
+        writer.add_image(
+            'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
 
         return score
 
 
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
-    train_dataset = torch.utils.data.Subset(train_dataset, list(range(1000)))
+    train_dataset = torch.utils.data.Subset(train_dataset, list(range(40000)))
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_sampler=BatchSampler(torch.utils.data.RandomSampler(train_dataset)),
+        batch_size=config.batch_size,
+        drop_last=True,
+        shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
-    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(100)))
+    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(4000)))
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_sampler=BatchSampler(torch.utils.data.SequentialSampler(eval_dataset)),
+        batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
