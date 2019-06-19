@@ -72,30 +72,41 @@ class Normalize(object):
 
 
 class BuildLabels(object):
-    def __init__(self, anchors):
+    def __init__(self, anchors, p2, p7, min_iou, max_iou):
         self.anchors = anchors
+        self.p2 = p2
+        self.p7 = p7
+        self.min_iou = min_iou
+        self.max_iou = max_iou
 
     def __call__(self, input):
         image, (class_ids, boxes) = input
 
         _, h, w = image.size()
-        anchor_maps = build_anchors_maps((h, w), self.anchors)
-        class_output, regr_output = encode_boxes((class_ids, boxes), anchor_maps)
+        anchor_maps = build_anchors_maps((h, w), self.anchors, p2=self.p2, p7=self.p7)
+        class_output, regr_output = encode_boxes(
+            (class_ids, boxes), anchor_maps, min_iou=self.min_iou, max_iou=self.max_iou)
 
         return image, (class_output, regr_output)
 
 
-def build_anchors_maps(image_size, anchor_levels):
+def build_anchors_maps(image_size, anchor_levels, p2, p7):
     h, w = image_size
+    includes = [p2, True, True, True, True, p7]
+    assert len(anchor_levels) == len(includes)
 
-    for _ in range(3):
+    for _ in range(2):
         h, w = math.ceil(h / 2), math.ceil(w / 2)
 
     anchor_maps = []
-    for anchors in anchor_levels:
-        for anchor in anchors:
-            anchor_map = build_anchor_map(image_size, (h, w), anchor)
-            anchor_maps.append(anchor_map)
+    for anchors, include in zip(anchor_levels, includes):
+        if include:
+            for anchor in anchors:
+                anchor_map = build_anchor_map(image_size, (h, w), anchor)
+                anchor_maps.append(anchor_map)
+        else:
+            assert anchors is None
+
         h, w = math.ceil(h / 2), math.ceil(w / 2)
 
     anchor_maps = torch.cat(anchor_maps, 1).t()

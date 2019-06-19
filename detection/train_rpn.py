@@ -20,17 +20,20 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from config import Config
-from detection.dataset import Dataset, NUM_CLASSES
-from detection.model import RetinaNet
+from detection.dataset import Dataset
+from detection.model import MaskRCNN
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     build_anchors_maps, denormalize
 from detection.utils import decode_boxes
 from optim import AdamW
 
+NUM_CLASSES = 1
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
-MIN_IOU = 0.4
-MAX_IOU = 0.5
+MIN_IOU = 0.3
+MAX_IOU = 0.7
+P2 = True
+P7 = False
 
 
 def compute_anchor(size, ratio, scale):
@@ -40,14 +43,14 @@ def compute_anchor(size, ratio, scale):
     return h, w
 
 
-anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [2**0, 2**(1 / 3), 2**(2 / 3)]))
+anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [1]))
 ANCHORS = [
-    None,
     [compute_anchor(32, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(64, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(128, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(256, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(512, ratio, scale) for ratio, scale in anchor_types],
+    None,
 ]
 
 parser = argparse.ArgumentParser()
@@ -60,20 +63,31 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
+
+def merge_classes(input):
+    image, (class_ids, boxes) = input
+
+    class_ids[class_ids > 0] = 1
+
+    return image, (class_ids, boxes)
+
+
 train_transform = T.Compose([
     Resize(600),
     RandomCrop(600),
     RandomFlipLeftRight(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    merge_classes,
+    BuildLabels(ANCHORS, p2=P2, p7=P7, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 eval_transform = T.Compose([
     Resize(600),
     RandomCrop(600),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    merge_classes,
+    BuildLabels(ANCHORS, p2=P2, p7=P7, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 
 
@@ -180,7 +194,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         loss = metrics['loss'].compute_and_reset()
 
         image_size = images.size(2), images.size(3)
-        anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
+        anchors = build_anchors_maps(image_size, ANCHORS, p2=P2, p7=P7).to(DEVICE)
         boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
         boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
@@ -216,7 +230,7 @@ def eval_epoch(model, data_loader, epoch):
         score = epoch  # TODO:
 
         image_size = images.size(2), images.size(3)
-        anchors = build_anchors_maps(image_size, ANCHORS).to(DEVICE)
+        anchors = build_anchors_maps(image_size, ANCHORS, p2=P2, p7=P7).to(DEVICE)
         boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
         boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
@@ -253,7 +267,7 @@ def train():
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = RetinaNet(NUM_CLASSES, len(anchor_types))
+    model = MaskRCNN(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))

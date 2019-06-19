@@ -1,9 +1,6 @@
 import torch
 import torchvision
 
-MIN_IOU = 0.4
-MAX_IOU = 0.5
-
 
 def boxes_tlbr_to_yxhw(boxes):
     t, l, b, r = torch.split(boxes, 1, 1)
@@ -56,7 +53,7 @@ def decode_boxes(input, anchors):
     return class_ids, boxes, scores
 
 
-def encode_boxes(input, anchors):
+def encode_boxes(input, anchors, min_iou, max_iou):
     class_ids, boxes = input
 
     ious = boxes_iou(boxes, anchors)
@@ -64,8 +61,8 @@ def encode_boxes(input, anchors):
 
     # build class_output
     class_output = class_ids[iou_indices] + 1
-    class_output[iou_values < MIN_IOU] = 0
-    class_output[(iou_values >= MIN_IOU) & (iou_values <= MAX_IOU)] = -1
+    class_output[iou_values < min_iou] = 0
+    class_output[(iou_values >= min_iou) & (iou_values <= max_iou)] = -1
 
     # build regr_output
     boxes = boxes[iou_indices]

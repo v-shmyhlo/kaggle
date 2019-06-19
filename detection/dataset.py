@@ -21,8 +21,8 @@ class Dataset(torch.utils.data.Dataset):
         self.transform = transform
         self.coco = pycoco.COCO(ann_path)
         self.cat_to_id = {c: i for i, c in enumerate(self.coco.getCatIds())}
+        assert len(self.cat_to_id) == NUM_CLASSES
         self.data = self.coco.loadImgs(ids=self.coco.getImgIds())
-
         self.data = [item for item in self.data
                      if len(self.coco.loadAnns(ids=self.coco.getAnnIds(imgIds=item['id'], iscrowd=False))) > 0]
 

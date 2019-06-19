@@ -90,7 +90,7 @@ class FPN(nn.Module):
         self.c5_to_p5 = ConvNorm(2048, 256, 1)
         self.p5c4_to_p4 = UpsampleMerge(1024)
         self.p4c3_to_p3 = UpsampleMerge(512)
-        self.p3c2_to_p2 = UpsampleMerge(256)
+        self.p3c2_to_p2 = UpsampleMerge(256) if p2 else None
 
     def forward(self, input: BackboneOutput):
         p6 = self.c5_to_p6(input.c5)
@@ -176,7 +176,7 @@ class RPN(nn.Module):
             ConvNorm(256, 512, 3),
             ReLU(inplace=True))
 
-        self.class_head = nn.Conv2d(512, num_anchors * 2, 1)
+        self.class_head = nn.Conv2d(512, num_anchors * 1, 1)
         self.regr_head = nn.Conv2d(512, num_anchors * 4, 1)
 
     def forward(self, input):
@@ -186,6 +186,20 @@ class RPN(nn.Module):
         regr_output = self.regr_head(input)
 
         return class_output, regr_output
+
+
+class ROIAlign(nn.Module):
+    def __init__(self, levels):
+        pass
+
+    def forward(self, inputs, boxes, image_ids, level_ids):
+        pools = []
+        for b, i, l in zip(boxes, image_ids, level_ids):
+            pools.append(inputs[l][i, :, i:i + w])
+
+        pools = torch.stack(pools, 0)
+
+        return pools
 
 
 # TODO: parameterize fpn
@@ -219,14 +233,12 @@ class MaskRCNN(nn.Module):
         class_output = torch.cat([self.flatten(x) for x in class_output], 1)
         regr_output = torch.cat([self.flatten(x) for x in regr_output], 1)
 
-        return {
-            'rpn': (class_output, regr_output)
-        }
+        return class_output, regr_output
 
 
 image = torch.zeros((1, 3, 600, 600))
 m = MaskRCNN(80, 3)
 out = m(image)
 
-print(out['rpn'][0].shape)
-print(out['rpn'][1].shape)
+# print(out['rpn'][0].shape)
+# print(out['rpn'][1].shape)
