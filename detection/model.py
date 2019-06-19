@@ -1,14 +1,13 @@
 import itertools
 import math
-from collections import namedtuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from detection.utils import boxes_yxhw_to_tlbr
 
-BackboneOutput = namedtuple('BackboneOutput', ['c1', 'c2', 'c3', 'c4', 'c5'])
-FPNOutput = namedtuple('FPNOutput', ['p2', 'p3', 'p4', 'p5', 'p6', 'p7'])
+STRIDES = [2**l for l in range(8)]
 
 
 # TODO: init
@@ -54,7 +53,7 @@ class Backbone(nn.Module):
         # input = input.view(input.size(0), -1)
         # input = self.fc(input)
 
-        input = BackboneOutput(c1=c1, c2=c2, c3=c3, c4=c4, c5=c5)
+        input = [None, c1, c2, c3, c4, c5]
 
         return input
 
@@ -92,15 +91,15 @@ class FPN(nn.Module):
         self.p4c3_to_p3 = UpsampleMerge(512)
         self.p3c2_to_p2 = UpsampleMerge(256) if p2 else None
 
-    def forward(self, input: BackboneOutput):
-        p6 = self.c5_to_p6(input.c5)
+    def forward(self, input):
+        p6 = self.c5_to_p6(input[5])
         p7 = self.p6_to_p7(p6) if self.p6_to_p7 is not None else None
-        p5 = self.c5_to_p5(input.c5)
-        p4 = self.p5c4_to_p4(p5, input.c4)
-        p3 = self.p4c3_to_p3(p4, input.c3)
-        p2 = self.p3c2_to_p2(p3, input.c2) if self.p3c2_to_p2 is not None else None
+        p5 = self.c5_to_p5(input[5])
+        p4 = self.p5c4_to_p4(p5, input[4])
+        p3 = self.p4c3_to_p3(p4, input[3])
+        p2 = self.p3c2_to_p2(p3, input[2]) if self.p3c2_to_p2 is not None else None
 
-        input = FPNOutput(p2=p2, p3=p3, p4=p4, p5=p5, p6=p6, p7=p7)
+        input = [None, None, p2, p3, p4, p5, p6, p7]
 
         return input
 
@@ -188,18 +187,52 @@ class RPN(nn.Module):
         return class_output, regr_output
 
 
+# TODO: clip boxes
+# TODO: assert box bounds
 class ROIAlign(nn.Module):
-    def __init__(self, levels):
-        pass
+    def __init__(self, size):
+        super().__init__()
+        self.size = size
 
-    def forward(self, inputs, boxes, image_ids, level_ids):
-        pools = []
+    def forward(self, fpn_output, boxes, image_ids):
+        level_ids = compute_level_ids(boxes)
+        boxes = boxes_yxhw_to_tlbr(boxes)
+
+        input = []
         for b, i, l in zip(boxes, image_ids, level_ids):
-            pools.append(inputs[l][i, :, i:i + w])
+            b = (b / STRIDES[l]).long()
 
-        pools = torch.stack(pools, 0)
+            x = fpn_output[l][i:i + 1, :, b[0]:b[2], b[1]:b[3]]
+            x = F.interpolate(x, size=self.size, mode='bilinear')
 
-        return pools
+            input.append(x)
+
+        input = torch.cat(input, 0)
+
+        return input
+
+
+class ROIHead(nn.Module):
+    def __init__(self, size, num_classes):
+        super().__init__()
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(256, 512, size),
+            nn.BatchNorm2d(512),
+            ReLU(inplace=True))
+
+        self.class_head = nn.Conv2d(512, num_classes, 1)
+        self.regr_head = nn.Conv2d(512, 4, 1)
+
+    def forward(self, input):
+        input = self.conv(input)
+        class_output = self.class_head(input)
+        regr_output = self.regr_head(input)
+
+        class_output = class_output.view(class_output.size(0), class_output.size(1))
+        regr_output = regr_output.view(regr_output.size(0), regr_output.size(1))
+
+        return class_output, regr_output
 
 
 # TODO: parameterize fpn
@@ -211,6 +244,8 @@ class MaskRCNN(nn.Module):
         self.fpn = FPN(p2=True, p7=False)
         self.rpn = RPN(num_anchors)
         self.flatten = FlattenDetectionMap(num_anchors)
+        self.roi_align = ROIAlign(7)
+        self.roi_head = ROIHead(7, num_classes)
 
         modules = itertools.chain(
             self.fpn.modules(),
@@ -233,12 +268,40 @@ class MaskRCNN(nn.Module):
         class_output = torch.cat([self.flatten(x) for x in class_output], 1)
         regr_output = torch.cat([self.flatten(x) for x in regr_output], 1)
 
-        return class_output, regr_output
+        return fpn_output, (class_output, regr_output)
+
+    def roi(self, fpn_output, boxes, image_ids):
+        input = self.roi_align(fpn_output, boxes, image_ids)
+        input = self.roi_head(input)
+
+        return input
 
 
-image = torch.zeros((1, 3, 600, 600))
+def compute_level_ids(boxes):
+    k0 = 4
+    k_min = 2
+    k_max = 5
+
+    areas = boxes[:, 2] * boxes[:, 3]
+
+    k = torch.floor(k0 + torch.log2(areas.sqrt() / 224))
+    k = torch.clamp(k, min=k_min, max=k_max)
+    k = k.long()
+
+    return k
+
+
 m = MaskRCNN(80, 3)
-out = m(image)
+x = torch.zeros((10, 3, 256, 256))
+fpn_output = m.fpn(m.backbone(x))
 
-# print(out['rpn'][0].shape)
-# print(out['rpn'][1].shape)
+boxes = torch.tensor([
+    [128, 128, 32, 32],
+    [128, 128, 64, 64],
+    [128, 128, 256, 256],
+    [128, 128, 512, 512],
+], dtype=torch.float)
+image_ids = torch.tensor([2, 0, 7, 8], dtype=torch.long)
+
+a, b = m.roi(fpn_output, boxes, image_ids)
+# print(a.shape, b.shape)

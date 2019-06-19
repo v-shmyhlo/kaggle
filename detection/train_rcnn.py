@@ -13,27 +13,29 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
 from config import Config
-from detection.dataset import Dataset, NUM_CLASSES
-from detection.model import RetinaNet
+from detection.dataset import Dataset
+from detection.model import MaskRCNN
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     build_anchors_maps, denormalize
-from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
+from detection.utils import decode_boxes
 from optim import AdamW
 
-# TODO: visualization scores sigmoid
+from detection.utils import boxes_yxhw_to_tlbr, boxes_tlbr_to_yxhw
 
-
+NUM_CLASSES = 1
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
-MIN_IOU = 0.4
-MAX_IOU = 0.5
+MIN_IOU = 0.3
+MAX_IOU = 0.7
+P2 = True
+P7 = False
 
 
 def compute_anchor(size, ratio, scale):
@@ -43,16 +45,15 @@ def compute_anchor(size, ratio, scale):
     return h, w
 
 
-anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [2**0, 2**(1 / 3), 2**(2 / 3)]))
+anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [1]))
 ANCHORS = [
-    None,
     [compute_anchor(32, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(64, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(128, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(256, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(512, ratio, scale) for ratio, scale in anchor_types],
+    None,
 ]
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -63,22 +64,32 @@ parser.add_argument('--workers', type=int, default=os.cpu_count())
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS, p2=False, p7=True).to(DEVICE)
+
+
+def merge_classes(input):
+    image, (class_ids, boxes) = input
+
+    class_ids[class_ids > 0] = 1
+
+    return image, (class_ids, boxes)
+
 
 train_transform = T.Compose([
-    Resize(config.image_size),
-    RandomCrop(config.image_size),
+    Resize(600),
+    RandomCrop(600),
     RandomFlipLeftRight(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    merge_classes,
+    BuildLabels(ANCHORS, p2=P2, p7=P7, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 eval_transform = T.Compose([
-    Resize(config.image_size),
-    RandomCrop(config.image_size),
+    Resize(600),
+    RandomCrop(600),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    merge_classes,
+    BuildLabels(ANCHORS, p2=P2, p7=P7, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 
 
@@ -132,6 +143,9 @@ def compute_loss(input, target):
     return loss
 
 
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
     if optimizer == 'adam':
         return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
@@ -143,29 +157,34 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
-def draw_boxes(image, detections, colors=np.random.uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)):
-    font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
-
-    class_ids, boxes, scores = detections
-    boxes = boxes_yxhw_to_tlbr(boxes)
-
+def draw_boxes(image, boxes):
     device = image.device
+
     image = image.permute(1, 2, 0).data.cpu().numpy()
     image = (image * 255).astype(np.uint8)
     image = Image.fromarray(image)
     draw = ImageDraw.Draw(image)
-
-    for c, (t, l, b, r), s in zip(class_ids.data.cpu().numpy(), boxes.data.cpu().numpy(), scores.data.cpu().numpy()):
-        color = tuple(colors[c])
-        text = '{:.2f}'.format(s)
-        size = draw.textsize(text, font=font)
-        draw.rectangle(((l, t - size[1]), (l + size[0], t)), fill=color)
-        draw.text((l, t - size[1]), text, font=font, fill=(0, 0, 0))
-        draw.rectangle(((l, t), (r, b)), outline=color)
-
+    for y, x, h, w in boxes.data.cpu().numpy():
+        draw.rectangle(((x - w / 2, y - h / 2), (x + w / 2, y + h / 2)), outline=(0, 255, 0))
     image = torch.tensor(np.array(image) / 255).permute(2, 0, 1).to(device)
 
     return image
+
+
+anchors = build_anchors_maps((600, 600), ANCHORS, p2=P2, p7=P7).to(DEVICE)
+
+
+def cleanup_boxes(class_ids, boxes, scores):
+    boxes = boxes_yxhw_to_tlbr(boxes)
+    boxes = boxes.clamp(0, 600)
+    boxes = boxes_tlbr_to_yxhw(boxes)
+
+    areas = boxes[:, 2] * boxes[:, 3]
+    keep = areas >= 1
+
+    class_ids, boxes, scores = class_ids[keep], boxes[keep], scores[keep]
+
+    return class_ids, boxes, scores
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, epoch):
@@ -178,7 +197,25 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
     model.train()
     for images, labels in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, labels = images.to(DEVICE), [l.to(DEVICE) for l in labels]
-        logits = model(images)
+        features, logits = model(images)
+
+        class_ids, boxes, scores, image_ids = [], [], [], []
+        for i, (c, r) in enumerate(zip(*logits)):
+            c, b, s = decode_boxes((c, r), anchors)
+            c, b, s = cleanup_boxes(c, b, s)
+            keep = torchvision.ops.nms(boxes_yxhw_to_tlbr(b), s, 0.5)
+            c, b, s = c[keep], b[keep], s[keep]
+            c, b, s = c[:512], b[:512], s[:512]
+
+            class_ids.append(c)
+            boxes.append(b)
+            scores.append(s)
+            image_ids.append(torch.tensor([i] * c.size(0)).long())
+        class_ids, boxes, scores, image_ids = [torch.cat(x, 0) for x in (class_ids, boxes, scores, image_ids)]
+        a, b = model.roi(features, boxes, image_ids)
+        print([x.shape for x in (class_ids, boxes, scores, image_ids, a, b)])
+        pool
+        # fail
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -192,16 +229,18 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
 
-        dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
-        dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        # image_size = images.size(2), images.size(3)
+        # anchors = build_anchors_maps(image_size, ANCHORS, p2=P2, p7=P7).to(DEVICE)
+        # boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
+        # images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
+        # boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
-        writer.add_image(
-            'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
+        # writer.add_image(
+        #     'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
         writer.add_image(
             'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
 
@@ -223,12 +262,15 @@ def eval_epoch(model, data_loader, epoch):
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
-        score = 0  # TODO:
 
-        dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
-        dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        score = epoch  # TODO:
+
+        image_size = images.size(2), images.size(3)
+        anchors = build_anchors_maps(image_size, ANCHORS, p2=P2, p7=P7).to(DEVICE)
+        boxes = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchors)[1] for c, r in zip(*labels)]
+        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
+        boxes = [decode_boxes((c, r), anchors)[1] for c, r in zip(*logits)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), b) for i, b in zip(images, boxes)]
 
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -254,14 +296,14 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
-    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(config.eval_size)))
+    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(4000)))
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = RetinaNet(NUM_CLASSES, len(anchor_types))
+    model = MaskRCNN(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))
@@ -283,11 +325,12 @@ def train():
             data_loader=train_data_loader,
             epoch=epoch)
         gc.collect()
-        score = eval_epoch(
-            model=model,
-            data_loader=eval_data_loader,
-            epoch=epoch)
-        gc.collect()
+        # score = eval_epoch(
+        #     model=model,
+        #     data_loader=eval_data_loader,
+        #     epoch=epoch)
+        # gc.collect()
+        score = 0
 
         scheduler.step_epoch()
         scheduler.step_score(score)
