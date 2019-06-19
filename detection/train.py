@@ -29,7 +29,7 @@ from optim import AdamW
 
 # TODO: visualization scores sigmoid
 
-
+COLORS = np.random.uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 MIN_IOU = 0.4
@@ -81,6 +81,18 @@ eval_transform = T.Compose([
     BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 
+
+class RandomSubset(torch.utils.data.Dataset):
+    def __init__(self, dataset, size):
+        self.dataset = dataset
+        self.size = size
+
+    def __len__(self):
+        return min(self.size, len(self.dataset))
+
+    def __getitem__(self, item):
+        return self.dataset[np.random.randint(len(self))]
+   
 
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
@@ -143,7 +155,7 @@ def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
         raise AssertionError('invalid OPT {}'.format(optimizer))
 
 
-def draw_boxes(image, detections, colors=np.random.uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)):
+def draw_boxes(image, detections, class_names, colors=COLORS):
     font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
 
     class_ids, boxes, scores = detections
@@ -157,7 +169,7 @@ def draw_boxes(image, detections, colors=np.random.uniform(51, 255, size=(NUM_CL
 
     for c, (t, l, b, r), s in zip(class_ids.data.cpu().numpy(), boxes.data.cpu().numpy(), scores.data.cpu().numpy()):
         color = tuple(colors[c])
-        text = '{:.2f}'.format(s)
+        text = '{}: {:.2f}'.format(class_names[c], s)
         size = draw.textsize(text, font=font)
         draw.rectangle(((l, t - size[1]), (l + size[0], t)), fill=color)
         draw.text((l, t - size[1]), text, font=font, fill=(0, 0, 0))
@@ -168,7 +180,7 @@ def draw_boxes(image, detections, colors=np.random.uniform(51, 255, size=(NUM_CL
     return image
 
 
-def train_epoch(model, optimizer, scheduler, data_loader, epoch):
+def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'train'))
 
     metrics = {
@@ -193,9 +205,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         loss = metrics['loss'].compute_and_reset()
 
         dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
 
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -206,7 +218,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
             'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
 
 
-def eval_epoch(model, data_loader, epoch):
+def eval_epoch(model, data_loader, class_names, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'eval'))
 
     metrics = {
@@ -226,9 +238,9 @@ def eval_epoch(model, data_loader, epoch):
         score = 0  # TODO:
 
         dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d) for i, d in zip(images, dets)]
+        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
 
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -243,8 +255,7 @@ def eval_epoch(model, data_loader, epoch):
 
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
-    train_dataset = torch.utils.data.Subset(
-        train_dataset, np.random.permutation(len(train_dataset))[:config.train_size])
+    train_dataset = RandomSubset(train_dataset, config.train_size)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -254,13 +265,13 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
-    eval_dataset = torch.utils.data.Subset(eval_dataset, list(range(config.eval_size)))
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
+    class_names = eval_dataset.class_names
     model = RetinaNet(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
@@ -281,11 +292,13 @@ def train():
             optimizer=optimizer,
             scheduler=scheduler,
             data_loader=train_data_loader,
+            class_names=class_names,
             epoch=epoch)
         gc.collect()
         score = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
+            class_names=class_names,
             epoch=epoch)
         gc.collect()
 
