@@ -132,7 +132,7 @@ class FlattenDetectionMap(nn.Module):
         return input
 
 
-class Mask(nn.Module):
+class MaskHead(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
 
@@ -162,7 +162,7 @@ class RetinaNet(nn.Module):
         self.regr_head = HeadSubnet(256, num_anchors * 4)
         self.flatten = FlattenDetectionMap(num_anchors)
         self.roi_align = ROIAlign((14, 14))
-        self.mask = Mask(num_classes)
+        self.mask_head = MaskHead(num_classes)
 
         modules = itertools.chain(
             self.fpn.modules(),
@@ -188,11 +188,11 @@ class RetinaNet(nn.Module):
 
         return fpn_output, (class_output, regr_output)
 
-    def roi(self, fpn_output, dets):
+    def roi_align_mask_head(self, fpn_output, dets):
         class_ids, boxes, masks, image_ids = dets
 
         input = self.roi_align(fpn_output, boxes, image_ids)
-        input = self.mask(input)
+        input = self.mask_head(input)
 
         return input
 

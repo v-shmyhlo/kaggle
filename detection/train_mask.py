@@ -203,7 +203,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     for images, dets, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, dets, maps = images.to(DEVICE), [d.to(DEVICE) for d in dets], [m.to(DEVICE) for m in maps]
         fpn_output, logits = model(images)
-        mask_logits = model.roi(fpn_output, dets)
+        mask_logits = model.roi_align_mask_head(fpn_output, dets)
 
         loss = compute_loss(input=logits, target=maps) + compute_mask_loss(input=mask_logits, target=dets)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -243,7 +243,7 @@ def eval_epoch(model, data_loader, class_names, epoch):
         for images, dets, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, dets, maps = images.to(DEVICE), [d.to(DEVICE) for d in dets], [m.to(DEVICE) for m in maps]
             fpn_output, logits = model(images)
-            mask_logits = model.roi(fpn_output, dets)
+            mask_logits = model.roi_align_mask_head(fpn_output, dets)
 
             loss = compute_loss(input=logits, target=maps) + compute_mask_loss(input=mask_logits, target=dets)
             metrics['loss'].update(loss.data.cpu().numpy())
