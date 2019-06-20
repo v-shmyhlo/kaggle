@@ -91,8 +91,8 @@ class RandomSubset(torch.utils.data.Dataset):
         return min(self.size, len(self.dataset))
 
     def __getitem__(self, item):
-        return self.dataset[np.random.randint(len(self))]
-   
+        return self.dataset[np.random.randint(len(self.dataset))]
+
 
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
@@ -102,7 +102,7 @@ def focal_loss(input, target, gamma=2., alpha=0.25):
     norm = (target > 0).sum()
     assert norm > 0
 
-    target = utils.one_hot(target, NUM_CLASSES + 2)[:, 2:]
+    target = utils.one_hot(target + 1, NUM_CLASSES + 2)[:, 2:]
 
     prob = input.sigmoid()
     prob_true = prob * target + (1 - prob) * (1 - target)
@@ -204,7 +204,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
 
-        dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
+        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
@@ -237,7 +237,7 @@ def eval_epoch(model, data_loader, class_names, epoch):
         loss = metrics['loss'].compute_and_reset()
         score = 0  # TODO:
 
-        dets = [decode_boxes((utils.one_hot(c, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
+        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
