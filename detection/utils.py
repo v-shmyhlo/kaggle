@@ -50,6 +50,11 @@ def decode_boxes(input, anchors):
     class_ids = class_ids[fg]
     scores = scores[fg]
 
+    keep = torchvision.ops.nms(boxes_yxhw_to_tlbr(boxes), scores, 0.5)
+    boxes = boxes[keep]
+    class_ids = class_ids[keep]
+    scores = scores[keep]
+   
     return class_ids, boxes, scores
 
 

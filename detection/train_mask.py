@@ -291,6 +291,7 @@ def collate_fn(batch):
 
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
+    class_names = train_dataset.class_names
     train_dataset = RandomSubset(train_dataset, config.train_size)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -310,7 +311,6 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    class_names = eval_dataset.class_names
     model = RetinaNet(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
