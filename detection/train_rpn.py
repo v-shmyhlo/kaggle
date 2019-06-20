@@ -23,7 +23,8 @@ from config import Config
 from detection.dataset import Dataset
 from detection.model import MaskRCNN
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
-    build_anchors_maps, denormalize
+    denormalize
+from detection.anchors import build_anchors_maps
 from detection.utils import decode_boxes
 from optim import AdamW
 

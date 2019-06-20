@@ -1,4 +1,5 @@
 import os
+import numpy as np
 
 import pycocotools.coco as pycoco
 import torch
@@ -8,7 +9,10 @@ from PIL import Image
 NUM_CLASSES = 80
 
 
+# TODO: crop box to be within image
 # TODO: refactor
+# TODO: remove empty boxes
+
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, path, train, transform=None):
         if train:
@@ -43,6 +47,7 @@ class Dataset(torch.utils.data.Dataset):
 
         boxes = []
         class_ids = []
+        masks = []
         for a in annotations:
             l, t, w, h = a['bbox']
             y = t + h / 2
@@ -50,11 +55,14 @@ class Dataset(torch.utils.data.Dataset):
 
             boxes.append([y, x, h, w])
             class_ids.append(self.cat_to_id[a['category_id']])
+            mask = self.coco.annToMask(a)
+            mask = Image.fromarray(mask * 255)
+            masks.append(mask)
 
         class_ids = torch.tensor(class_ids).view(-1).long()
         boxes = torch.tensor(boxes).view(-1, 4).float()
 
-        input = image, (class_ids, boxes)
+        input = image, (class_ids, boxes, masks), None
 
         if self.transform is not None:
             input = self.transform(input)

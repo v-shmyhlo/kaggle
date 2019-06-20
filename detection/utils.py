@@ -54,7 +54,13 @@ def decode_boxes(input, anchors):
 
 
 def encode_boxes(input, anchors, min_iou, max_iou):
-    class_ids, boxes = input
+    class_ids, boxes, _ = input
+
+    if boxes.size(0) == 0:
+        class_output = torch.zeros(anchors.size(0), dtype=torch.long)
+        regr_output = torch.zeros(anchors.size(0), 4, dtype=torch.float)
+
+        return class_output, regr_output
 
     ious = boxes_iou(boxes, anchors)
     iou_values, iou_indices = ious.max(0)

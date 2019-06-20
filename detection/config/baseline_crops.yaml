@@ -2,7 +2,7 @@ seed: 42
 epochs: 100
 batch_size: 8
 image_size: 600
-train_size: 40000
+train_size: 4000
 
 opt:
   type: momentum
@@ -15,3 +15,5 @@ sched:
 
   multistep:
     steps: [100]
+
+

@@ -23,7 +23,8 @@ from config import Config
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
-    build_anchors_maps, denormalize
+    denormalize
+from detection.anchors import build_anchors_maps
 from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
 from optim import AdamW
 
@@ -188,11 +189,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     }
 
     model.train()
-    for images, labels in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, labels = images.to(DEVICE), [l.to(DEVICE) for l in labels]
+    for images, _, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, maps = images.to(DEVICE), [l.to(DEVICE) for l in maps]
         logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=maps)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr, _ = scheduler.get_lr()
@@ -204,7 +205,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
 
-        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
+        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*maps)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
@@ -227,17 +228,17 @@ def eval_epoch(model, data_loader, class_names, epoch):
 
     model.eval()
     with torch.no_grad():
-        for images, labels in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, labels = images.to(DEVICE), [l.to(DEVICE) for l in labels]
+        for images, _, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, maps = images.to(DEVICE), [l.to(DEVICE) for l in maps]
             logits = model(images)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=maps)
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
         score = 0  # TODO:
 
-        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*labels)]
+        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*maps)]
         images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
@@ -253,6 +254,28 @@ def eval_epoch(model, data_loader, class_names, epoch):
         return score
 
 
+def collate_cat_fn(batch):
+    class_ids, boxes, masks = zip(*batch)
+    image_ids = [torch.full_like(c, i) for i, c in enumerate(class_ids)]
+
+    class_ids = torch.cat(class_ids, 0)
+    boxes = torch.cat(boxes, 0)
+    masks = torch.cat(masks, 0)
+    image_ids = torch.cat(image_ids, 0)
+
+    return class_ids, boxes, masks, image_ids
+
+
+def collate_fn(batch):
+    images, dets, maps = zip(*batch)
+
+    images = torch.utils.data.dataloader.default_collate(images)
+    dets = collate_cat_fn(dets)
+    maps = torch.utils.data.dataloader.default_collate(maps)
+
+    return images, dets, maps
+
+
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
     train_dataset = RandomSubset(train_dataset, config.train_size)
@@ -262,6 +285,7 @@ def train():
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
+        collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
@@ -269,6 +293,7 @@ def train():
         eval_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
+        collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
     class_names = eval_dataset.class_names

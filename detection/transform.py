@@ -1,10 +1,9 @@
-import math
-
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
 from PIL import Image
 
+from detection.anchors import build_anchors_maps
 from detection.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr, encode_boxes
 
 
@@ -14,7 +13,7 @@ class Resize(object):
         self.interpolation = interpolation
 
     def __call__(self, input):
-        image, (class_ids, boxes) = input
+        image, (class_ids, boxes, masks), maps = input
 
         w, h = image.size
         scale = self.size / min(w, h)
@@ -22,8 +21,9 @@ class Resize(object):
 
         image = image.resize((w, h), self.interpolation)
         boxes = boxes * scale
+        masks = [m.resize((w, h), self.interpolation) for m in masks]
 
-        return image, (class_ids, boxes)
+        return image, (class_ids, boxes, masks), maps
 
 
 # TODO: test
@@ -32,7 +32,7 @@ class RandomCrop(object):
         self.size = size
 
     def __call__(self, input):
-        image, (class_ids, boxes) = input
+        image, dets, maps = input
 
         w, h = image.size
         i = np.random.randint(0, h - self.size + 1)
@@ -41,6 +41,20 @@ class RandomCrop(object):
         input = crop(input, (i, j), (self.size, self.size))
 
         return input
+
+
+class MaskCropAndResize(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, input):
+        image, (class_ids, boxes, masks), maps = input
+
+        masks = [m.crop((l.item(), t.item(), r.item(), b.item()))
+                 for (t, l, b, r), m in zip(boxes_yxhw_to_tlbr(boxes), masks)]
+        masks = [m.resize((self.size, self.size)) for m in masks]
+
+        return image, (class_ids, boxes, masks), maps
 
 
 class RandomFlipLeftRight(object):
@@ -53,10 +67,15 @@ class RandomFlipLeftRight(object):
 
 class ToTensor(object):
     def __call__(self, input):
-        image, (class_ids, boxes) = input
+        image, (class_ids, boxes, masks), maps = input
         image = F.to_tensor(image)
 
-        return image, (class_ids, boxes)
+        if len(masks) == 0:
+            masks = torch.zeros(0)
+        else:
+            masks = torch.stack([F.to_tensor(m) for m in masks], 0)
+
+        return image, (class_ids, boxes, masks), maps
 
 
 class Normalize(object):
@@ -65,10 +84,10 @@ class Normalize(object):
         self.std = std
 
     def __call__(self, input):
-        image, (class_ids, boxes) = input
+        image, dets, maps = input
         image = F.normalize(image, mean=self.mean, std=self.std)
 
-        return image, (class_ids, boxes)
+        return image, dets, maps
 
 
 class BuildLabels(object):
@@ -80,64 +99,25 @@ class BuildLabels(object):
         self.max_iou = max_iou
 
     def __call__(self, input):
-        image, (class_ids, boxes) = input
+        image, dets, maps = input
 
         _, h, w = image.size()
         anchor_maps = build_anchors_maps((h, w), self.anchors, p2=self.p2, p7=self.p7)
-        class_output, regr_output = encode_boxes(
-            (class_ids, boxes), anchor_maps, min_iou=self.min_iou, max_iou=self.max_iou)
+        maps = encode_boxes(dets, anchor_maps, min_iou=self.min_iou, max_iou=self.max_iou)
 
-        return image, (class_output, regr_output)
-
-
-def build_anchors_maps(image_size, anchor_levels, p2, p7):
-    h, w = image_size
-    includes = [p2, True, True, True, True, p7]
-    assert len(anchor_levels) == len(includes)
-
-    for _ in range(2):
-        h, w = math.ceil(h / 2), math.ceil(w / 2)
-
-    anchor_maps = []
-    for anchors, include in zip(anchor_levels, includes):
-        if include:
-            for anchor in anchors:
-                anchor_map = build_anchor_map(image_size, (h, w), anchor)
-                anchor_maps.append(anchor_map)
-        else:
-            assert anchors is None
-
-        h, w = math.ceil(h / 2), math.ceil(w / 2)
-
-    anchor_maps = torch.cat(anchor_maps, 1).t()
-
-    return anchor_maps
-
-
-def build_anchor_map(image_size, map_size, anchor):
-    cell_size = (image_size[0] / map_size[0], image_size[1] / map_size[1])
-
-    y = torch.linspace(cell_size[0] / 2, image_size[0] - cell_size[0] / 2, map_size[0])
-    x = torch.linspace(cell_size[1] / 2, image_size[1] - cell_size[1] / 2, map_size[1])
-
-    y, x = torch.meshgrid(y, x)
-    h = torch.ones(map_size) * anchor[0]
-    w = torch.ones(map_size) * anchor[1]
-    anchor_map = torch.stack([y, x, h, w])
-    anchor_map = anchor_map.view(anchor_map.size(0), anchor_map.size(1) * anchor_map.size(2))
-
-    return anchor_map
+        return image, dets, maps
 
 
 # TODO: test
 def flip_left_right(input):
-    image, (class_ids, boxes) = input
+    image, (class_ids, boxes, masks), maps = input
 
     image = image.transpose(Image.FLIP_LEFT_RIGHT)
     w, _ = image.size
     boxes[:, 1] = w - boxes[:, 1]
+    masks = [m.transpose(Image.FLIP_LEFT_RIGHT) for m in masks]
 
-    return image, (class_ids, boxes)
+    return image, (class_ids, boxes, masks), maps
 
 
 def denormalize(tensor, mean, std, inplace=False):
@@ -152,7 +132,7 @@ def denormalize(tensor, mean, std, inplace=False):
 
 
 def crop(input, ij, hw):
-    image, (class_ids, boxes) = input
+    image, (class_ids, boxes, masks), maps = input
 
     i, j = ij
     h, w = hw
@@ -165,11 +145,11 @@ def crop(input, ij, hw):
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, h)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, w)
     boxes = boxes_tlbr_to_yxhw(boxes)
-    boxes[:, 2:].clamp_(min=1.)  # FIXME:
+    masks = [m.crop((j, i, j + w, i + h)) for m in masks]
 
-    # TODO: fix keep
-    # keep = (boxes[:, 2] * boxes[:, 3]) > 1
-    # class_ids = class_ids[keep]
-    # boxes = boxes[keep]
-
-    return image, (class_ids, boxes)
+    keep = (boxes[:, 2] * boxes[:, 3]) >= 16**2
+    class_ids = class_ids[keep]
+    boxes = boxes[keep]
+    masks = [m for m, k in zip(masks, keep) if k]
+   
+    return image, (class_ids, boxes, masks), maps
