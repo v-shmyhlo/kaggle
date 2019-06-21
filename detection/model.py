@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+
 from detection.utils import boxes_yxhw_to_tlbr
 
 STRIDES = [2**l for l in range(8)]
@@ -161,8 +162,6 @@ class RetinaNet(nn.Module):
         self.class_head = HeadSubnet(256, num_anchors * num_classes)
         self.regr_head = HeadSubnet(256, num_anchors * 4)
         self.flatten = FlattenDetectionMap(num_anchors)
-        self.roi_align = ROIAlign((14, 14))
-        self.mask_head = MaskHead(num_classes)
 
         modules = itertools.chain(
             self.fpn.modules(),
@@ -186,15 +185,17 @@ class RetinaNet(nn.Module):
         class_output = torch.cat([self.flatten(self.class_head(x)) for x in fpn_output if x is not None], 1)
         regr_output = torch.cat([self.flatten(self.regr_head(x)) for x in fpn_output if x is not None], 1)
 
-        return fpn_output, (class_output, regr_output)
+        return class_output, regr_output
 
-    def roi_align_mask_head(self, fpn_output, dets):
-        class_ids, boxes, masks, image_ids = dets
+    def train(self, mode=True):
+        super().train(mode=mode)
 
-        input = self.roi_align(fpn_output, boxes, image_ids)
-        input = self.mask_head(input)
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
 
-        return input
+                for p in m.parameters():
+                    p.requires_grad = False
 
 
 class RPN(nn.Module):

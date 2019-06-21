@@ -20,11 +20,11 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from config import Config
+from detection.anchors import build_anchors_maps
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     MaskCropAndResize, denormalize
-from detection.anchors import build_anchors_maps
 from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
 from optim import AdamW
 
@@ -303,7 +303,6 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
-    eval_dataset = RandomSubset(eval_dataset, 80)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,

@@ -20,11 +20,11 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from config import Config
+from detection.anchors import build_anchors_maps
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     denormalize
-from detection.anchors import build_anchors_maps
 from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
 from optim import AdamW
 
@@ -190,7 +190,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
 
     model.train()
     for images, _, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, maps = images.to(DEVICE), [l.to(DEVICE) for l in maps]
+        images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
         logits = model(images)
 
         loss = compute_loss(input=logits, target=maps)
@@ -229,7 +229,7 @@ def eval_epoch(model, data_loader, class_names, epoch):
     model.eval()
     with torch.no_grad():
         for images, _, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, maps = images.to(DEVICE), [l.to(DEVICE) for l in maps]
+            images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
             logits = model(images)
 
             loss = compute_loss(input=logits, target=maps)
@@ -278,6 +278,7 @@ def collate_fn(batch):
 
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
+    class_names = train_dataset.class_names
     train_dataset = RandomSubset(train_dataset, config.train_size)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -296,7 +297,6 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    class_names = eval_dataset.class_names
     model = RetinaNet(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
