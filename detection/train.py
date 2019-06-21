@@ -30,7 +30,8 @@ from optim import AdamW
 
 # TODO: visualization scores sigmoid
 
-COLORS = np.random.uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
+
+COLORS = np.random.RandomState(42).uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 MIN_IOU = 0.4
