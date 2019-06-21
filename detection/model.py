@@ -13,13 +13,17 @@ STRIDES = [2**l for l in range(8)]
 
 # TODO: init
 
+
 class ReLU(nn.ReLU):
     pass
 
 
-class Norm(nn.GroupNorm):
-    def __init__(self, num_features):
-        super().__init__(num_channels=num_features, num_groups=32)
+# class Norm(nn.GroupNorm):
+#     def __init__(self, num_features):
+#         super().__init__(num_channels=num_features, num_groups=32)
+
+class Norm(nn.BatchNorm2d):
+    pass
 
 
 class ConvNorm(nn.Sequential):
@@ -187,16 +191,6 @@ class RetinaNet(nn.Module):
 
         return class_output, regr_output
 
-    def train(self, mode=True):
-        super().train(mode=mode)
-
-        for m in self.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.eval()
-
-                for p in m.parameters():
-                    p.requires_grad = False
-
 
 class RPN(nn.Module):
     def __init__(self, num_anchors):
@@ -285,7 +279,7 @@ class ROIHead(nn.Module):
 
         self.conv = nn.Sequential(
             nn.Conv2d(256, 512, size),
-            nn.BatchNorm2d(512),
+            Norm(512),
             ReLU(inplace=True))
 
         self.class_head = nn.Conv2d(512, num_classes, 1)
