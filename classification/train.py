@@ -76,15 +76,16 @@ def compute_metric(input, target):
     return metric
 
 
-def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
-    if optimizer == 'momentum':
-        return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
-    elif optimizer == 'rmsprop':
-        return torch.optim.RMSProp(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
-    elif optimizer == 'adam':
-        return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
+def build_optimizer(optimizer, parameters):
+    if optimizer.type == 'rmsprop':
+        return torch.optim.RMSProp(
+            parameters,
+            optimizer.lr,
+            alpha=0.99,
+            weight_decay=optimizer.weight_decay,
+            momentum=optimizer.rmsprop.momentum)
     else:
-        raise AssertionError('invalid OPT {}'.format(optimizer))
+        raise AssertionError('invalid OPT {}'.format(optimizer.type))
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, epoch):
@@ -179,8 +180,7 @@ def train():
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))
 
-    optimizer = build_optimizer(
-        config.opt.type, model.parameters(), config.opt.lr, config.opt.beta, weight_decay=config.opt.weight_decay)
+    optimizer = build_optimizer(config.opt, model.parameters())
 
     if config.sched.type == 'step':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
