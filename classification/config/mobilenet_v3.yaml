@@ -1,6 +1,6 @@
 seed: 42
 epochs: 10
-batch_size: 32
+batch_size: 170
 # dropout: 0.8
 
 opt:
@@ -12,9 +12,9 @@ opt:
     momentum: 0.9
 
 sched:
-  sched: step
+  type: step
 
   step:
-    decay: 0.01
+    decay: 0.99
     step_size: 3
 

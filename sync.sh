@@ -9,4 +9,5 @@ rsync -avhHPx ./imet/ ${HOST}:code/kaggle/imet/
 rsync -avhHPx ./frees/ ${HOST}:code/kaggle/frees/
 rsync -avhHPx ./mol/ ${HOST}:code/kaggle/mol/
 rsync -avhHPx ./detection/ ${HOST}:code/kaggle/detection/
+rsync -avhHPx ./classification/ ${HOST}:code/kaggle/classification/
 rsync -avhHPx ./test/ ${HOST}:code/kaggle/test/

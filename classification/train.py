@@ -58,11 +58,7 @@ def worker_init_fn(_):
 
 
 def compute_loss(input, target):
-    print('loss')
-    print(input.shape, target.shape)
     loss = F.cross_entropy(input=input, target=target, reduction='none')
-    print(loss)
-    fail
 
     return loss
 
@@ -78,7 +74,7 @@ def compute_metric(input, target):
 
 def build_optimizer(optimizer, parameters):
     if optimizer.type == 'rmsprop':
-        return torch.optim.RMSProp(
+        return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
             alpha=0.99,
@@ -184,7 +180,10 @@ def train():
 
     if config.sched.type == 'step':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
-            torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.sched.step_size, gamma=config.sched.step.decay))
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
