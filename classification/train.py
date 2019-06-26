@@ -96,7 +96,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
 
     model.train()
     for images, labels in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, labels = images.to(DEVICE), [m.to(DEVICE) for m in labels]
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels)
@@ -109,11 +109,13 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         scheduler.step()
 
     with torch.no_grad():
-        loss = metrics['loss'].compute_and_reset()
+        metrics = {k: metrics[k].compute_and_reset() for k in metrics}
 
-        print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
+        print('[EPOCH {}][TRAIN] {}'.format(
+            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        for k in metrics:
+            writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('loss', loss, global_step=epoch)
-        writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
@@ -123,12 +125,14 @@ def eval_epoch(model, data_loader, epoch):
 
     metrics = {
         'loss': utils.Mean(),
+        'accuracy@1': utils.Mean(),
+        'accuracy@5': utils.Mean()
     }
 
     model.eval()
     with torch.no_grad():
         for images, labels in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, labels = images.to(DEVICE), [m.to(DEVICE) for m in labels]
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
             logits = model(images)
 
             loss = compute_loss(input=logits, target=labels)
@@ -138,16 +142,16 @@ def eval_epoch(model, data_loader, epoch):
             for k in metric:
                 metrics[k].update(metric[k].data.cpu().numpy())
 
-        loss = metrics['loss'].compute_and_reset()
-        metric = metrics['metric'].compute_and_reset()
+        metrics = {k: metrics[k].compute_and_reset() for k in metrics}
 
-        print('[EPOCH {}][EVAL] loss: {:.4f}, metric: {:.4f}'.format(epoch, loss, metric))
-        writer.add_scalar('loss', loss, global_step=epoch)
-        writer.add_scalar('metric', metric, global_step=epoch)
+        print('[EPOCH {}][EVAL] {}'.format(
+            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        for k in metrics:
+            writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
-        return metric
+        return metrics
 
 
 def train():
@@ -199,7 +203,7 @@ def train():
         gc.collect()
 
         scheduler.step_epoch()
-        scheduler.step_score(metric)
+        scheduler.step_score(metric['accuracy@1'])
 
         torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model.pth'))
 
