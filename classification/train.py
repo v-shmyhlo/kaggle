@@ -1,5 +1,6 @@
 import argparse
 import gc
+import math
 import os
 import shutil
 
@@ -56,21 +57,35 @@ def worker_init_fn(_):
 
 
 def compute_loss(input, target):
+    print('loss')
     print(input.shape, target.shape)
-    loss = F.cross_entropy(input=input, target=target)
+    loss = F.cross_entropy(input=input, target=target, reduction='none')
     print(loss)
     fail
 
     return loss
 
 
-def compute_metric(input, target):
+def accuracy(input, target, topk=1):
+    print('accuracy')
     print(input.shape, target.shape)
-    accuracy = input.argmax() == target
-    print(accuracy)
+    input = input.topk(topk, 1)
+    target = target.unsqueeze(1)
+    print(input.shape, target.shape)
+    accuracy = (input == target.unsqueeze(1)).sum(1)
+    print(accuracy.shape)
     fail
 
     return accuracy
+
+
+def compute_metric(input, target):
+    metric = {
+        'accuracy@1': accuracy(input=input, target=target, topk=1),
+        'accuracy@5': accuracy(input=input, target=target, topk=5)
+    }
+
+    return metric
 
 
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
@@ -111,7 +126,8 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
-        writer.add_image('images', torchvision.utils.make_grid(images, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image('images', torchvision.utils.make_grid(
+            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, epoch):
@@ -131,7 +147,8 @@ def eval_epoch(model, data_loader, epoch):
             metrics['loss'].update(loss.data.cpu().numpy())
 
             metric = compute_metric(input=logits, target=labels)
-            metrics['metric'].update(metric.data.cpu().numpy())
+            for k in metric:
+                metrics[k].update(metric[k].data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
         metric = metrics['metric'].compute_and_reset()
@@ -139,7 +156,8 @@ def eval_epoch(model, data_loader, epoch):
         print('[EPOCH {}][EVAL] loss: {:.4f}, metric: {:.4f}'.format(epoch, loss, metric))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('metric', metric, global_step=epoch)
-        writer.add_image('images', torchvision.utils.make_grid(images, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image('images', torchvision.utils.make_grid(
+            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
         return metric
 
@@ -172,7 +190,7 @@ def train():
     optimizer = build_optimizer(
         config.opt.type, model.parameters(), config.opt.lr, config.opt.beta, weight_decay=config.opt.weight_decay)
 
-    if config.sched.type == 'multistep':
+    if config.sched.type == 'step':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
             torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.sched.step_size, gamma=config.sched.step.decay))
     else:
