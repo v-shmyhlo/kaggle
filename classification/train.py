@@ -112,9 +112,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
-        writer.add_scalar('loss', loss, global_step=epoch)
+        # writer.add_scalar('loss', loss, global_step=epoch) #FIXME: lr
         writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+            images, nrow=math.ceil(math.sqrt(images[:32].size(0))), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, epoch):
@@ -146,7 +146,7 @@ def eval_epoch(model, data_loader, epoch):
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+            images, nrow=math.ceil(math.sqrt(images[:32].size(0))), normalize=True), global_step=epoch)
 
         return metrics
 

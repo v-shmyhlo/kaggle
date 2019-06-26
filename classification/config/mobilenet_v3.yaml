@@ -5,7 +5,7 @@ batch_size: 170
 
 opt:
   type: rmsprop
-  lr: 0.1
+  lr: 0.004150390625
   weight_decay: 1e-5
 
   rmsprop:
