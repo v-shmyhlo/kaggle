@@ -19,6 +19,7 @@ import lr_scheduler_wrapper
 import utils
 from classification.mobilenet_v3 import MobileNetV3
 from config import Config
+from metric import accuracy
 
 NUM_CLASSES = 1000
 MEAN = [0.485, 0.456, 0.406]
@@ -64,19 +65,6 @@ def compute_loss(input, target):
     fail
 
     return loss
-
-
-def accuracy(input, target, topk=1):
-    print('accuracy')
-    print(input.shape, target.shape)
-    input = input.topk(topk, 1)
-    target = target.unsqueeze(1)
-    print(input.shape, target.shape)
-    accuracy = (input == target.unsqueeze(1)).sum(1)
-    print(accuracy.shape)
-    fail
-
-    return accuracy
 
 
 def compute_metric(input, target):
