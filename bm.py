@@ -1,8 +1,9 @@
-import numpy as np
-from tqdm import tqdm
 import os
 from multiprocessing import Pool
+
+import numpy as np
 from pysndfx import AudioEffectsChain
+from tqdm import tqdm
 
 
 def worker(_):
@@ -17,7 +18,7 @@ def worker(_):
 
 
 with Pool(os.cpu_count()) as pool:
-    tasks = tqdm(pool.imap(worker, range(1000)))
+    tasks = tqdm(pool.imap(worker, range(100000)))
 
     for _ in tasks:
         pass

@@ -1,5 +1,4 @@
 import os
-import numpy as np
 
 import pycocotools.coco as pycoco
 import torch
@@ -12,6 +11,7 @@ NUM_CLASSES = 80
 # TODO: crop box to be within image
 # TODO: refactor
 # TODO: remove empty boxes
+
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, path, train, transform=None):

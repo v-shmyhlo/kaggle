@@ -147,9 +147,10 @@ def crop(input, ij, hw):
     boxes = boxes_tlbr_to_yxhw(boxes)
     masks = [m.crop((j, i, j + w, i + h)) for m in masks]
 
-    keep = (boxes[:, 2] * boxes[:, 3]) >= 16**2
+    # TODO: min size
+    keep = (boxes[:, 2] * boxes[:, 3]) >= 8**2
     class_ids = class_ids[keep]
     boxes = boxes[keep]
     masks = [m for m, k in zip(masks, keep) if k]
-   
+
     return image, (class_ids, boxes, masks), maps

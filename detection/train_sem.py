@@ -22,7 +22,7 @@ import utils
 from config import Config
 from detection.anchors import build_anchors_maps
 from detection.dataset import Dataset, NUM_CLASSES
-from detection.model import RetinaNet
+from detection.model import RetinaMaskNet
 from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
     denormalize
 from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
@@ -67,20 +67,47 @@ config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS, p2=False, p7=True).to(DEVICE)
 
+
+class MaskResize(object):
+    def __call__(self, input):
+        image, dets, maps = input
+
+        class_ids, boxes, masks = dets
+        masks = [m.resize((m.size[0], m.size[1])) for m in masks]
+
+        return image, (class_ids, boxes, masks), maps
+
+
+class SemanticMask(object):
+    def __call__(self, input):
+        image, dets, maps = input
+
+        class_ids, _, masks = dets
+        dets = torch.zeros(1, image.size(1), image.size(2), dtype=torch.long)
+        for c, m in zip(class_ids, masks):
+            dets[m == 1.] = c + 1
+
+        return image, dets, maps
+
+
 train_transform = T.Compose([
     Resize(config.image_size),
     RandomCrop(config.image_size),
     RandomFlipLeftRight(),
+    # MaskResize(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
     BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    SemanticMask(),
 ])
 eval_transform = T.Compose([
     Resize(config.image_size),
     RandomCrop(config.image_size),
+    # MaskResize(),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
     BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    SemanticMask(),
 ])
 
 
@@ -146,6 +173,33 @@ def compute_loss(input, target):
     return loss
 
 
+def dice_loss(target, input, axis=None, smooth=0., eps=1e-7):
+    input = torch.softmax(input, 1)
+
+    intersection = (target * input).sum(axis)
+    union = target.sum(axis) + input.sum(axis)
+
+    coef = (2 * intersection + smooth) / (union + smooth + eps)
+    loss = 1 - coef
+
+    return loss
+
+
+def compute_mask_loss(input, target):
+    input = input.log_softmax(1)
+
+    target = target.squeeze(1)
+    target = utils.one_hot(target, input.size(1)).permute(0, 3, 1, 2)
+
+    ce = (input * target).sum(1)
+    loss = -ce.mean()
+
+    # loss = dice_loss(input, target, axis=(2, 3))
+    # loss = loss.mean()
+
+    return loss
+
+
 def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
     if optimizer == 'adam':
         return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
@@ -182,6 +236,14 @@ def draw_boxes(image, detections, class_names, colors=COLORS):
     return image
 
 
+def draw_masks(input):
+    colors = torch.cat([torch.zeros(1, 3), torch.tensor(COLORS / 255).float()], 0).to(input.device)
+    input = colors[input]
+    input = input.permute(0, 3, 1, 2)
+
+    return input
+
+
 def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     writer = SummaryWriter(os.path.join(args.experiment_path, 'train'))
 
@@ -190,11 +252,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     }
 
     model.train()
-    for images, _, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
-        logits = model(images)
+    for images, mask_labels, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, mask_labels, maps = images.to(DEVICE), mask_labels.to(DEVICE), [m.to(DEVICE) for m in maps]
+        logits, mask_logits = model(images)
 
-        loss = compute_loss(input=logits, target=maps)
+        loss = compute_loss(input=logits, target=maps) + compute_mask_loss(input=mask_logits, target=mask_labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr, _ = scheduler.get_lr()
@@ -211,6 +273,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
 
+        masks_true = draw_masks(mask_labels.squeeze(1))
+        masks_pred = draw_masks(mask_logits.argmax(1))
+
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
@@ -218,6 +283,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
             'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
         writer.add_image(
             'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'masks_true', torchvision.utils.make_grid(masks_true, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'masks_pred', torchvision.utils.make_grid(masks_pred, nrow=4, normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, class_names, epoch):
@@ -229,11 +298,11 @@ def eval_epoch(model, data_loader, class_names, epoch):
 
     model.eval()
     with torch.no_grad():
-        for images, _, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
-            logits = model(images)
+        for images, mask_labels, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, mask_labels, maps = images.to(DEVICE), mask_labels.to(DEVICE), [m.to(DEVICE) for m in maps]
+            logits, mask_logits = model(images)
 
-            loss = compute_loss(input=logits, target=maps)
+            loss = compute_loss(input=logits, target=maps) + compute_mask_loss(input=mask_logits, target=mask_labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
@@ -244,6 +313,9 @@ def eval_epoch(model, data_loader, class_names, epoch):
         dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
         images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
 
+        masks_true = draw_masks(mask_labels.squeeze(1))
+        masks_pred = draw_masks(mask_logits.argmax(1))
+
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
         writer.add_scalar('score', score, global_step=epoch)
@@ -251,6 +323,10 @@ def eval_epoch(model, data_loader, class_names, epoch):
             'images_true', torchvision.utils.make_grid(images_true, nrow=4, normalize=True), global_step=epoch)
         writer.add_image(
             'images_pred', torchvision.utils.make_grid(images_pred, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'masks_true', torchvision.utils.make_grid(masks_true, nrow=4, normalize=True), global_step=epoch)
+        writer.add_image(
+            'masks_pred', torchvision.utils.make_grid(masks_pred, nrow=4, normalize=True), global_step=epoch)
 
         return score
 
@@ -271,7 +347,8 @@ def collate_fn(batch):
     images, dets, maps = zip(*batch)
 
     images = torch.utils.data.dataloader.default_collate(images)
-    dets = collate_cat_fn(dets)
+    # dets = collate_cat_fn(dets)
+    dets = torch.utils.data.dataloader.default_collate(dets)
     maps = torch.utils.data.dataloader.default_collate(maps)
 
     return images, dets, maps
@@ -291,6 +368,7 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
+    eval_dataset = RandomSubset(eval_dataset, 80)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
@@ -299,7 +377,7 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    model = RetinaNet(NUM_CLASSES, len(anchor_types))
+    model = RetinaMaskNet(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))

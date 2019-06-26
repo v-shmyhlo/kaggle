@@ -11,19 +11,13 @@ from detection.utils import boxes_yxhw_to_tlbr
 STRIDES = [2**l for l in range(8)]
 
 
-# TODO: init
-
-
 class ReLU(nn.ReLU):
     pass
 
 
-# class Norm(nn.GroupNorm):
-#     def __init__(self, num_features):
-#         super().__init__(num_channels=num_features, num_groups=32)
-
-class Norm(nn.BatchNorm2d):
-    pass
+class Norm(nn.GroupNorm):
+    def __init__(self, num_features):
+        super().__init__(num_channels=num_features, num_groups=32)
 
 
 class ConvNorm(nn.Sequential):
@@ -167,6 +161,11 @@ class RetinaNet(nn.Module):
         self.regr_head = HeadSubnet(256, num_anchors * 4)
         self.flatten = FlattenDetectionMap(num_anchors)
 
+        for m in self.backbone.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                for p in m.parameters():
+                    p.requires_grad = False
+
         modules = itertools.chain(
             self.fpn.modules(),
             self.class_head.modules(),
@@ -190,6 +189,66 @@ class RetinaNet(nn.Module):
         regr_output = torch.cat([self.flatten(self.regr_head(x)) for x in fpn_output if x is not None], 1)
 
         return class_output, regr_output
+
+    def train(self, mode=True):
+        super().train(mode)
+
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
+
+class RetinaMaskNet(nn.Module):
+    def __init__(self, num_classes, num_anchors):
+        super().__init__()
+
+        self.backbone = Backbone()
+        self.fpn = FPN(p2=True, p7=True)
+        self.class_head = HeadSubnet(256, num_anchors * num_classes)
+        self.regr_head = HeadSubnet(256, num_anchors * 4)
+        self.flatten = FlattenDetectionMap(num_anchors)
+        self.mask_output = nn.Conv2d(256, num_classes + 1, 1)
+
+        for m in self.backbone.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                for p in m.parameters():
+                    p.requires_grad = False
+
+        modules = itertools.chain(
+            self.fpn.modules(),
+            self.class_head.modules(),
+            self.regr_head.modules())
+        for m in modules:
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, mean=0., std=0.01)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        pi = 0.01
+        nn.init.constant_(self.class_head[-1].bias, -math.log((1 - pi) / pi))
+
+    def forward(self, input):
+        backbone_output = self.backbone(input)
+        fpn_output = self.fpn(backbone_output)
+
+        mask_output = fpn_output[2]
+        mask_output = self.mask_output(mask_output)
+        mask_output = F.interpolate(mask_output, scale_factor=4, mode='bilinear')
+        fpn_output = fpn_output[3:]
+
+        class_output = torch.cat([self.flatten(self.class_head(x)) for x in fpn_output if x is not None], 1)
+        regr_output = torch.cat([self.flatten(self.regr_head(x)) for x in fpn_output if x is not None], 1)
+
+        return (class_output, regr_output), mask_output
+
+    def train(self, mode=True):
+        super().train(mode)
+
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
 
 
 class RPN(nn.Module):
