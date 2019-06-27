@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 
 
@@ -130,9 +129,3 @@ class MobileNetV3(nn.Module):
         input = input.view(input.size(0), input.size(1))
 
         return input
-
-
-m = MobileNetV3(3, 1000)
-input = torch.zeros((1, 3, 224, 224))
-input = m(input)
-print(input.shape)

@@ -5,26 +5,29 @@ import os
 import shutil
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.datasets
 import torchvision.transforms as T
+from PIL import Image
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from classification.mobilenet_v3 import MobileNetV3
 from config import Config
+from loss import dice_loss
 from metric import accuracy
+from segmentation.transforms import Resize, RandomCrop, CenterCrop, ToTensor, Normalize
+from segmentation.unet import UNet
 
 # TODO: dropout
 
-NUM_CLASSES = 1000
+NUM_CLASSES = 150
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -40,20 +43,49 @@ config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 train_transform = T.Compose([
-    T.RandomResizedCrop(224),
-    T.RandomHorizontalFlip(),
-    T.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4),
-
-    T.ToTensor(),
-    T.Normalize(mean=MEAN, std=STD),
+    Resize(512),
+    RandomCrop(512),
+    ToTensor(),
+    Normalize(mean=MEAN, std=STD),
 ])
 eval_transform = T.Compose([
-    T.Resize(256),
-    T.CenterCrop(224),
-
-    T.ToTensor(),
-    T.Normalize(mean=MEAN, std=STD),
+    Resize(512),
+    CenterCrop(512),
+    ToTensor(),
+    Normalize(mean=MEAN, std=STD),
 ])
+
+
+class ADE20K(torch.utils.data.Dataset):
+    def __init__(self, path, train, transform):
+        subset = 'training' if train else 'validation'
+        self.transform = transform
+
+        images = [
+            os.path.join(path, 'images', subset, p)
+            for p in os.listdir(os.path.join(path, 'images', subset))]
+        masks = [
+            os.path.join(path, 'annotations', subset, p)
+            for p in os.listdir(os.path.join(path, 'annotations', subset))]
+
+        self.data = pd.DataFrame({
+            'image_path': sorted(images),
+            'mask_path': sorted(masks)
+        })
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, item):
+        row = self.data.iloc[item]
+
+        image = Image.open(row['image_path'])
+        mask = Image.open(row['mask_path'])
+
+        if self.transform is not None:
+            image, mask = self.transform((image, mask))
+
+        return image, mask
 
 
 def worker_init_fn(_):
@@ -61,7 +93,11 @@ def worker_init_fn(_):
 
 
 def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+    # input =
+
+    print(input.shape, target.shape)
+    # loss = F.cross_entropy(input=input, target=target, reduction='none')
+    loss = dice_loss(input=input, target=target, axis=(2, 3))
 
     return loss
 
@@ -114,8 +150,13 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         optimizer.step()
         scheduler.step()
 
+        break
+
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
+
+        masks_true = draw_masks(labels)
+        masks_pred = draw_masks(logits.argmax(1))
 
         print('[EPOCH {}][TRAIN] {}'.format(
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
@@ -123,7 +164,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
-            images[:32], nrow=math.ceil(math.sqrt(images[:32].size(0))), normalize=True), global_step=epoch)
+            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+        writer.add_image('masks_true', torchvision.utils.make_grid(
+            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=True), global_step=epoch)
+        writer.add_image('masks_pred', torchvision.utils.make_grid(
+            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, epoch):
@@ -155,14 +200,17 @@ def eval_epoch(model, data_loader, epoch):
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
-            images[:32], nrow=math.ceil(math.sqrt(images[:32].size(0))), normalize=True), global_step=epoch)
+            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+        writer.add_image('masks_true', torchvision.utils.make_grid(
+            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=True), global_step=epoch)
+        writer.add_image('masks_pred', torchvision.utils.make_grid(
+            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=True), global_step=epoch)
 
         return metrics
 
 
 def train():
-    train_dataset = torchvision.datasets.ImageNet(
-        args.dataset_path, split='train', transform=train_transform)
+    train_dataset = ADE20K(args.dataset_path, train=True, transform=train_transform)
     train_dataset = torch.utils.data.Subset(
         train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 4])
     train_data_loader = torch.utils.data.DataLoader(
@@ -173,15 +221,14 @@ def train():
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    eval_dataset = torchvision.datasets.ImageNet(
-        args.dataset_path, split='val', transform=eval_transform)
+    eval_dataset = ADE20K(args.dataset_path, train=False, transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size * 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = MobileNetV3(3, NUM_CLASSES)
+    model = UNet(NUM_CLASSES)
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))

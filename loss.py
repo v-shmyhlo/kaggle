@@ -1,6 +1,7 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
 from lovasz_losses import lovasz_hinge
 
 
@@ -87,5 +88,19 @@ def lsep_loss(input, target):
 def lovasz_loss(input, target):
     loss = lovasz_hinge(logits=input, labels=target)
     loss = loss.mean()
+
+    return loss
+
+
+def dice_loss(input, target, axis=None, eps=1e-7):
+    input = torch.sigmoid(input)
+
+    intersection = (input * target).sum(axis)
+    union = input.sum(axis) + target.sum(axis)
+
+    dice = (2. * intersection) / (union + eps)
+    loss = 1 - dice
+    print(loss.shape)
+    fail
 
     return loss
