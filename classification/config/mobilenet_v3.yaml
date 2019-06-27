@@ -1,12 +1,15 @@
 seed: 42
-epochs: 10
+epochs: 1000
 batch_size: 170
 # dropout: 0.8
 
 opt:
-  type: rmsprop
-  lr: 0.004150390625
+  type: sgd
+  lr: 0.1
   weight_decay: 1e-5
+
+  sgd:
+    momentum: 0.9
 
   rmsprop:
     momentum: 0.9
@@ -16,5 +19,5 @@ sched:
 
   step:
     decay: 0.99
-    step_size: 3
+    step_size: 100
 

@@ -21,6 +21,8 @@ from classification.mobilenet_v3 import MobileNetV3
 from config import Config
 from metric import accuracy
 
+# TODO: dropout
+
 NUM_CLASSES = 1000
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
@@ -73,13 +75,20 @@ def compute_metric(input, target):
 
 
 def build_optimizer(optimizer, parameters):
-    if optimizer.type == 'rmsprop':
+    if optimizer.type == 'sgd':
+        return torch.optim.SGD(
+            parameters,
+            optimizer.lr,
+            momentum=optimizer.sgd.momentum,
+            weight_decay=optimizer.weight_decay,
+            nesterov=True)
+    elif optimizer.type == 'rmsprop':
         return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
             alpha=0.99,
-            weight_decay=optimizer.weight_decay,
-            momentum=optimizer.rmsprop.momentum)
+            momentum=optimizer.rmsprop.momentum,
+            weight_decay=optimizer.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer.type))
 
@@ -152,9 +161,8 @@ def eval_epoch(model, data_loader, epoch):
 
 
 def train():
-    # FIXME:
     train_dataset = torchvision.datasets.ImageNet(
-        args.dataset_path, split='val', download=True, transform=train_transform)
+        args.dataset_path, split='train', transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -164,10 +172,10 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = torchvision.datasets.ImageNet(
-        args.dataset_path, split='val', download=True, transform=eval_transform)
+        args.dataset_path, split='val', transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size,
+        batch_size=config.batch_size * 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
