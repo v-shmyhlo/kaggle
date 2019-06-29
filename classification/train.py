@@ -164,7 +164,7 @@ def train():
     train_dataset = torchvision.datasets.ImageNet(
         args.dataset_path, split='train', transform=train_transform)
     train_dataset = torch.utils.data.Subset(
-        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 4])
+        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 8])
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -175,6 +175,8 @@ def train():
 
     eval_dataset = torchvision.datasets.ImageNet(
         args.dataset_path, split='val', transform=eval_transform)
+    eval_dataset = torch.utils.data.Subset(
+        eval_dataset, np.random.permutation(len(eval_dataset))[:len(eval_dataset) // 8])
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size * 2,

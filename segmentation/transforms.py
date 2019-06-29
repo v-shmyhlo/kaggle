@@ -2,6 +2,8 @@ import numbers
 import random
 from collections.abc import Iterable
 
+import numpy as np
+import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
 from PIL import Image
@@ -13,7 +15,8 @@ class ToTensor(object):
         assert image.size == mask.size
 
         image = F.to_tensor(image)
-        mask = F.to_tensor(mask).long()
+        mask = torch.from_numpy(np.array(mask, dtype=np.int64, copy=False))
+        mask = mask.unsqueeze(0)
 
         return image, mask
 
@@ -49,7 +52,7 @@ class Resize(object):
         assert image.size == mask.size
 
         image = F.resize(image, self.size, self.interpolation)
-        mask = F.resize(mask, self.size)
+        mask = F.resize(mask, self.size, Image.NEAREST)
 
         return image, mask
 

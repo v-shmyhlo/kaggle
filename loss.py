@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from lovasz_losses import lovasz_hinge
@@ -9,23 +8,18 @@ from lovasz_losses import lovasz_hinge
 # TODO: reduce same way everything
 
 
-class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.):
-        super().__init__()
-        self.gamma = gamma
+def focal_loss(input, target, gamma=2.):
+    target = target.float()
+    max_val = (-input).clamp(min=0)
+    loss = input - input * target + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
 
-    def forward(self, input, target):
-        target = target.float()
-        max_val = (-input).clamp(min=0)
-        loss = input - input * target + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
+    invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
+    loss = (invprobs * gamma).exp() * loss
 
-        invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
-        loss = (invprobs * self.gamma).exp() * loss
+    loss = loss.sum(-1)
+    loss = loss.mean()
 
-        loss = loss.sum(-1)
-        loss = loss.mean()
-
-        return loss
+    return loss
 
 
 def f2_loss(input, target, eps=1e-7):
@@ -93,14 +87,30 @@ def lovasz_loss(input, target):
 
 
 def dice_loss(input, target, axis=None, eps=1e-7):
-    input = torch.sigmoid(input)
-
     intersection = (input * target).sum(axis)
     union = input.sum(axis) + target.sum(axis)
-
     dice = (2. * intersection) / (union + eps)
-    loss = 1 - dice
-    print(loss.shape)
-    fail
+
+    loss = -torch.log(dice + eps)
 
     return loss
+
+
+def iou_loss(input, target, axis=None, eps=1e-7):
+    intersection = (input * target).sum(axis)
+    union = input.sum(axis) + target.sum(axis) - intersection
+    iou = intersection / (union + eps)
+
+    loss = 1 - iou
+
+    return loss
+
+# def focal_loss(input, target, gamma=2.):
+#     prob = input.sigmoid()
+#     prob_true = prob * target + (1 - prob) * (1 - target)
+#     weight = (1 - prob_true)**gamma
+#
+#     loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
+#     loss = weight * loss
+#
+#     return loss

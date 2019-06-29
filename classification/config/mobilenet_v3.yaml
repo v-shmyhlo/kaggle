@@ -15,9 +15,9 @@ opt:
     momentum: 0.9
 
 sched:
-  type: cawr
+  type: step
 
   step:
     decay: 0.99
-    step_size: 3
+    step_size: 100
 

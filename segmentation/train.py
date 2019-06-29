@@ -20,21 +20,19 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from config import Config
-from loss import dice_loss
-from metric import accuracy
+# from segmentation.jpu import UNet
+from loss import iou_loss
 from segmentation.transforms import Resize, RandomCrop, CenterCrop, ToTensor, Normalize
 from segmentation.unet import UNet
 
-# TODO: dropout
-
-NUM_CLASSES = 150
+NUM_CLASSES = 150 + 1  # TODO: color, check really has bg
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
-parser.add_argument('--experiment-path', type=str, default='./tf_log/detection')
+parser.add_argument('--experiment-path', type=str, default='./tf_log/segmentation')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--restore-path', type=str)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
@@ -43,14 +41,14 @@ config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 train_transform = T.Compose([
-    Resize(512),
-    RandomCrop(512),
+    Resize(config.image_size),
+    RandomCrop(config.image_size),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
 ])
 eval_transform = T.Compose([
-    Resize(512),
-    CenterCrop(512),
+    Resize(config.image_size),
+    CenterCrop(config.image_size),
     ToTensor(),
     Normalize(mean=MEAN, std=STD),
 ])
@@ -80,6 +78,8 @@ class ADE20K(torch.utils.data.Dataset):
         row = self.data.iloc[item]
 
         image = Image.open(row['image_path'])
+        if image.mode == 'L':
+            image = image.convert('RGB')
         mask = Image.open(row['mask_path'])
 
         if self.transform is not None:
@@ -88,24 +88,71 @@ class ADE20K(torch.utils.data.Dataset):
         return image, mask
 
 
+def one_hot(input, n):
+    one_hot = torch.zeros(input.size(0), n, input.size(2), input.size(3)).to(input.device)
+    input = one_hot.scatter_(1, input, 1)
+
+    return input
+
+
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
 def compute_loss(input, target):
-    # input =
+    input = input.softmax(1)
+    target = one_hot(target, NUM_CLASSES)
 
-    print(input.shape, target.shape)
-    # loss = F.cross_entropy(input=input, target=target, reduction='none')
-    loss = dice_loss(input=input, target=target, axis=(2, 3))
+    loss = iou_loss(input=input, target=target, axis=(2, 3))
+    loss = loss.mean(1)
 
     return loss
 
 
+# def compute_loss(input, target):
+#     target = one_hot(target, NUM_CLASSES)
+#     input = input.log_softmax(1)
+#     loss = -(target * input).sum(1)
+#     loss = loss.mean((1, 2))
+#
+#     return loss
+
+
+def draw_masks(input):
+    colors = np.random.RandomState(42).uniform(0.25, 1., size=(NUM_CLASSES, 3))
+    colors = torch.tensor(colors, dtype=torch.float).to(input.device)
+    input = colors[input]
+    input = input.squeeze(1).permute(0, 3, 1, 2)
+
+    return input
+
+
 def compute_metric(input, target):
+    def dice(input, target):
+        axis = (2, 3)
+
+        intersection = (input * target).sum(axis)
+        union = input.sum(axis) + target.sum(axis)
+        v = (2. * intersection) / union
+        v[v != v] = 0.
+        v = v.mean(1)
+
+        return v
+
+    def iou(input, target):
+        axis = (2, 3)
+
+        intersection = (input * target).sum(axis)
+        union = input.sum(axis) + target.sum(axis) - intersection
+        v = intersection / union
+        v[v != v] = 0.
+        v = v.mean(1)
+
+        return v
+
     metric = {
-        'accuracy@1': accuracy(input=input, target=target, topk=1),
-        'accuracy@5': accuracy(input=input, target=target, topk=5),
+        'dice': dice(input=one_hot(input.argmax(1, keepdim=True), NUM_CLASSES), target=one_hot(target, NUM_CLASSES)),
+        'iou': iou(input=one_hot(input.argmax(1, keepdim=True), NUM_CLASSES), target=one_hot(target, NUM_CLASSES)),
     }
 
     return metric
@@ -124,6 +171,11 @@ def build_optimizer(optimizer, parameters):
             parameters,
             optimizer.lr,
             momentum=optimizer.rmsprop.momentum,
+            weight_decay=optimizer.weight_decay)
+    elif optimizer.type == 'adam':
+        return torch.optim.Adam(
+            parameters,
+            optimizer.lr,
             weight_decay=optimizer.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer.type))
@@ -150,13 +202,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         optimizer.step()
         scheduler.step()
 
-        break
-
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
-
         masks_true = draw_masks(labels)
-        masks_pred = draw_masks(logits.argmax(1))
+        masks_pred = draw_masks(logits.argmax(1, keepdim=True))
 
         print('[EPOCH {}][TRAIN] {}'.format(
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
@@ -166,9 +215,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
         writer.add_image('masks_true', torchvision.utils.make_grid(
-            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=True), global_step=epoch)
+            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=False), global_step=epoch)
         writer.add_image('masks_pred', torchvision.utils.make_grid(
-            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=True), global_step=epoch)
+            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=False), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, epoch):
@@ -176,8 +225,8 @@ def eval_epoch(model, data_loader, epoch):
 
     metrics = {
         'loss': utils.Mean(),
-        'accuracy@1': utils.Mean(),
-        'accuracy@5': utils.Mean(),
+        'dice': utils.Mean(),
+        'iou': utils.Mean(),
     }
 
     model.eval()
@@ -194,6 +243,8 @@ def eval_epoch(model, data_loader, epoch):
                 metrics[k].update(metric[k].data.cpu().numpy())
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
+        masks_true = draw_masks(labels)
+        masks_pred = draw_masks(logits.argmax(1, keepdim=True))
 
         print('[EPOCH {}][EVAL] {}'.format(
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
@@ -202,9 +253,9 @@ def eval_epoch(model, data_loader, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
         writer.add_image('masks_true', torchvision.utils.make_grid(
-            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=True), global_step=epoch)
+            masks_true, nrow=math.ceil(math.sqrt(masks_true.size(0))), normalize=False), global_step=epoch)
         writer.add_image('masks_pred', torchvision.utils.make_grid(
-            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=True), global_step=epoch)
+            masks_pred, nrow=math.ceil(math.sqrt(masks_pred.size(0))), normalize=False), global_step=epoch)
 
         return metrics
 
@@ -222,9 +273,11 @@ def train():
         worker_init_fn=worker_init_fn)
 
     eval_dataset = ADE20K(args.dataset_path, train=False, transform=eval_transform)
+    eval_dataset = torch.utils.data.Subset(
+        eval_dataset, np.random.permutation(len(eval_dataset))[:len(eval_dataset) // 8])
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size * 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -238,9 +291,12 @@ def train():
     if config.sched.type == 'step':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
             torch.optim.lr_scheduler.StepLR(
-                optimizer,
-                step_size=config.sched.step.step_size,
-                gamma=config.sched.step.decay))
+                optimizer, step_size=config.sched.step.step_size, gamma=config.sched.step.decay))
+    elif config.sched.type == 'plateau':
+        scheduler = lr_scheduler_wrapper.ScoreWrapper(
+            torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='max', factor=config.sched.plateau.decay, patience=config.sched.plateau.patience,
+                verbose=True))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -263,8 +319,8 @@ def train():
         gc.collect()
 
         scheduler.step_epoch()
-        scheduler.step_score(metric['accuracy@1'])
-
+        scheduler.step_score(metric['iou'])
+       
         torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model.pth'))
 
 
