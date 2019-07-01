@@ -1,12 +1,25 @@
-import random
-import warnings
-import matplotlib.pyplot as plt
-from PIL import Image
-import tempfile
-import scipy.signal
 import os
+import random
+import tempfile
+import warnings
+
+import matplotlib.pyplot as plt
 import numpy as np
+import scipy.signal
 import torch
+from PIL import Image
+
+
+class RandomSubset(torch.utils.data.Dataset):
+    def __init__(self, dataset, size):
+        self.dataset = dataset
+        self.size = size
+
+    def __len__(self):
+        return min(self.size, len(self.dataset))
+
+    def __getitem__(self, item):
+        return self.dataset[np.random.randint(len(self.dataset))]
 
 
 class EWA(object):

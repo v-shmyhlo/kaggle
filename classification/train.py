@@ -4,7 +4,6 @@ import math
 import os
 import shutil
 
-import numpy as np
 import torch
 import torch.distributions
 import torch.nn.functional as F
@@ -164,8 +163,7 @@ def eval_epoch(model, data_loader, epoch):
 def train():
     train_dataset = torchvision.datasets.ImageNet(
         args.dataset_path, split='train', transform=train_transform)
-    train_dataset = torch.utils.data.Subset(
-        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 16])
+    train_dataset = utils.RandomSubset(train_dataset, len(train_dataset) // 4)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -176,8 +174,6 @@ def train():
 
     eval_dataset = torchvision.datasets.ImageNet(
         args.dataset_path, split='val', transform=eval_transform)
-    eval_dataset = torch.utils.data.Subset(
-        eval_dataset, np.random.permutation(len(eval_dataset))[:len(eval_dataset) // 8])
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size * 2,
@@ -202,6 +198,18 @@ def train():
             torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='max', factor=config.sched.plateau.decay, patience=config.sched.plateau.patience,
                 verbose=True))
+    elif config.sched.type == 'cyclic':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CyclicLR(
+                optimizer,
+                0.,
+                config.opt.lr,
+                step_size_up=len(train_data_loader),
+                step_size_down=len(train_data_loader),
+                mode='triangular2',
+                cycle_momentum=True,
+                base_momentum=0.75,
+                max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(

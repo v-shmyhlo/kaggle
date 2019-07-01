@@ -93,7 +93,7 @@ class Bottleneck(nn.Module):
 
 
 class MobileNetV3(nn.Module):
-    def __init__(self, in_channels, num_classes):
+    def __init__(self, in_channels, num_classes, dropout=0.2):
         super().__init__()
 
         relu = nn.ReLU(inplace=True)
@@ -122,6 +122,7 @@ class MobileNetV3(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             Conv(960, 1280, 1),
             hswish,
+            # nn.Dropout(dropout, inplace=True),
             Conv(1280, num_classes, 1))
 
     def forward(self, input):

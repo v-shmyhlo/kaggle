@@ -3,8 +3,8 @@ epochs: 1000
 batch_size: 170
 
 opt:
-  type: rmsprop
-  lr: 0.0002
+  type: sgd
+  lr: 0.1
   weight_decay: 1e-5
 
   sgd:
@@ -14,7 +14,7 @@ opt:
     momentum: 0.9
 
 sched:
-  type: plateau
+  type: cyclic
 
   step:
     decay: 0.99

@@ -111,18 +111,6 @@ eval_transform = T.Compose([
 ])
 
 
-class RandomSubset(torch.utils.data.Dataset):
-    def __init__(self, dataset, size):
-        self.dataset = dataset
-        self.size = size
-
-    def __len__(self):
-        return min(self.size, len(self.dataset))
-
-    def __getitem__(self, item):
-        return self.dataset[np.random.randint(len(self.dataset))]
-
-
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 

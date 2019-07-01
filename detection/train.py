@@ -84,18 +84,6 @@ eval_transform = T.Compose([
 ])
 
 
-class RandomSubset(torch.utils.data.Dataset):
-    def __init__(self, dataset, size):
-        self.dataset = dataset
-        self.size = size
-
-    def __len__(self):
-        return min(self.size, len(self.dataset))
-
-    def __getitem__(self, item):
-        return self.dataset[np.random.randint(len(self.dataset))]
-
-
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
@@ -280,7 +268,7 @@ def collate_fn(batch):
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
     class_names = train_dataset.class_names
-    train_dataset = RandomSubset(train_dataset, config.train_size)
+    train_dataset = utils.RandomSubset(train_dataset, config.train_size)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
