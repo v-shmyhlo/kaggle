@@ -21,7 +21,6 @@ import lr_scheduler_wrapper
 import utils
 from config import Config
 # from segmentation.jpu import UNet
-from loss import iou_loss
 from segmentation.transforms import Resize, RandomCrop, CenterCrop, ToTensor, Normalize
 from segmentation.unet import UNet
 
@@ -88,6 +87,39 @@ class ADE20K(torch.utils.data.Dataset):
         return image, mask
 
 
+# from shapes import Shapes
+#
+#
+# class ADE20K(Shapes):
+#     def __init__(self, path, train, transform):
+#         num_samples = 32000 if train else 800
+#         super().__init__(num_samples, (config.image_size, config.image_size))
+#         self.transform = transform
+
+
+# class ADE20K(torchvision.datasets.VOCSegmentation):
+#     def __init__(self, path, train, transform):
+#         subset = 'train' if train else 'val'
+#         super().__init__('../data/voc-seg', image_set=subset, download=True)
+#         self.tmp = transform
+#
+#     def __getitem__(self, item):
+#         image, mask = super().__getitem__(item)
+#
+#         if self.tmp is not None:
+#             image, mask = self.tmp((image, mask))
+#
+#         mask[mask == 255] = 0
+#
+#         return image, mask
+
+
+# tmp = ADE20K(args.dataset_path, train=True, transform=train_transform)
+# # m = max(b[b != 255].max() for a, b in tmp)
+# print(m)
+# fail
+
+
 def one_hot(input, n):
     one_hot = torch.zeros(input.size(0), n, input.size(2), input.size(3)).to(input.device)
     input = one_hot.scatter_(1, input, 1)
@@ -97,6 +129,9 @@ def one_hot(input, n):
 
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
+
+
+from loss import iou_loss
 
 
 def compute_loss(input, target):
@@ -121,6 +156,8 @@ def compute_loss(input, target):
 def draw_masks(input):
     colors = np.random.RandomState(42).uniform(0.25, 1., size=(NUM_CLASSES, 3))
     colors = torch.tensor(colors, dtype=torch.float).to(input.device)
+    colors[0, :] = 0.
+
     input = colors[input]
     input = input.squeeze(1).permute(0, 3, 1, 2)
 
@@ -263,7 +300,7 @@ def eval_epoch(model, data_loader, epoch):
 def train():
     train_dataset = ADE20K(args.dataset_path, train=True, transform=train_transform)
     train_dataset = torch.utils.data.Subset(
-        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 4])
+        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 1])
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -320,7 +357,7 @@ def train():
 
         scheduler.step_epoch()
         scheduler.step_score(metric['iou'])
-       
+
         torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model.pth'))
 
 

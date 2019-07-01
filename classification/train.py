@@ -87,6 +87,7 @@ def build_optimizer(optimizer, parameters):
         return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
+            # alpha=0.9999,
             momentum=optimizer.rmsprop.momentum,
             weight_decay=optimizer.weight_decay)
     else:
@@ -164,7 +165,7 @@ def train():
     train_dataset = torchvision.datasets.ImageNet(
         args.dataset_path, split='train', transform=train_transform)
     train_dataset = torch.utils.data.Subset(
-        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 8])
+        train_dataset, np.random.permutation(len(train_dataset))[:len(train_dataset) // 16])
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -196,6 +197,11 @@ def train():
                 optimizer,
                 step_size=config.sched.step.step_size,
                 gamma=config.sched.step.decay))
+    elif config.sched.type == 'plateau':
+        scheduler = lr_scheduler_wrapper.ScoreWrapper(
+            torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='max', factor=config.sched.plateau.decay, patience=config.sched.plateau.patience,
+                verbose=True))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(

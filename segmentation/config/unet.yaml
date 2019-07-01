@@ -5,7 +5,7 @@ image_size: 320
 
 opt:
   type: sgd
-  lr: 1.0
+  lr: 0.1
   weight_decay: 1e-5
 
   sgd:

@@ -1,11 +1,10 @@
 seed: 42
 epochs: 1000
 batch_size: 170
-# dropout: 0.8
 
 opt:
-  type: sgd
-  lr: 0.1
+  type: rmsprop
+  lr: 0.0002
   weight_decay: 1e-5
 
   sgd:
@@ -15,9 +14,13 @@ opt:
     momentum: 0.9
 
 sched:
-  type: step
+  type: plateau
 
   step:
     decay: 0.99
     step_size: 100
+
+  plateau:
+    decay: 0.1
+    patience: 2
 
