@@ -18,7 +18,7 @@ class RandomFlip(object):
 
         if random.random() < self.p:
             return [F.vflip(c) for c in image]
-       
+
         return image
 
     def __repr__(self):
@@ -37,6 +37,20 @@ class Resize(object):
     def __repr__(self):
         interpolate_str = torchvision.transforms._pil_interpolation_to_str[self.interpolation]
         return self.__class__.__name__ + '(size={0}, interpolation={1})'.format(self.size, interpolate_str)
+
+
+class CenterCrop(object):
+    def __init__(self, size):
+        if isinstance(size, numbers.Number):
+            self.size = (int(size), int(size))
+        else:
+            self.size = size
+
+    def __call__(self, image):
+        return [F.center_crop(c, self.size) for c in image]
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(size={0})'.format(self.size)
 
 
 class RandomCrop(object):

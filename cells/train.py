@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.transforms import RandomFlip, Resize, RandomCrop, ToTensor
+from cells.transforms import RandomFlip, Resize, CenterCrop, RandomCrop, ToTensor
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from metric import accuracy
@@ -32,11 +32,14 @@ from .model import Model
 # TODO: better minimum for lr
 # TODO: s1/s2
 # TODO: flips
+# TODO: drop channels
+# TODO: grad accum
+# TODO: gradient reversal and domain adaptation for test data
+# TODO: dropout
+# TODO: mixup
 
 
 FOLDS = list(range(1, 5 + 1))
-# MEAN = [0.485, 0.456, 0.406]
-# STD = [0.229, 0.224, 0.225]
 NUM_CLASSES = 1108
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -58,11 +61,11 @@ train_transform = T.Compose([
     ToTensor()])
 eval_transform = T.Compose([
     Resize(config.resize_size),
-    RandomCrop(config.image_size),
+    CenterCrop(config.image_size),
     ToTensor()])
 test_transform = T.Compose([
     Resize(config.resize_size),
-    RandomCrop(config.image_size),
+    CenterCrop(config.image_size),
     ToTensor()])
 
 
@@ -345,7 +348,7 @@ def train_fold(fold, train_eval_data, lr):
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     if args.restore_path is not None:
-        model.load_state_dict(torch.load(args.restore_path))
+        model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
 
     optimizer = build_optimizer(config.opt, model.parameters())
 
@@ -358,14 +361,18 @@ def train_fold(fold, train_eval_data, lr):
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
     elif config.sched.type == 'cyclic':
+        step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
+        step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
+
         scheduler = lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CyclicLR(
                 optimizer,
                 0.,
                 config.opt.lr,
-                step_size_up=len(train_data_loader) * config.sched.cyclic.step_size_up,
-                step_size_down=len(train_data_loader) * config.sched.cyclic.step_size_down,
-                mode='triangular2',
+                step_size_up=step_size_up,
+                step_size_down=step_size_down,
+                mode='exp_range',
+                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
                 base_momentum=0.75,
                 max_momentum=0.95))
