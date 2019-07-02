@@ -1,6 +1,10 @@
 seed: 42
 epochs: 1000
-batch_size: 170
+batch_size: 90
+resize_size: 256
+image_size: 224
+
+model:
 
 opt:
   type: sgd

@@ -26,8 +26,7 @@ class HSwish(nn.Module):
 
 
 class Norm(nn.BatchNorm2d):
-    def __init__(self, num_features):
-        super().__init__(num_features, momentum=0.01)
+    pass
 
 
 class Conv(nn.Conv2d):

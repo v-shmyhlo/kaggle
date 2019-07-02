@@ -5,10 +5,8 @@ HOST=vshmyhlo@77.120.246.182
 rsync -avhHPx ./kaggle.yml ${HOST}:.config/tmuxinator/kaggle.yml
 rsync -avhHPx ./requirements.txt ${HOST}:code/kaggle/requirements.txt
 rsync -avhHPx ./*.py ${HOST}:code/kaggle/
-rsync -avhHPx ./imet/ ${HOST}:code/kaggle/imet/
-rsync -avhHPx ./frees/ ${HOST}:code/kaggle/frees/
-rsync -avhHPx ./mol/ ${HOST}:code/kaggle/mol/
-rsync -avhHPx ./classification/ ${HOST}:code/kaggle/classification/
-rsync -avhHPx ./segmentation/ ${HOST}:code/kaggle/segmentation/
-rsync -avhHPx ./detection/ ${HOST}:code/kaggle/detection/
-rsync -avhHPx ./test/ ${HOST}:code/kaggle/test/
+
+for p in imet cells frees mol classification segmentation detection test
+do
+    rsync -avhHPx ./${p}/ ${HOST}:code/kaggle/${p}/
+done
