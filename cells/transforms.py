@@ -8,6 +8,23 @@ import torchvision.transforms.functional as F
 from PIL import Image
 
 
+class RandomFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, image):
+        if random.random() < self.p:
+            return [F.hflip(c) for c in image]
+
+        if random.random() < self.p:
+            return [F.vflip(c) for c in image]
+       
+        return image
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={})'.format(self.p)
+
+
 class Resize(object):
     def __init__(self, size, interpolation=Image.BILINEAR):
         assert isinstance(size, int) or (isinstance(size, Iterable) and len(size) == 2)
@@ -16,7 +33,7 @@ class Resize(object):
 
     def __call__(self, image):
         return [F.resize(c, self.size, self.interpolation) for c in image]
-   
+
     def __repr__(self):
         interpolate_str = torchvision.transforms._pil_interpolation_to_str[self.interpolation]
         return self.__class__.__name__ + '(size={0}, interpolation={1})'.format(self.size, interpolate_str)

@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.transforms import Resize, RandomCrop, ToTensor
+from cells.transforms import RandomFlip, Resize, RandomCrop, ToTensor
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from metric import accuracy
@@ -44,6 +44,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/cells')
 parser.add_argument('--dataset-path', type=str, required=True)
+parser.add_argument('--restore-path', type=str)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 args = parser.parse_args()
@@ -53,6 +54,7 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 train_transform = T.Compose([
     Resize(config.resize_size),
     RandomCrop(config.image_size),
+    RandomFlip(),
     ToTensor()])
 eval_transform = T.Compose([
     Resize(config.resize_size),
@@ -75,12 +77,15 @@ class TrainEvalDataset(torch.utils.data.Dataset):
     def __getitem__(self, item):
         row = self.data.iloc[item]
 
+        # FIXME:
+        s = np.random.randint(1, 3)
+
         image = [
             Image.open(os.path.join(
                 row['root'],
                 row['experiment'],
                 'Plate{}'.format(row['plate']),
-                '{}_s1_w{}.png'.format(row['well'], c)))
+                '{}_s{}_w{}.png'.format(row['well'], s, c)))
             for c in range(1, 7)]
 
         label = row['sirna']
@@ -163,8 +168,18 @@ def indices_for_fold(fold, dataset):
 
 
 def images_to_rgb(input):
-    colors = np.random.RandomState(42).uniform(0.25, 1, size=(1, 6, 3, 1, 1))
-    colors = torch.tensor(colors, dtype=torch.float).to(input.device)
+    colors = np.array([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 1, 0],
+        [1, 0, 1],
+        [0, 1, 1],
+    ], dtype=np.float32)
+    colors = colors / colors.sum(1, keepdims=True)
+    print(colors.sum(1))
+    colors = colors.reshape((1, 6, 3, 1, 1))
+    colors = torch.tensor(colors).to(input.device)
     input = input.unsqueeze(2)
     input = input * colors
     input = input.mean(1)
@@ -192,6 +207,7 @@ def find_lr(train_eval_data):
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
+
     optimizer = build_optimizer(config.opt, model.parameters())
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
@@ -328,6 +344,9 @@ def train_fold(fold, train_eval_data, lr):
 
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
+    if args.restore_path is not None:
+        model.load_state_dict(torch.load(args.restore_path))
+
     optimizer = build_optimizer(config.opt, model.parameters())
 
     if config.sched.type == 'onecycle':
