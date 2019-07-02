@@ -18,6 +18,3 @@ sched:
   onecycle:
     anneal: linear
     beta: [0.95, 0.85]
-
-
-
