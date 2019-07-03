@@ -1,7 +1,18 @@
 import pretrainedmodels
 import torch
+import torch.autograd as ag
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class GradientReversal(ag.Function):
+    @staticmethod
+    def forward(ctx, input):
+        return input
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -grad_output
 
 
 # class GlobalGEMPool2d(nn.Module):
@@ -16,6 +27,7 @@ import torch.nn.functional as F
 #         input = input**(1. / self.p)
 #
 #         return input
+
 
 class GlobalGEMPool2d(nn.Module):
     def __init__(self, channels):
