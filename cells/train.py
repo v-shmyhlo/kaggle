@@ -2,6 +2,7 @@ import argparse
 import gc
 import math
 import os
+import random
 import shutil
 
 import matplotlib.pyplot as plt
@@ -15,7 +16,6 @@ import torch.utils.data
 import torchvision
 import torchvision.transforms as T
 from PIL import Image
-from sklearn.model_selection import StratifiedKFold
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -30,16 +30,21 @@ from .model import Model
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered
 # TODO: better minimum for lr
-# TODO: s1/s2
 # TODO: flips
-# TODO: drop channels
 # TODO: grad accum
 # TODO: gradient reversal and domain adaptation for test data
 # TODO: dropout
 # TODO: mixup
+# TODO: cell type embedding
+# TODO: focal
+# TODO: https://www.rxrx.ai/
+# TODO: batch effects
+# TODO: generalization notes in rxrx
+# TODO: metric learning
+# TODO: context modelling notes in rxrx
 
 
-FOLDS = list(range(1, 5 + 1))
+FOLDS = list(range(1, 3 + 1))
 NUM_CLASSES = 1108
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -54,19 +59,39 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
+
+class RandomSite(object):
+    def __call__(self, image):
+        if random.random() < 0.5:
+            return image[:6]
+        else:
+            return image[6:]
+
+
+class SplitInSites(object):
+    def __call__(self, image):
+        return [image[:6], image[6:]]
+
+
 train_transform = T.Compose([
+    RandomSite(),
     Resize(config.resize_size),
     RandomCrop(config.image_size),
     RandomFlip(),
-    ToTensor()])
+    ToTensor()
+])
 eval_transform = T.Compose([
+    RandomSite(),
     Resize(config.resize_size),
     CenterCrop(config.image_size),
-    ToTensor()])
+    ToTensor()
+])
 test_transform = T.Compose([
     Resize(config.resize_size),
     CenterCrop(config.image_size),
-    ToTensor()])
+    SplitInSites(),
+    T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0))
+])
 
 
 class TrainEvalDataset(torch.utils.data.Dataset):
@@ -80,16 +105,15 @@ class TrainEvalDataset(torch.utils.data.Dataset):
     def __getitem__(self, item):
         row = self.data.iloc[item]
 
-        # FIXME:
-        s = np.random.randint(1, 3)
-
-        image = [
-            Image.open(os.path.join(
-                row['root'],
-                row['experiment'],
-                'Plate{}'.format(row['plate']),
-                '{}_s{}_w{}.png'.format(row['well'], s, c)))
-            for c in range(1, 7)]
+        image = []
+        for s in [1, 2]:
+            image.extend([
+                Image.open(os.path.join(
+                    row['root'],
+                    row['experiment'],
+                    'Plate{}'.format(row['plate']),
+                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
+                for c in range(1, 7)])
 
         label = row['sirna']
         id = row['id_code']
@@ -100,23 +124,33 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         return image, label, id
 
 
-# class TestDataset(torch.utils.data.Dataset):
-#     def __init__(self, transform=None):
-#         self.data = os.listdir(os.path.join(args.dataset_path, 'test'))
-#         self.transform = transform
-#
-#     def __len__(self):
-#         return len(self.data)
-#
-#     def __getitem__(self, item):
-#         path = self.data[item]
-#         id = os.path.splitext(path)[0]
-#
-#         image = load_image(os.path.join(args.dataset_path, 'test', path))
-#         if self.transform is not None:
-#             image = self.transform(image)
-#
-#         return image, id
+class TestDataset(torch.utils.data.Dataset):
+    def __init__(self, data, transform=None):
+        self.data = data
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, item):
+        row = self.data.iloc[item]
+
+        image = []
+        for s in [1, 2]:
+            image.extend([
+                Image.open(os.path.join(
+                    row['root'],
+                    row['experiment'],
+                    'Plate{}'.format(row['plate']),
+                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
+                for c in range(1, 7)])
+
+        id = row['id_code']
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return image, id
 
 
 def worker_init_fn(_):
@@ -157,15 +191,30 @@ def build_optimizer(optimizer, parameters):
         raise AssertionError('invalid OPT {}'.format(optimizer.type))
 
 
-# TODO: strat
-def indices_for_fold(fold, dataset):
-    kfold = StratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
-    splits = list(kfold.split(np.zeros(len(dataset)), dataset['sirna']))
-    train_indices, eval_indices = splits[fold - 1]
-    assert len(train_indices) + len(eval_indices) == len(dataset)
+# def indices_for_fold(fold, dataset):
+#     kfold = StratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
+#     splits = list(kfold.split(np.zeros(len(dataset)), dataset['sirna']))
+#     train_indices, eval_indices = splits[fold - 1]
+#     assert len(train_indices) + len(eval_indices) == len(dataset)
+#
+#     # train_indices = train_indices[:len(train_indices) // 1]
+#     # eval_indices = eval_indices[:len(eval_indices) // 1]
+#
+#     return train_indices, eval_indices
 
-    # train_indices = train_indices[:len(train_indices) // 1]
-    # eval_indices = eval_indices[:len(eval_indices) // 1]
+
+# TODO: check
+def indices_for_fold(fold, dataset):
+    indices = np.arange(len(dataset))
+    exp = dataset['experiment']
+    eval_exps = \
+        ['HEPG2-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
+        ['HUVEC-{:02d}'.format(i + 1) for i in range((fold - 1) * 3, fold * 3)] + \
+        ['RPE-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
+        ['U2OS-{:02d}'.format(i + 1) for i in range((fold - 1) * 1, fold * 1)]
+    train_indices = indices[~exp.isin(eval_exps)]
+    eval_indices = indices[exp.isin(eval_exps)]
+    assert np.intersect1d(train_indices, eval_indices).size == 0
 
     return train_indices, eval_indices
 
@@ -326,7 +375,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         return metrics
 
 
-def train_fold(fold, train_eval_data, lr):
+def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
@@ -356,7 +405,7 @@ def train_fold(fold, train_eval_data, lr):
         scheduler = lr_scheduler_wrapper.StepWrapper(
             OneCycleScheduler(
                 optimizer,
-                lr=(lr / 20, lr),
+                lr=(config.opt.lr / 20, config.opt.lr),
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
@@ -414,37 +463,28 @@ def train_fold(fold, train_eval_data, lr):
             torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
-def build_submission(folds):
-    writer = SummaryWriter(os.path.join(args.experiment_path, 'test'))
-
+def build_submission(folds, test_data):
     with torch.no_grad():
         predictions = 0.
 
         for fold in folds:
-            fold_predictions, fold_ids = predict_on_test_using_fold(fold)
-            fold_predictions = fold_predictions.sigmoid().mean(1)
-
-            writer.add_histogram('distribution', fold_predictions, global_step=fold)
+            fold_predictions, fold_ids = predict_on_test_using_fold(fold, test_data)
+            fold_predictions = fold_predictions.softmax(2).mean(1)
 
             predictions = predictions + fold_predictions
             ids = fold_ids
 
         predictions = predictions / len(folds)
-        submission = []
+        predictions = predictions.argmax(1).data.cpu().numpy()
         assert len(ids) == len(predictions)
-        for id, prediction in zip(ids, predictions):
-            pred = pred.data.cpu().numpy()
-            pred = map(str, pred)
-            pred = ' '.join(pred)
 
-            submission.append((id, pred))
-
-        submission = pd.DataFrame(submission, columns=['id', 'attribute_ids'])
+        submission = pd.DataFrame({'id_code': ids, 'sirna': predictions})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
+        submission.to_csv('./submission.csv', index=False)
 
 
-def predict_on_test_using_fold(fold):
-    test_dataset = TestDataset(transform=test_transform)
+def predict_on_test_using_fold(fold, test_data):
+    test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
         batch_size=config.batch_size,
@@ -465,7 +505,7 @@ def predict_on_test_using_fold(fold):
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
             logits = model(images)
-            logits = logits.view(b, n, NUM_CLASSES * (1 + config.model.predict_thresh))
+            logits = logits.view(b, n, NUM_CLASSES)
 
             fold_predictions.append(logits)
             fold_ids.extend(ids)
@@ -482,12 +522,14 @@ def main():
     train_eval_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
     train_eval_data['root'] = os.path.join(args.dataset_path, 'train')
 
+    test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
+    test_data['root'] = os.path.join(args.dataset_path, 'test')
+
     if config.opt.lr is None:
         lr = find_lr(train_eval_data)
         print('find_lr: {}'.format(lr))
         gc.collect()
-    else:
-        lr = config.opt.lr
+        fail  # FIXME:
 
     if args.fold is None:
         folds = FOLDS
@@ -495,9 +537,9 @@ def main():
         folds = [args.fold]
 
     for fold in folds:
-        train_fold(fold, train_eval_data, lr)
+        train_fold(fold, train_eval_data)
 
-    build_submission(folds)
+    build_submission(folds, test_data)
 
 
 if __name__ == '__main__':

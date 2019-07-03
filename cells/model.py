@@ -18,17 +18,19 @@ import torch.nn.functional as F
 #         return input
 
 class GlobalGEMPool2d(nn.Module):
-    def __init__(self):
+    def __init__(self, channels):
         super().__init__()
 
-        self.w = nn.Parameter(torch.tensor(0., dtype=torch.float))
+        self.w = nn.Parameter(torch.zeros(1, channels, 1, 1))
+
+        nn.init.normal_(self.w)
 
     def forward(self, input):
         avg = F.adaptive_avg_pool2d(input, 1)
         max = F.adaptive_max_pool2d(input, 1)
         w = self.w.sigmoid()
         input = w * avg + (1. - w) * max
-       
+
         return input
 
 
@@ -44,7 +46,7 @@ class Model(nn.Module):
         self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
         self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-        # self.model.avgpool = GlobalGEMPool2d()
+        # self.model.avgpool = GlobalGEMPool2d(512)
         self.model.last_linear = nn.Sequential(
             nn.Dropout(0.2),
             nn.Linear(self.model.last_linear.in_features, num_classes))

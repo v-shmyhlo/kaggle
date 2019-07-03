@@ -1,5 +1,5 @@
 seed: 42
-epochs: 100
+epochs: 50
 batch_size: 300
 resize_size: 256
 image_size: 224
@@ -18,7 +18,7 @@ opt:
     momentum: 0.9
 
 sched:
-  type: cyclic
+  type: onecycle
 
   step:
     decay: 0.99
