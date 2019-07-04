@@ -15,18 +15,19 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-from PIL import Image
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.transforms import ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, ToTensor, \
-    RandomSite, SplitInSites, ReweightChannels
+from cells.dataset import TrainEvalDataset, TestDataset
+from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
+    ToTensor, RandomSite, SplitInSites
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
 
+# TODO: mix sites
 # TODO: try largest lr before diverging
 # TODO: check predictions/targets name
 # TODO: check all plots rendered
@@ -66,87 +67,50 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-train_transform = ImageTransform(
-    T.Compose([
-        RandomSite(),
-        Resize(config.resize_size),
-        RandomCrop(config.image_size),
-        RandomFlip(),
-        RandomTranspose(),
-        ToTensor(),
-        ReweightChannels(config.aug.channel_weight),
-    ]))
+
+class StatColorJitter(object):
+    def __init__(self, data):
+        self.data = data
+
+    def __call__(self, input):
+        print(len(input))
+        fail
+
+
+train_transform = T.Compose([
+    ImageTransform(
+        T.Compose([
+            RandomSite(),
+            Resize(config.resize_size),
+            RandomCrop(config.image_size),
+            RandomFlip(),
+            RandomTranspose(),
+            ToTensor(),
+            # ReweightChannels(config.aug.channel_weight),
+        ])),
+    StatColorJitter(pd.read_csv(os.path.join(args.dataset_path, 'pixel_stats.csv'))),
+    Extract(['image', 'label', 'id'])
+])
 eval_transform = T.Compose([
-    RandomSite(),
-    Resize(config.resize_size),
-    CenterCrop(config.image_size),
-    ToTensor(),
+    ImageTransform(
+        T.Compose([
+            RandomSite(),  # FIXME:
+            Resize(config.resize_size),
+            CenterCrop(config.image_size),
+            ToTensor(),
+        ])),
+    Extract(['image', 'label', 'id'])
 ])
 test_transform = T.Compose([
-    Resize(config.resize_size),
-    CenterCrop(config.image_size),
-    SplitInSites(),
-    T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
+    ImageTransform(
+        T.Compose([
+            Resize(config.resize_size),
+            CenterCrop(config.image_size),
+            SplitInSites(),
+            T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
+        ])),
+    Extract(['image', 'id'])
 ])
-
-
-class TrainEvalDataset(torch.utils.data.Dataset):
-    def __init__(self, data, transform=None):
-        self.data = data
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, item):
-        row = self.data.iloc[item]
-
-        image = []
-        for s in [1, 2]:
-            image.extend([
-                Image.open(os.path.join(
-                    row['root'],
-                    row['experiment'],
-                    'Plate{}'.format(row['plate']),
-                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
-                for c in range(1, 7)])
-
-        label = row['sirna']
-        id = row['id_code']
-
-        if self.transform is not None:
-            image, label, id = self.transform(image, label, id)
-
-        return image, label, id
-
-
-class TestDataset(torch.utils.data.Dataset):
-    def __init__(self, data, transform=None):
-        self.data = data
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, item):
-        row = self.data.iloc[item]
-
-        image = []
-        for s in [1, 2]:
-            image.extend([
-                Image.open(os.path.join(
-                    row['root'],
-                    row['experiment'],
-                    'Plate{}'.format(row['plate']),
-                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
-                for c in range(1, 7)])
-
-        id = row['id_code']
-
-        if self.transform is not None:
-            image = self.transform(image)
-
-        return image, id
 
 
 def worker_init_fn(_):

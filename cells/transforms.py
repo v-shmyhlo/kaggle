@@ -12,10 +12,13 @@ class ImageTransform(object):
     def __init__(self, transform):
         self.transform = transform
 
-    def __call__(self, image, label, id):
-        image = self.transform(image)
-       
-        return image, label, id
+    def __call__(self, input):
+        input = {
+            **input,
+            'image': self.transform(input['image'])
+        }
+
+        return input
 
 
 class RandomFlip(object):
@@ -157,6 +160,14 @@ class ReweightChannels(object):
         image = image * weight
 
         return image
+
+
+class Extract(object):
+    def __init__(self, fields):
+        self.fields = fields
+
+    def __call__(self, input):
+        return tuple(input[k] for k in self.fields)
 
 
 def transpose(image):

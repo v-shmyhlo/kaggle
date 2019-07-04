@@ -1,18 +1,7 @@
 import pretrainedmodels
 import torch
-import torch.autograd as ag
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-class GradientReversal(ag.Function):
-    @staticmethod
-    def forward(ctx, input):
-        return input
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return -grad_output
 
 
 # class GlobalGEMPool2d(nn.Module):
@@ -50,25 +39,17 @@ class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
-        # self.model = pretrainedmodels.se_resnet50(num_classes=1000, pretrained='imagenet')
-        # self.model.layer0.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        # self.model.avg_pool = nn.AdaptiveAvgPool2d(1)
-        # self.model.last_linear = nn.Linear(self.model.last_linear.in_features, num_classes)
-
         self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
         self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-        # self.model.avgpool = GlobalGEMPool2d(512)
         self.model.last_linear = nn.Sequential(
             nn.Dropout(0.2),
             nn.Linear(self.model.last_linear.in_features, num_classes))
 
         self.norm = nn.BatchNorm2d(6)
-        # self.drop = nn.Dropout2d(1 / 6)
 
     def forward(self, input):
         input = self.norm(input)
-        # input = self.drop(input)
         input = self.model(input)
 
         return input
