@@ -8,6 +8,16 @@ import torchvision.transforms.functional as F
 from PIL import Image
 
 
+class ImageTransform(object):
+    def __init__(self, transform):
+        self.transform = transform
+
+    def __call__(self, image, label, id):
+        image = self.transform(image)
+       
+        return image, label, id
+
+
 class RandomFlip(object):
     def __init__(self, p=0.5):
         self.p = p

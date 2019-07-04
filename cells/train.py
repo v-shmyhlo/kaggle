@@ -21,8 +21,8 @@ from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.transforms import RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, ToTensor, RandomSite, \
-    SplitInSites, ReweightChannels
+from cells.transforms import ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, ToTensor, \
+    RandomSite, SplitInSites, ReweightChannels
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
@@ -66,15 +66,16 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-train_transform = T.Compose([
-    RandomSite(),
-    Resize(config.resize_size),
-    RandomCrop(config.image_size),
-    RandomFlip(),
-    RandomTranspose(),
-    ToTensor(),
-    ReweightChannels(config.aug.channel_weight),
-])
+train_transform = ImageTransform(
+    T.Compose([
+        RandomSite(),
+        Resize(config.resize_size),
+        RandomCrop(config.image_size),
+        RandomFlip(),
+        RandomTranspose(),
+        ToTensor(),
+        ReweightChannels(config.aug.channel_weight),
+    ]))
 eval_transform = T.Compose([
     RandomSite(),
     Resize(config.resize_size),
@@ -114,7 +115,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         id = row['id_code']
 
         if self.transform is not None:
-            image = self.transform(image)
+            image, label, id = self.transform(image, label, id)
 
         return image, label, id
 
