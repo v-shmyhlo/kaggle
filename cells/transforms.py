@@ -25,6 +25,20 @@ class RandomFlip(object):
         return self.__class__.__name__ + '(p={})'.format(self.p)
 
 
+class RandomTranspose(object):
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, image):
+        if random.random() < self.p:
+            return [transpose(c) for c in image]
+
+        return image
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={})'.format(self.p)
+
+
 class Resize(object):
     def __init__(self, size, interpolation=Image.BILINEAR):
         assert isinstance(size, int) or (isinstance(size, Iterable) and len(size) == 2)
@@ -35,7 +49,7 @@ class Resize(object):
         return [F.resize(c, self.size, self.interpolation) for c in image]
 
     def __repr__(self):
-        interpolate_str = torchvision.transforms._pil_interpolation_to_str[self.interpolation]
+        interpolate_str = torchvision.transforms.functional._pil_interpolation_to_str[self.interpolation]
         return self.__class__.__name__ + '(size={0}, interpolation={1})'.format(self.size, interpolate_str)
 
 
@@ -108,3 +122,35 @@ class ToTensor(object):
 
     def __repr__(self):
         return self.__class__.__name__ + '()'
+
+
+class RandomSite(object):
+    def __call__(self, image):
+        if random.random() < 0.5:
+            return image[:6]
+        else:
+            return image[6:]
+
+
+class SplitInSites(object):
+    def __call__(self, image):
+        return [image[:6], image[6:]]
+
+
+class ReweightChannels(object):
+    def __init__(self, weight):
+        self.weight = weight
+
+    def __call__(self, image):
+        weight = torch.FloatTensor(image.size(0), 1, 1).uniform_(1 - self.weight, 1 + self.weight)
+        weight = weight / weight.sum() * image.size(0)
+        image = image * weight
+
+        return image
+
+
+def transpose(image):
+    if not torchvision.transforms.functional._is_pil_image(image):
+        raise TypeError('image should be PIL Image. Got {}'.format(type(image)))
+
+    return image.transpose(Image.TRANSPOSE)
