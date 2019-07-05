@@ -35,6 +35,7 @@ from .model import Model
 # TODO: tta
 # TODO: val tta (sites)
 # TODO: lr schedules
+# TODO: mixup within class
 # TODO: opts
 # TODO: adam
 # TODO: gradient reversal and domain adaptation for test data
@@ -51,9 +52,7 @@ from .model import Model
 # TODO: generalization notes in rxrx
 # TODO: metric learning
 # TODO: context modelling notes in rxrx
-# TODO: transpose
 # TODO: tta
-# TODO: 2-way softmax
 
 
 FOLDS = list(range(1, 3 + 1))
@@ -92,7 +91,7 @@ class StatColorJitter(object):
 
         return {
             **input,
-            'image': image
+            'image': image,
         }
 
 
@@ -144,10 +143,16 @@ def mixup(images_1, labels_1, ids, alpha):
     lam = dist.sample().to(DEVICE)
     lam = torch.max(lam, 1 - lam)
 
-    sigs = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
-    labels = (labels_1.to(DEVICE).byte() | labels_2.to(DEVICE).byte()).float()
+    images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
+    labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
 
-    return sigs, labels, ids
+    return images, labels, ids
+
+
+# def cross_entropy(input, target):
+#     loss = -(target * input.log_softmax(1)).sum(1)
+#
+#     return loss
 
 
 def compute_loss(input, target):
