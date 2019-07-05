@@ -3,12 +3,15 @@ import os
 import torch
 from PIL import Image
 
+NUM_CLASSES = 1108
+
 
 class TrainEvalDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
         self.transform = transform
-
+        # self.experiment_to_id = {e: i for i, e in enumerate(sorted(data['experiment'].unique()))}
+       
     def __len__(self):
         return len(self.data)
 
@@ -28,6 +31,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         input = {
             'image': image,
             'label': row['sirna'],
+            # 'exp': self.experiment_to_id[row['experiment']],
             'id': row['id_code']
         }
 

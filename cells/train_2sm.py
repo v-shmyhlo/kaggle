@@ -108,7 +108,7 @@ train_transform = T.Compose([
             # ReweightChannels(config.aug.channel_weight),
         ])),
     StatColorJitter(),
-    Extract(['image', 'label', 'id']),
+    Extract(['image', 'label', 'exp', 'id']),
 ])
 eval_transform = T.Compose([
     ImageTransform(
@@ -118,7 +118,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
-    Extract(['image', 'label', 'id']),
+    Extract(['image', 'label', 'exp', 'id']),
 ])
 test_transform = T.Compose([
     ImageTransform(
@@ -150,8 +150,16 @@ def mixup(images_1, labels_1, ids, alpha):
     return sigs, labels, ids
 
 
-def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+def compute_loss(input, target, exp):
+    loss1 = F.cross_entropy(input=input, target=target, reduction='none')
+
+    loss2 = [
+        F.cross_entropy(
+            input=input[exp == i].t(), target=utils.one_hot(target[exp == i], NUM_CLASSES).argmax(0), reduction='none')
+        for i in exp.unique()]
+    loss2 = sum(loss2)
+
+    loss = (loss1.mean() + loss2.mean()) / 2
 
     return loss
 
@@ -264,8 +272,8 @@ def find_lr(train_eval_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
+    for images, labels, exp, ids in tqdm(train_data_loader, desc='lr search'):
+        images, labels, exp = images.to(DEVICE), labels.to(DEVICE), exp.to(DEVICE)
         logits = model(images)
 
         loss = compute_loss(input=logits, target=labels)
@@ -316,11 +324,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
+    for images, labels, exp, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, labels, exp = images.to(DEVICE), labels.to(DEVICE), exp.to(DEVICE)
         logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, exp=exp)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr, _ = scheduler.get_lr()
@@ -354,11 +362,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_ids = []
 
-        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
+        for images, labels, exp, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, labels, exp = images.to(DEVICE), labels.to(DEVICE), exp.to(DEVICE)
             logits = model(images)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=labels, exp=exp)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)

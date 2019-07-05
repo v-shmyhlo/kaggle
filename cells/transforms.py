@@ -158,7 +158,6 @@ class ReweightChannels(object):
         weight = torch.FloatTensor(image.size(0), 1, 1).uniform_(1 - self.weight, 1 + self.weight)
         weight = weight / weight.sum() * image.size(0)
         image = image * weight
-        assert torch.all(~torch.isnan(image))
 
         return image
 
