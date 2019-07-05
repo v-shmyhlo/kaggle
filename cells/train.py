@@ -1,8 +1,10 @@
 import argparse
 import gc
+import itertools
 import math
 import os
 import shutil
+from functools import partial
 
 import lap
 import matplotlib.pyplot as plt
@@ -10,7 +12,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -22,26 +23,30 @@ import lr_scheduler_wrapper
 import utils
 from cells.dataset import TrainEvalDataset, TestDataset
 from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites
+    ToTensor, RandomSite, SplitInSites, ReweightChannels
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
 
 # TODO: mix sites
-# TODO: try largest lr before diverging
 # TODO: check predictions/targets name
-# TODO: check all plots rendered
 # TODO: better minimum for lr
-# TODO: flips
 # TODO: grad accum
+# TODO: tta
+# TODO: val tta (sites)
+# TODO: lr schedules
+# TODO: opts
+# TODO: adam
 # TODO: gradient reversal and domain adaptation for test data
 # TODO: dropout
 # TODO: user other images stats
 # TODO: cutout
 # TODO: mixup
 # TODO: cell type embedding
+# TODO: other cyclic (1cycle) impl
 # TODO: focal
 # TODO: https://www.rxrx.ai/
+# TODO: ohem
 # TODO: batch effects
 # TODO: generalization notes in rxrx
 # TODO: metric learning
@@ -69,12 +74,46 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 
 class StatColorJitter(object):
-    def __init__(self, data):
-        self.data = data
+    def __init__(self, data, stats):
+        if os.path.exists('./stats.pth'):
+            self.class_to_stats = torch.load('./stats.pth')
+        else:
+            # with Pool(args.workers) as pool:
+            self.class_to_stats = list(map(
+                partial(self.build_class_stats, data=data, stats=stats),
+                tqdm(range(NUM_CLASSES), desc='building class stats')))
 
+            torch.save(self.class_to_stats, './stats.pth')
+
+    # TODO: check
     def __call__(self, input):
-        print(len(input))
-        fail
+        stats = self.class_to_stats[input['label']]
+        mean, std = stats[np.random.randint(stats.shape[0])]
+        dim = (1, 2)
+
+        image = input['image']
+        image = (image - image.mean(dim, keepdim=True)) / image.std(dim, keepdim=True)
+        image = image * std.view(6, 1, 1) + mean.view(6, 1, 1)
+
+        return {
+            **input,
+            'image': image
+        }
+
+    # TODO: check
+    @staticmethod
+    def build_class_stats(class_id, data, stats):
+        ids = data['id_code'][data['sirna'] == class_id]
+        class_stats = [
+            stats[(stats['id_code'] == id) & (stats['site'] == s)]
+            for id, s in itertools.product(ids, [1, 2])]
+        assert all(all(s['channel'] == range(1, 7)) for s in class_stats)
+        class_stats = [s[['mean', 'std']].values.T for s in class_stats]
+        class_stats = torch.tensor(class_stats, dtype=torch.float)
+        class_stats /= 255
+        assert class_stats.size() == (len(ids) * 2, 2, 6)
+
+        return class_stats
 
 
 train_transform = T.Compose([
@@ -86,9 +125,11 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            # ReweightChannels(config.aug.channel_weight),
+            ReweightChannels(config.aug.channel_weight),
         ])),
-    StatColorJitter(pd.read_csv(os.path.join(args.dataset_path, 'pixel_stats.csv'))),
+    # StatColorJitter(
+    #     pd.read_csv(os.path.join(args.dataset_path, 'train.csv')),
+    #     pd.read_csv(os.path.join(args.dataset_path, 'pixel_stats.csv'))),
     Extract(['image', 'label', 'id'])
 ])
 eval_transform = T.Compose([
@@ -170,7 +211,7 @@ def build_optimizer(optimizer, parameters):
         return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
-            # alpha=0.9999,
+            # alpha=0.9999,#FIXME:
             momentum=optimizer.rmsprop.momentum,
             weight_decay=optimizer.weight_decay)
     else:
@@ -210,6 +251,14 @@ def images_to_rgb(input):
     input = input.mean(1)
 
     return input
+
+
+def focal_loss(input, target, gamma=2.):
+    target = utils.one_hot(target, NUM_CLASSES)
+    weight = (1 - input.softmax(1))**gamma
+    loss = -(weight * target * input.log_softmax(1)).sum(1)
+
+    return loss
 
 
 def find_lr(train_eval_data):
