@@ -3,34 +3,42 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-# class GlobalGEMPool2d(nn.Module):
-#     def __init__(self, p=2.):
-#         super().__init__()
-#
-#         self.p = p
-#
-#     def forward(self, input):
-#         input = input**self.p
-#         input = F.adaptive_avg_pool2d(input, 1)
-#         input = input**(1. / self.p)
-#
-#         return input
+import utils
 
 
-class GlobalGEMPool2d(nn.Module):
-    def __init__(self, channels):
+class NormalizedLinear(nn.Module):
+    def __init__(self, in_features, out_features):
         super().__init__()
 
-        self.w = nn.Parameter(torch.zeros(1, channels, 1, 1))
+        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
 
-        nn.init.normal_(self.w)
+        nn.init.xavier_uniform_(self.weight)
 
     def forward(self, input):
-        avg = F.adaptive_avg_pool2d(input, 1)
-        max = F.adaptive_max_pool2d(input, 1)
-        w = self.w.sigmoid()
-        input = w * avg + (1. - w) * max
+        input = F.normalize(input, 2, 1)
+        weight = F.normalize(self.weight, 2, 1)
+        input = F.linear(input, weight)
+
+        return input
+
+
+class ArcFace(nn.Module):
+    def __init__(self, num_classes, s=64., m=0.5):
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.s = s
+        self.m = m
+
+    def forward(self, input, target):
+        if target is not None:
+            theta = torch.acos(input)
+            marginal_input = torch.cos(theta + self.m)
+
+            target_oh = utils.one_hot(target, self.num_classes)
+            input = (1 - target_oh) * input + target_oh * marginal_input
+
+        input = input * self.s
 
         return input
 
@@ -39,17 +47,39 @@ class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
+        self.norm = nn.BatchNorm2d(6)
+
         self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
         self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.model.last_linear = nn.Sequential(
-            nn.Dropout(0.2),
-            nn.Linear(self.model.last_linear.in_features, num_classes))
+        embedding_size = self.model.last_linear.in_features
+        self.model.last_linear = nn.Sequential()
 
-        self.norm = nn.BatchNorm2d(6)
+        self.embedding = nn.Embedding(4, embedding_size)
 
-    def forward(self, input):
+        self.output = nn.Sequential(
+            nn.Dropout(model.dropout),
+            nn.Linear(embedding_size, num_classes))
+
+        self.arc_output = nn.Sequential(
+            nn.Dropout(model.dropout),
+            NormalizedLinear(embedding_size, num_classes))
+        self.arc_face = ArcFace(num_classes)
+
+    def forward(self, input, feats, target=None):
+        if self.training:
+            assert target is not None
+        else:
+            assert target is None
+
         input = self.norm(input)
         input = self.model(input)
 
-        return input
+        embedding = self.embedding(feats)
+        input = input + embedding
+
+        output = self.output(input)
+        # arc_output = self.arc_output(input)
+        # arc_output = self.arc_face(arc_output, target)
+
+        return output

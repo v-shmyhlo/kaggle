@@ -23,13 +23,16 @@ import utils
 from cells.dataset import NUM_CLASSES
 from cells.dataset import TrainEvalDataset, TestDataset
 from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites
+    ToTensor, RandomSite, SplitInSites, ReweightChannels
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
 
 # TODO: mix sites
 # TODO: check predictions/targets name
+# TODO: more fc layers for arcface
+# TODO: pseudo labeling
+# TODO: greedy assignment
 # TODO: better minimum for lr
 # TODO: grad accum
 # TODO: tta
@@ -43,7 +46,6 @@ from .model import Model
 # TODO: user other images stats
 # TODO: cutout
 # TODO: mixup
-# TODO: cell type embedding
 # TODO: other cyclic (1cycle) impl
 # TODO: focal
 # TODO: https://www.rxrx.ai/
@@ -104,10 +106,10 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            # ReweightChannels(config.aug.channel_weight),
+            ReweightChannels(config.aug.channel_weight),
         ])),
-    StatColorJitter(),
-    Extract(['image', 'label', 'id']),
+    # StatColorJitter(),
+    Extract(['image', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
     ImageTransform(
@@ -117,7 +119,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
-    Extract(['image', 'label', 'id']),
+    Extract(['image', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ImageTransform(
@@ -127,7 +129,7 @@ test_transform = T.Compose([
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
-    Extract(['image', 'id']),
+    Extract(['image', 'feat', 'id']),
 ])
 
 
@@ -147,12 +149,6 @@ def mixup(images_1, labels_1, ids, alpha):
     labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
 
     return images, labels, ids
-
-
-# def cross_entropy(input, target):
-#     loss = -(target * input.log_softmax(1)).sum(1)
-#
-#     return loss
 
 
 def compute_loss(input, target):
@@ -269,9 +265,9 @@ def find_lr(train_eval_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, labels, ids in tqdm(train_data_loader, desc='lr search'):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits = model(images)
+    for images, feats, labels, ids in tqdm(train_data_loader, desc='lr search'):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        logits = model(images, feats, labels)
 
         loss = compute_loss(input=logits, target=labels)
 
@@ -321,9 +317,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for images, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        logits = model(images)
+    for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        logits = model(images, feats, labels)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -359,9 +355,9 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_ids = []
 
-        for images, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            logits = model(images)
+        for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+            logits = model(images, feats)
 
             loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
@@ -517,12 +513,13 @@ def predict_on_test_using_fold(fold, test_data):
     with torch.no_grad():
         fold_logits = []
         fold_ids = []
-        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            images = images.to(DEVICE)
+        for images, feats, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images, feats = images.to(DEVICE), feats.to(DEVICE)
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            logits = model(images)
+            feats = feats.view(b, 1).repeat(1, n).view(b * n)  # TODO: check
+            logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
 
             fold_logits.append(logits)
