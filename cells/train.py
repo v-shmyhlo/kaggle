@@ -502,7 +502,7 @@ def predict_on_test_using_fold(fold, test_data):
     test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=config.batch_size,
+        batch_size=config.batch_size // 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
