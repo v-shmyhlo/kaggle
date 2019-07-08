@@ -5,7 +5,7 @@ resize_size: 256
 image_size: 224
 
 model:
-  dropout: 0.5
+  dropout: 0.2
 
 aug:
   channel_weight: 0.5

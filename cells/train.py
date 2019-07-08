@@ -28,6 +28,7 @@ from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
 
+# TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: mix sites
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
