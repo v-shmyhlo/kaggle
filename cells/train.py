@@ -28,8 +28,14 @@ from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
 
+# TODO: mix features for same class (multiple layers)
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: mix sites
+# TODO: concat pool
+# TODO: gem pool
+# TODO: more out layers
+# TODO: sampler for triplet/mixup
+# TODO: hard triplet loss
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
 # TODO: pseudo labeling
