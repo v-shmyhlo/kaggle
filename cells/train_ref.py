@@ -26,7 +26,7 @@ from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspos
     ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from .model import Model
+from .model_ref import Model
 
 # TODO: mix features for same class (multiple layers)
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
