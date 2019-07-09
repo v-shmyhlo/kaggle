@@ -22,6 +22,8 @@ from config import Config
 from metric import accuracy
 
 # TODO: dropout
+# TODO: gradient aggregation
+
 
 NUM_CLASSES = 1000
 MEAN = [0.485, 0.456, 0.406]

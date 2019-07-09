@@ -150,7 +150,7 @@ class SplitInSites(object):
         return [image[:6], image[6:]]
 
 
-class ReweightChannels(object):
+class NormalizedColorJitter(object):
     def __init__(self, weight):
         self.weight = weight
 

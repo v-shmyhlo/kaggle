@@ -23,7 +23,7 @@ import utils
 from cells.dataset import NUM_CLASSES
 from cells.dataset import TrainEvalDataset, TestDataset
 from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, ReweightChannels
+    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from .model import Model
@@ -32,9 +32,12 @@ from .model import Model
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: mix sites
 # TODO: concat pool
+# TODO: rmsprop
+# TODO: greedy assign
 # TODO: gem pool
 # TODO: more out layers
 # TODO: sampler for triplet/mixup
+# TODO: parallel temp search
 # TODO: hard triplet loss
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
@@ -42,6 +45,7 @@ from .model import Model
 # TODO: greedy assignment
 # TODO: better minimum for lr
 # TODO: grad accum
+# TODO: eval with tta?
 # TODO: tta
 # TODO: val tta (sites)
 # TODO: lr schedules
@@ -113,7 +117,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            ReweightChannels(config.aug.channel_weight),
+            NormalizedColorJitter(config.aug.channel_weight),
         ])),
     # StatColorJitter(),
     Extract(['image', 'feat', 'label', 'id']),
@@ -138,6 +142,27 @@ test_transform = T.Compose([
         ])),
     Extract(['image', 'feat', 'id']),
 ])
+
+
+# TODO: use pool
+def find_temp_global(input, target, data):
+    temps = np.logspace(np.log(0.01), np.log(1.), 20, base=np.e)
+    metrics = []
+    for temp in tqdm(temps, desc='temp search'):
+        fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), data=data)
+        fold_preds = torch.tensor(fold_preds).to(input.device)
+        metric = compute_metric(input=fold_preds, target=target)
+        metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
+
+    temp = temps[np.argmax(metrics)]
+    metric = metrics[np.argmax(metrics)]
+    fig = plt.figure()
+    plt.plot(temps, metrics)
+    plt.xscale('log')
+    plt.axvline(temp)
+    plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
+
+    return temp, fig
 
 
 def worker_init_fn(_):
@@ -205,6 +230,7 @@ def build_optimizer(optimizer, parameters):
 
 
 # TODO: check
+# TODO: fair split
 def indices_for_fold(fold, dataset):
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
@@ -237,14 +263,6 @@ def images_to_rgb(input):
     input = input.mean(1)
 
     return input
-
-
-def focal_loss(input, target, gamma=2.):
-    target = utils.one_hot(target, NUM_CLASSES)
-    weight = (1 - input.softmax(1))**gamma
-    loss = -(weight * target * input.log_softmax(1)).sum(1)
-
-    return loss
 
 
 def find_lr(train_eval_data):
@@ -376,7 +394,9 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
-        fold_preds = assign_classes(probs=fold_logits.softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
+        temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+        fold_preds = assign_classes(
+            probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
         metric = compute_metric(input=fold_preds, target=fold_labels)
 
@@ -391,6 +411,7 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+        writer.add_figure('temps', fig, global_step=epoch)
 
         return metrics
 
@@ -482,13 +503,13 @@ def train_fold(fold, train_eval_data):
             torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
-def build_submission(folds, test_data):
+def build_submission(folds, test_data, temp):
     with torch.no_grad():
         probs = 0.
 
         for fold in folds:
             fold_logits, fold_ids = predict_on_test_using_fold(fold, test_data)
-            fold_probs = fold_logits.softmax(2).mean(1)
+            fold_probs = (fold_logits * temp).softmax(2).mean(1)
 
             probs = probs + fold_probs
             ids = fold_ids
@@ -537,6 +558,64 @@ def predict_on_test_using_fold(fold, test_data):
     return fold_logits, fold_ids
 
 
+def predict_on_eval_using_fold(fold, train_eval_data):
+    _, eval_indices = indices_for_fold(fold, train_eval_data)
+    eval_data = train_eval_data.iloc[eval_indices]
+    eval_dataset = TrainEvalDataset(eval_data, transform=eval_transform)
+    eval_data_loader = torch.utils.data.DataLoader(
+        eval_dataset,
+        batch_size=config.batch_size,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
+
+    model = Model(config.model, NUM_CLASSES)
+    model = model.to(DEVICE)
+    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+
+    model.eval()
+    with torch.no_grad():
+        fold_labels = []
+        fold_logits = []
+        fold_ids = []
+
+        for images, feats, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
+            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+            logits = model(images, feats)
+
+            fold_labels.append(labels)
+            fold_logits.append(logits)
+            fold_ids.extend(ids)
+
+        fold_labels = torch.cat(fold_labels, 0)
+        fold_logits = torch.cat(fold_logits, 0)
+        assert all(eval_data['id_code'] == fold_ids)
+
+        return fold_labels, fold_logits, fold_ids, eval_data
+
+
+# TODO: log metric
+def find_temp_for_folds(folds, train_eval_data):
+    with torch.no_grad():
+        labels = []
+        logits = []
+        data = []
+        for fold in folds:
+            fold_labels, fold_logits, _, fold_data = predict_on_eval_using_fold(fold, train_eval_data)
+            labels.append(fold_labels)
+            logits.append(fold_logits)
+            data.append(fold_data)
+
+        # TODO: check aggregated correctly
+        logits = torch.cat(logits, 0)
+        labels = torch.cat(labels, 0)
+        data = pd.concat(data)
+        temp, fig = find_temp_global(input=logits, target=labels, data=data)
+
+        print('temp: {:.4f}'.format(temp))
+
+        return temp
+
+
 def main():
     utils.seed_python(config.seed)
     utils.seed_torch(config.seed)
@@ -562,7 +641,8 @@ def main():
         for fold in folds:
             train_fold(fold, train_eval_data)
 
-    build_submission(folds, test_data)
+    temp = find_temp_for_folds(folds, train_eval_data)
+    build_submission(folds, test_data, temp)
 
 
 if __name__ == '__main__':
