@@ -30,6 +30,7 @@ from .model import Model
 
 # TODO: mix features for same class (multiple layers)
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
+# TODO: different heads for different cell types
 # TODO: mix sites
 # TODO: concat pool
 # TODO: rmsprop
