@@ -29,9 +29,7 @@ class Model(nn.Module):
         #     NormalizedLinear(embedding_size, num_classes))
         # self.arc_face = ArcFace(num_classes)
 
-    def forward(self, input, feats, target=None):
-        ref = torch.zeros((18, 6, 224, 224)).to(input.device)
-
+    def forward(self, input, ref, feats, target=None):
         if self.training:
             assert target is not None
         else:
@@ -47,5 +45,5 @@ class Model(nn.Module):
 
         input = input - ref
         output = self.output(input)
-       
+
         return output
