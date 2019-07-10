@@ -15,19 +15,19 @@ class Model(nn.Module):
         embedding_size = self.model.last_linear.in_features
         self.model.last_linear = nn.Sequential()
 
-        # self.embedding = nn.Embedding(4, embedding_size)
-
+        self.input = nn.Sequential(
+            nn.Linear(embedding_size, embedding_size),
+            nn.BatchNorm1d(embedding_size))
         self.ref = nn.Sequential(
-            nn.Linear(embedding_size * 18, embedding_size))
+            nn.Linear(embedding_size, embedding_size),
+            nn.BatchNorm1d(embedding_size))
 
         self.output = nn.Sequential(
+            nn.Linear(embedding_size, embedding_size),
+            nn.BatchNorm1d(embedding_size),
+            nn.ReLU(inplace=True),
             nn.Dropout(model.dropout),
             nn.Linear(embedding_size, num_classes))
-
-        # self.arc_output = nn.Sequential(
-        #     nn.Dropout(model.dropout),
-        #     NormalizedLinear(embedding_size, num_classes))
-        # self.arc_face = ArcFace(num_classes)
 
     def forward(self, input, ref, feats, target=None):
         if self.training:
@@ -38,11 +38,10 @@ class Model(nn.Module):
         input = torch.cat([input, ref], 0)
         input = self.norm(input)
         input = self.model(input)
-        input, ref = input[:-ref.size(0)], input[-ref.size(0):]
+        input, ref = torch.split(input, input.size(0) // 2)
 
-        ref = ref.view(1, ref.size(0) * ref.size(1))
+        input = self.input(input)
         ref = self.ref(ref)
-
         input = input - ref
         output = self.output(input)
 

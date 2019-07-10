@@ -20,13 +20,12 @@ from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.dataset import NUM_CLASSES
-from cells.dataset import TrainEvalDataset, TestDataset
-from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
+from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
+from cells.model import Model
+from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
     ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from .model import Model
 
 # TODO: mix features for same class (multiple layers)
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
@@ -40,6 +39,7 @@ from .model import Model
 # TODO: sampler for triplet/mixup
 # TODO: parallel temp search
 # TODO: hard triplet loss
+# TODO: eval site selection
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
 # TODO: pseudo labeling
@@ -111,7 +111,8 @@ class StatColorJitter(object):
 
 
 train_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image'],
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
@@ -125,7 +126,8 @@ train_transform = T.Compose([
     Extract(['image', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image'],
         T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
@@ -135,7 +137,8 @@ eval_transform = T.Compose([
     Extract(['image', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image'],
         T.Compose([
             Resize(config.resize_size),
             CenterCrop(config.image_size),

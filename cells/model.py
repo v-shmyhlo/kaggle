@@ -7,6 +7,9 @@ import torch.nn.functional as F
 import utils
 
 
+# TODO: norm layers
+
+
 class NormalizedLinear(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()

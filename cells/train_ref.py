@@ -20,13 +20,12 @@ from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import utils
-from cells.dataset import NUM_CLASSES
-from cells.dataset import TrainEvalDataset, TestDataset
-from cells.transforms import Extract, ImageTransform, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
+from cells.dataset_ref import NUM_CLASSES, TrainEvalDataset, TestDataset
+from cells.model_ref import Model
+from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
+    ToTensor, RandomSite, SplitInSites
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from .model_ref import Model
 
 # TODO: mix features for same class (multiple layers)
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
@@ -86,32 +85,9 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-
-class StatColorJitter(object):
-    def __init__(self):
-        class_to_stats = torch.load('./stats.pth')
-        class_to_stats = [s.view(*s.size(), 1, 1) for s in class_to_stats]
-
-        self.class_to_stats = class_to_stats
-
-    # TODO: check
-    def __call__(self, input):
-        stats = self.class_to_stats[input['label']]
-        mean, std = stats[np.random.randint(stats.size(0))]
-        dim = (1, 2)
-
-        image = input['image']
-        image = (image - image.mean(dim, keepdim=True)) / image.std(dim, keepdim=True).clamp(min=1e-7)
-        image = image * std + mean
-
-        return {
-            **input,
-            'image': image,
-        }
-
-
 train_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image', 'ref'],
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
@@ -119,30 +95,30 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            NormalizedColorJitter(config.aug.channel_weight),
         ])),
-    # StatColorJitter(),
-    Extract(['image', 'feat', 'label', 'id']),
+    Extract(['image', 'ref', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image', 'ref'],
         T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
-    Extract(['image', 'feat', 'label', 'id']),
+    Extract(['image', 'ref', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
-    ImageTransform(
+    ApplyTo(
+        ['image', 'ref'],
         T.Compose([
             Resize(config.resize_size),
             CenterCrop(config.image_size),
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
-    Extract(['image', 'feat', 'id']),
+    Extract(['image', 'ref', 'feat', 'id']),
 ])
 
 
@@ -344,9 +320,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     model.train()
-    for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+    for images, refs, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+        images, refs, feats, labels = images.to(DEVICE), refs.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        logits = model(images, refs, feats, labels)
 
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
@@ -382,9 +358,9 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_ids = []
 
-        for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+        for images, refs, feats, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, refs, feats, labels = images.to(DEVICE), refs.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+            logits = model(images, refs, feats)
 
             loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
@@ -396,7 +372,8 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
-        temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+        # temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+        temp, fig = 1., plt.figure()
         fold_preds = assign_classes(
             probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
