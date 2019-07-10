@@ -23,7 +23,7 @@ import utils
 from cells.dataset_ref import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model_ref import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites
+    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
@@ -95,7 +95,9 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
+            NormalizedColorJitter(config.aug.channel_weight),
         ])),
+    # StatColorJitter(),
     Extract(['image', 'ref', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([

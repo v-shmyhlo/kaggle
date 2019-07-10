@@ -15,19 +15,9 @@ class Model(nn.Module):
         embedding_size = self.model.last_linear.in_features
         self.model.last_linear = nn.Sequential()
 
-        self.input = nn.Sequential(
-            nn.Linear(embedding_size, embedding_size),
-            nn.BatchNorm1d(embedding_size))
-        self.ref = nn.Sequential(
-            nn.Linear(embedding_size, embedding_size),
-            nn.BatchNorm1d(embedding_size))
-
         self.output = nn.Sequential(
-            nn.Linear(embedding_size, embedding_size),
-            nn.BatchNorm1d(embedding_size),
-            nn.ReLU(inplace=True),
             nn.Dropout(model.dropout),
-            nn.Linear(embedding_size, num_classes))
+            nn.Linear(embedding_size * 2, num_classes))
 
     def forward(self, input, ref, feats, target=None):
         if self.training:
@@ -40,9 +30,7 @@ class Model(nn.Module):
         input = self.model(input)
         input, ref = torch.split(input, input.size(0) // 2)
 
-        input = self.input(input)
-        ref = self.ref(ref)
-        input = input - ref
+        input = torch.cat([input, ref], 1)
         output = self.output(input)
 
         return output
