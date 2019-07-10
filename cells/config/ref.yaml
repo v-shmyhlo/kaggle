@@ -1,6 +1,6 @@
 seed: 42
 epochs: 70
-batch_size: 220
+batch_size: 210
 resize_size: 256
 image_size: 224
 

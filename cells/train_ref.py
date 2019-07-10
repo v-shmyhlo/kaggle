@@ -221,6 +221,8 @@ def indices_for_fold(fold, dataset):
         ['U2OS-{:02d}'.format(i + 1) for i in range((fold - 1) * 1, fold * 1)]
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
+    print(train_indices / eval_indices)
+   
     assert np.intersect1d(train_indices, eval_indices).size == 0
 
     return train_indices, eval_indices
