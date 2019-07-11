@@ -23,7 +23,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites
+    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
