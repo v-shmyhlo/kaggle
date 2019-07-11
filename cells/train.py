@@ -150,7 +150,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            # NormalizedColorJitter(config.aug.channel_weight),
+            NormalizedColorJitter(config.aug.channel_weight),
         ])),
     # NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
