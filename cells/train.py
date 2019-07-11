@@ -221,8 +221,6 @@ def mixup(images_1, labels_1, ids, alpha):
 
 def compute_loss(input, target):
     loss = F.cross_entropy(input=input, target=target, reduction='none')
-    # loss = F.binary_cross_entropy_with_logits(input=input, target=utils.one_hot(target, NUM_CLASSES), reduction='none')
-    # loss = loss.sum(1)
 
     return loss
 
