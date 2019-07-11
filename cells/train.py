@@ -295,7 +295,7 @@ def find_lr(train_eval_data):
         worker_init_fn=worker_init_fn)
 
     min_lr = 1e-7
-    max_lr = 2.
+    max_lr = 1.
     gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
     lrs = []
@@ -429,8 +429,6 @@ def eval_epoch(model, data_loader, fold, epoch):
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
-        print(torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True).shape)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
         writer.add_figure('temps', fig, global_step=epoch)
@@ -500,13 +498,13 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(config.epochs):
-        # train_epoch(
-        #     model=model,
-        #     optimizer=optimizer,
-        #     scheduler=scheduler,
-        #     data_loader=train_data_loader,
-        #     fold=fold,
-        #     epoch=epoch)
+        train_epoch(
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            data_loader=train_data_loader,
+            fold=fold,
+            epoch=epoch)
         gc.collect()
         metric = eval_epoch(
             model=model,

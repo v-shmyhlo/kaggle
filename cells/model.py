@@ -1,5 +1,5 @@
+import efficientnet_pytorch
 import numpy as np
-import pretrainedmodels
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,22 +48,47 @@ class ArcFace(nn.Module):
 
 
 class Model(nn.Module):
+    # def __init__(self, model, num_classes):
+    #     super().__init__()
+    #
+    #     self.norm = nn.BatchNorm2d(6)
+    #
+    #     self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
+    #     self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    #     self.model.avgpool = nn.AdaptiveAvgPool2d(1)
+    #     embedding_size = self.model.last_linear.in_features
+    #     self.model.last_linear = nn.Sequential()
+    #
+    #     # self.embedding = nn.Embedding(4, embedding_size)
+    #
+    #     self.output = nn.Sequential(
+    #         nn.Dropout(model.dropout),
+    #         nn.Linear(embedding_size, num_classes))
+    #
+    #     # self.arc_output = nn.Sequential(
+    #     #     nn.Dropout(model.dropout),
+    #     #     NormalizedLinear(embedding_size, num_classes))
+    #     # self.arc_face = ArcFace(num_classes)
+
     def __init__(self, model, num_classes):
         super().__init__()
 
         self.norm = nn.BatchNorm2d(6)
 
-        self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
-        self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-        embedding_size = self.model.last_linear.in_features
-        self.model.last_linear = nn.Sequential()
+        self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
+        # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
+        #     6, 32, kernel_size=3, stride=2, bias=False)
+        self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.model._dropout = model.dropout
+        self.model._fc = nn.Linear(self.model._fc.in_features, num_classes)
 
         # self.embedding = nn.Embedding(4, embedding_size)
 
-        self.output = nn.Sequential(
-            nn.Dropout(model.dropout),
-            nn.Linear(embedding_size, num_classes))
+        self.output = nn.Sequential()
+
+        # self.output = nn.Sequential(
+        #     nn.Dropout(model.dropout),
+        #     nn.Linear(embedding_size, num_classes))
 
         # self.arc_output = nn.Sequential(
         #     nn.Dropout(model.dropout),
@@ -89,6 +114,7 @@ class Model(nn.Module):
 
         output = self.output(input)
         # arc_output = self.arc_output(input)
+
         # arc_output = self.arc_face(arc_output, target)
 
         return output
