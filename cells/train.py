@@ -29,6 +29,7 @@ from lr_scheduler import OneCycleScheduler
 
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
+# TODO: EffNet
 # TODO: add feats to input
 # TODO: normalize by control
 # TODO: learn closer to negative control and further to other batches
