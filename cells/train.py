@@ -32,6 +32,7 @@ from lr_scheduler import OneCycleScheduler
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
+# TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: learn closer to negative control and further to other batches
 # TODO: add feats to image
