@@ -28,6 +28,14 @@ from config import Config
 from lr_scheduler import OneCycleScheduler
 
 # TODO: mix features for same class (multiple layers)
+# TODO: relevant literature
+# TODO: add feats to input
+# TODO: normalize by control
+# TODO: learn closer to negative control and further to other batches
+# TODO: batch/plate effects
+# TODO: better split
+# TODO: another image as control
+# TODO: use all controls for training
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: different heads for different cell types
 # TODO: mix sites
@@ -37,6 +45,7 @@ from lr_scheduler import OneCycleScheduler
 # TODO: gem pool
 # TODO: more out layers
 # TODO: sampler for triplet/mixup
+# TODO: deep supervision
 # TODO: parallel temp search
 # TODO: hard triplet loss
 # TODO: eval site selection
