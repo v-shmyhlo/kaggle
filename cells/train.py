@@ -23,20 +23,25 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
+    ToTensor, RandomSite, SplitInSites
+from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: visualize!!!
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
-# TODO: add feats to input
-# TODO: normalize by control
 # TODO: learn closer to negative control and further to other batches
+# TODO: add feats to image
 # TODO: batch/plate effects
 # TODO: better split
-# TODO: another image as control
+# TODO: k shot learning
+# TODO: https://github.com/recursionpharma/rxrx1-utils
+# TODO: 2 images as control
+# TODO: https://data.broadinstitute.org/bbbc/image_sets.html
+# TODO: https://github.com/awesomedata/awesome-public-datasets#biology
 # TODO: use all controls for training
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: different heads for different cell types
@@ -65,7 +70,7 @@ from lr_scheduler import OneCycleScheduler
 # TODO: mixup within class
 # TODO: opts
 # TODO: adam
-# TODO: gradient reversal and domain adaptation for test data
+# TODO: domain adaptation
 # TODO: dropout
 # TODO: user other images stats
 # TODO: cutout
@@ -73,12 +78,10 @@ from lr_scheduler import OneCycleScheduler
 # TODO: other cyclic (1cycle) impl
 # TODO: focal
 # TODO: https://www.rxrx.ai/
-# TODO: ohem
 # TODO: batch effects
-# TODO: generalization notes in rxrx
 # TODO: metric learning
 # TODO: context modelling notes in rxrx
-# TODO: tta
+# TODO: generalization notes in rxrx
 
 
 FOLDS = list(range(1, 3 + 1))
@@ -96,6 +99,21 @@ parser.add_argument('--find-lr', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+
+
+class NormalizeByRefStats(object):
+    def __call__(self, input):
+        image, ref_stats = input['image'], input['ref_stats']
+
+        ref_stats = ref_stats[np.random.randint(ref_stats.size(0))]
+        mean, std = torch.split(ref_stats, 1, 1)
+        mean, std = mean.view(mean.size(0), 1, 1), std.view(std.size(0), 1, 1)
+        image = (image - mean) / std
+
+        return {
+            **input,
+            'image': image
+        }
 
 
 class StatColorJitter(object):
@@ -131,9 +149,9 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             ToTensor(),
-            NormalizedColorJitter(config.aug.channel_weight),
+            # NormalizedColorJitter(config.aug.channel_weight),
         ])),
-    # StatColorJitter(),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
@@ -145,6 +163,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
@@ -156,6 +175,7 @@ test_transform = T.Compose([
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'id']),
 ])
 
@@ -201,6 +221,8 @@ def mixup(images_1, labels_1, ids, alpha):
 
 def compute_loss(input, target):
     loss = F.cross_entropy(input=input, target=target, reduction='none')
+    # loss = F.binary_cross_entropy_with_logits(input=input, target=utils.one_hot(target, NUM_CLASSES), reduction='none')
+    # loss = loss.sum(1)
 
     return loss
 
@@ -260,25 +282,6 @@ def indices_for_fold(fold, dataset):
     assert np.intersect1d(train_indices, eval_indices).size == 0
 
     return train_indices, eval_indices
-
-
-def images_to_rgb(input):
-    colors = np.array([
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-        [1, 1, 0],
-        [1, 0, 1],
-        [0, 1, 1],
-    ], dtype=np.float32)
-    colors = colors / colors.sum(1, keepdims=True)
-    colors = colors.reshape((1, 6, 3, 1, 1))
-    colors = torch.tensor(colors).to(input.device)
-    input = input.unsqueeze(2)
-    input = input * colors
-    input = input.mean(1)
-
-    return input
 
 
 def find_lr(train_eval_data):
@@ -410,7 +413,8 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
-        temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+        # temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+        temp, fig = 1., plt.figure()
         fold_preds = assign_classes(
             probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
@@ -425,6 +429,8 @@ def eval_epoch(model, data_loader, fold, epoch):
             epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
+        print(torchvision.utils.make_grid(
+            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True).shape)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
         writer.add_figure('temps', fig, global_step=epoch)
@@ -494,13 +500,13 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(config.epochs):
-        train_epoch(
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            data_loader=train_data_loader,
-            fold=fold,
-            epoch=epoch)
+        # train_epoch(
+        #     model=model,
+        #     optimizer=optimizer,
+        #     scheduler=scheduler,
+        #     data_loader=train_data_loader,
+        #     fold=fold,
+        #     epoch=epoch)
         gc.collect()
         metric = eval_epoch(
             model=model,

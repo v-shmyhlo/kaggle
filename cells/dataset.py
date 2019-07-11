@@ -10,6 +10,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
         self.transform = transform
+        self.plate_to_stats = torch.load('./cells/plate_stats.pth')
         self.cell_type_to_id = {cell_type: i for i, cell_type in enumerate(['HEPG2', 'HUVEC', 'RPE', 'U2OS'])}
 
     def __len__(self):
@@ -28,11 +29,14 @@ class TrainEvalDataset(torch.utils.data.Dataset):
                     '{}_s{}_w{}.png'.format(row['well'], s, c)))
                 for c in range(1, 7)])
 
+        ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
+
         cell_type = row['experiment'].split('-')[0]
         feat = self.cell_type_to_id[cell_type]
 
         input = {
             'image': image,
+            'ref_stats': ref_stats,
             'feat': feat,
             'label': row['sirna'],
             'id': row['id_code'],
