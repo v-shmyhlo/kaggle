@@ -28,9 +28,13 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: triplet loss
+# TODO: TVN (Typical Variation Normalization)
+
 # TODO: correct tensorboard visualization
 # TODO: correct color jitter
 # TODO: visualize!!!
+# TODO: normalize embedding by ref
 # TODO: onecycle does not platoes
 # TODO: onecycle longer last stage
 # TODO: speedup eval
