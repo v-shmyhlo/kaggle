@@ -28,10 +28,14 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: correct tensorboard visualization
+# TODO: correct color jitter
 # TODO: visualize!!!
+# TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
+# TODO: optimize data loading
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: learn closer to negative control and further to other batches
