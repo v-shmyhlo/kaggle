@@ -12,7 +12,11 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.6
+  lr: 0.3
+
+  #  type: rmsprop
+  #  lr: 0.00024
+
   weight_decay: 1e-4
 
   sgd:
@@ -40,3 +44,5 @@ sched:
   onecycle:
     anneal: linear
     beta: [0.95, 0.85]
+    peak_pos: 0.4
+    end_pos: 0.8

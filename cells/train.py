@@ -31,11 +31,15 @@ from lr_scheduler import OneCycleScheduler
 # TODO: correct tensorboard visualization
 # TODO: correct color jitter
 # TODO: visualize!!!
+# TODO: onecycle does not platoes
+# TODO: onecycle longer last stage
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
 # TODO: optimize data loading
+# TODO: rmsprop
+# TODO: gradacum
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: learn closer to negative control and further to other batches
@@ -100,7 +104,7 @@ parser.add_argument('--restore-path', type=str)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--infer', action='store_true')
-parser.add_argument('--find-lr', action='store_true')
+parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
@@ -288,7 +292,7 @@ def indices_for_fold(fold, dataset):
     return train_indices, eval_indices
 
 
-def find_lr(train_eval_data):
+def lr_search(train_eval_data):
     train_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -299,7 +303,7 @@ def find_lr(train_eval_data):
         worker_init_fn=worker_init_fn)
 
     min_lr = 1e-7
-    max_lr = 1.
+    max_lr = 10.
     gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
 
     lrs = []
@@ -310,6 +314,8 @@ def find_lr(train_eval_data):
     model = model.to(DEVICE)
 
     optimizer = build_optimizer(config.opt, model.parameters())
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
@@ -472,7 +478,9 @@ def train_fold(fold, train_eval_data):
                 lr=(config.opt.lr / 20, config.opt.lr),
                 beta=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
-                annealing=config.sched.onecycle.anneal))
+                annealing=config.sched.onecycle.anneal,
+                peak_pos=config.sched.onecycle.peak_pos,
+                end_pos=config.sched.onecycle.end_pos))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
@@ -650,9 +658,9 @@ def main():
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
     test_data['root'] = os.path.join(args.dataset_path, 'test')
 
-    if args.find_lr:
-        lr = find_lr(train_eval_data)
-        print('find_lr: {}'.format(lr))
+    if args.lr_search:
+        lr = lr_search(train_eval_data)
+        print('lr_search: {}'.format(lr))
         gc.collect()
         return
 

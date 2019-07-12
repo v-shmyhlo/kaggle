@@ -13,7 +13,7 @@ class LRScheduler(object):
 
 
 class OneCycleScheduler(LRScheduler):
-    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.4, end_pos=0.9):
+    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.4, end_pos=0.8):
         assert peak_pos < end_pos, '{} should be less than {}'.format(peak_pos, end_pos)
 
         if annealing == 'linear':
@@ -41,12 +41,10 @@ class OneCycleScheduler(LRScheduler):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
 
-            if 'betas' in param_group:
-                param_group['betas'] = (beta, *param_group['betas'][1:])
-            elif 'momentum' in param_group:
+            if 'momentum' in param_group:
                 param_group['momentum'] = beta
             else:
-                raise AssertionError('no beta parameter')
+                raise AssertionError('no momentum parameter')
 
     def get_lr(self):
         mid = round(self.max_steps * self.peak_pos)
