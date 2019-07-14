@@ -1,5 +1,6 @@
 import argparse
 import gc
+import itertools
 import math
 import os
 import shutil
@@ -21,20 +22,22 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
-from cells.model import Model
+from cells.model_m import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
     ToTensor, RandomSite, SplitInSites, NormalizedColorJitter, RandomRotation
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from triplet_loss import batch_hard_triplet_loss
 
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
-# TODO: normalize by ref
 
-# TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
-# TODO: plato sched, (other scheds)
-# TODO: random scale
+# TODO: smaller embeddings
+# TODO: margin
+# TODO: batch sampler
+
+
 # TODO: cyclic, clr, cawr
 # TODO: triplet mining
 # TODO: reduce plato
@@ -44,11 +47,13 @@ from lr_scheduler import OneCycleScheduler
 # TODO: visualize!!!
 # TODO: normalize embedding by ref
 # TODO: onecycle does not platoes
+# TODO: onecycle longer last stage
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
 # TODO: optimize data loading
+# TODO: rmsprop
 # TODO: gradacum
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
@@ -66,11 +71,14 @@ from lr_scheduler import OneCycleScheduler
 # TODO: different heads for different cell types
 # TODO: mix sites
 # TODO: concat pool
+# TODO: rmsprop
 # TODO: greedy assign
 # TODO: gem pool
 # TODO: more out layers
+# TODO: sampler for triplet/mixup
 # TODO: deep supervision
 # TODO: parallel temp search
+# TODO: hard triplet loss
 # TODO: eval site selection
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
@@ -115,6 +123,54 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+
+
+class BatchSampler(torch.utils.data.Sampler):
+    def __init__(self, data, batch_size, drop_last):
+        super().__init__(data)
+
+        if not isinstance(batch_size, torch.utils.data.sampler._int_classes) or isinstance(batch_size, bool) or \
+                batch_size <= 0:
+            raise ValueError("batch_size should be a positive integer value, "
+                             "but got batch_size={}".format(batch_size))
+        if not isinstance(drop_last, bool):
+            raise ValueError("drop_last should be a boolean value, but got "
+                             "drop_last={}".format(drop_last))
+
+        self.data = data
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+
+        label_idxs = [[] for _ in range(NUM_CLASSES)]
+        for idx, label in enumerate(data['sirna']):
+            label_idxs[label].append(idx)
+
+        label_idxs = [iter(idxs) for idxs in label_idxs]
+        res = []
+        while True:
+            size = len(res)
+            for idxs in label_idxs:
+                res.extend(itertools.islice(idxs, 4))
+            if len(res) == size:
+                break
+        assert data.iloc[res[:500]]['sirna'].nunique() == 125  # TODO:
+        self.res = res
+
+    def __iter__(self):
+        batch = []
+        for idx in self.res:
+            batch.append(idx)
+            if len(batch) == self.batch_size:
+                yield batch
+                batch = []
+        if len(batch) > 0 and not self.drop_last:
+            yield batch
+
+    def __len__(self):
+        if self.drop_last:
+            return len(self.data) // self.batch_size
+        else:
+            return (len(self.data) + self.batch_size - 1) // self.batch_size
 
 
 class NormalizeByRefStats(object):
@@ -236,8 +292,11 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+def compute_loss(input, embeddings, target):
+    ce = F.cross_entropy(input=input, target=target, reduction='none')
+    tl = batch_hard_triplet_loss(embeddings, target, 1.)
+    assert ce.size() == tl.size()
+    loss = ce * 0.9 + tl * 0.1
 
     return loss
 
@@ -282,24 +341,19 @@ def build_optimizer(optimizer, parameters):
         raise AssertionError('invalid OPT {}'.format(optimizer.type))
 
 
+# TODO: check
+# TODO: fair split
 def indices_for_fold(fold, dataset):
-    fold_eval_exps = [
-        None,
-        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
-         'U2OS-01'],
-        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
-         'U2OS-02'],
-        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
-         'U2OS-03'],
-    ]
-
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
-    eval_exps = fold_eval_exps[fold]
+    eval_exps = \
+        ['HEPG2-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
+        ['HUVEC-{:02d}'.format(i + 1) for i in range((fold - 1) * 3, fold * 3)] + \
+        ['RPE-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
+        ['U2OS-{:02d}'.format(i + 1) for i in range((fold - 1) * 1, fold * 1)]
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
 
     return train_indices, eval_indices
 
@@ -308,9 +362,7 @@ def lr_search(train_eval_data):
     train_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=config.batch_size,
-        drop_last=True,
-        shuffle=True,
+        batch_sampler=BatchSampler(train_dataset.data, config.batch_size, drop_last=True),
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -333,9 +385,9 @@ def lr_search(train_eval_data):
     model.train()
     for images, feats, labels, ids in tqdm(train_data_loader, desc='lr search'):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+        logits, embeddings = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -385,9 +437,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     model.train()
     for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+        logits, embeddings = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr, _ = scheduler.get_lr()
@@ -423,9 +475,9 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+            logits, embeddings = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)
@@ -464,9 +516,7 @@ def train_fold(fold, train_eval_data):
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=config.batch_size,
-        drop_last=True,
-        shuffle=True,
+        batch_sampler=BatchSampler(train_dataset.data, config.batch_size, drop_last=True),
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
@@ -516,11 +566,7 @@ def train_fold(fold, train_eval_data):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='max',
-                factor=config.sched.plateau.decay,
-                patience=config.sched.plateau.patience,
-                verbose=True))
+                optimizer, mode='max', factor=0.5, patience=0, verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 

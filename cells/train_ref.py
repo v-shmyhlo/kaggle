@@ -23,7 +23,7 @@ import utils
 from cells.dataset_ref import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model_ref import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter
+    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter, RandomRotation
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
@@ -87,17 +87,29 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
 train_transform = T.Compose([
     ApplyTo(
-        ['image', 'ref'],
+        ['image'],
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
             RandomCrop(config.image_size),
             RandomFlip(),
             RandomTranspose(),
+            RandomRotation(180),
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
-    # StatColorJitter(),
+    ApplyTo(
+        ['ref'],
+        T.Compose([
+            RandomSite(),
+            Resize(config.resize_size),
+            RandomCrop(config.image_size),
+            RandomFlip(),
+            RandomTranspose(),
+            RandomRotation(180),
+            ToTensor(),
+        ])),
+    # NormalizeByRefStats(),
     Extract(['image', 'ref', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
@@ -109,6 +121,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
+    # NormalizeByRefStats(),
     Extract(['image', 'ref', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
@@ -120,6 +133,7 @@ test_transform = T.Compose([
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
+    # NormalizeByRefStats(),
     Extract(['image', 'ref', 'feat', 'id']),
 ])
 
@@ -222,7 +236,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     print(train_indices / eval_indices)
-   
+
     assert np.intersect1d(train_indices, eval_indices).size == 0
 
     return train_indices, eval_indices

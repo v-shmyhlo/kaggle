@@ -1,5 +1,5 @@
 seed: 42
-epochs: 70
+epochs: 100
 batch_size: 90
 resize_size: 256
 image_size: 224
@@ -29,8 +29,8 @@ sched:
     step_size: 100
 
   plateau:
-    decay: 0.1
-    patience: 2
+    decay: 0.5
+    patience: 5
 
   cyclic:
     step_size_up: 2
