@@ -1,6 +1,6 @@
 seed: 42
 epochs: 70
-batch_size: 90
+batch_size: 42
 resize_size: 256
 image_size: 224
 
@@ -12,7 +12,7 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.3
+  lr: 0.15
   weight_decay: 1e-4
 
   sgd:
@@ -42,4 +42,3 @@ sched:
     beta: [0.95, 0.85]
     peak_pos: 0.4
     end_pos: 0.8
-

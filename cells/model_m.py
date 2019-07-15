@@ -16,7 +16,10 @@ class Model(nn.Module):
         #     6, 32, kernel_size=3, stride=2, bias=False)
         self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
         self.model._dropout = model.dropout
-        self.model._fc = nn.Linear(self.model._fc.in_features, num_classes)
+        embedding_size = self.model._fc.in_features
+        self.model._fc = nn.Linear(embedding_size, num_classes)
+
+        self.out_norm = nn.BatchNorm1d(embedding_size)
 
     def forward(self, input, feats, target=None):
         if self.training:
@@ -31,7 +34,9 @@ class Model(nn.Module):
 
         # Pooling and final linear layer
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
+        input = self.out_norm(input)
         features = input
+
         if self.model._dropout:
             input = F.dropout(input, p=self.model._dropout, training=self.training)
         input = self.model._fc(input)

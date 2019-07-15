@@ -36,7 +36,7 @@ from triplet_loss import batch_hard_triplet_loss
 # TODO: smaller embeddings
 # TODO: margin
 # TODO: batch sampler
-
+# TODO: triplet ref margin
 
 # TODO: cyclic, clr, cawr
 # TODO: triplet mining
@@ -123,6 +123,9 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+
+
+# TODO: shuffle!!!
 
 
 class BatchSampler(torch.utils.data.Sampler):
@@ -294,7 +297,7 @@ def mixup(images_1, labels_1, ids, alpha):
 
 def compute_loss(input, embeddings, target):
     ce = F.cross_entropy(input=input, target=target, reduction='none')
-    tl = batch_hard_triplet_loss(embeddings, target, 1.)
+    tl = batch_hard_triplet_loss(embeddings, target, margin=0.5)
     assert ce.size() == tl.size()
     loss = ce * 0.9 + tl * 0.1
 

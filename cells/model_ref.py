@@ -1,6 +1,7 @@
-import pretrainedmodels
+import efficientnet_pytorch
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Model(nn.Module):
@@ -9,18 +10,15 @@ class Model(nn.Module):
 
         self.norm = nn.BatchNorm2d(6)
 
-        self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
-        self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-        embedding_size = self.model.last_linear.in_features
-        self.model.last_linear = nn.Sequential()
+        self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
+        # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
+        #     6, 32, kernel_size=3, stride=2, bias=False)
+        self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.model._dropout = model.dropout
+        embedding_size = self.model._fc.in_features
+        self.model._fc = nn.Linear(embedding_size, num_classes)
 
-        self.norm_i = nn.BatchNorm1d(embedding_size)
-        self.norm_r = nn.BatchNorm1d(embedding_size)
-
-        self.output = nn.Sequential(
-            nn.Dropout(model.dropout),
-            nn.Linear(embedding_size, num_classes))
+        self.norm_o = nn.BatchNorm1d(embedding_size)
 
     def forward(self, input, ref, feats, target=None):
         if self.training:
@@ -30,15 +28,16 @@ class Model(nn.Module):
 
         input = torch.cat([input, ref], 0)
         input = self.norm(input)
-        input = self.model(input)
+        input = self.model.extract_features(input)
+        input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
         input, ref = torch.split(input, input.size(0) // 2, 0)
 
-        input = self.norm_i(input)
-        ref = self.norm_r(ref)
-
-        input = (input - ref) / torch.norm(ref, 2, 1)
+        input = input - ref
+        input = F.normalize(input, 2, 1)
         input = self.norm_o(input)
 
-        output = self.output(input)
+        if self.model._dropout:
+            input = F.dropout(input, p=self.model._dropout, training=self.training)
+        input = self.model._fc(input)
 
-        return output
+        return input
