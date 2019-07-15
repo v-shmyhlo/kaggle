@@ -34,12 +34,12 @@ from lr_scheduler import OneCycleScheduler
 # TODO: label smoothing
 
 
+# TODO: diverse model
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
 # TODO: plato sched, (other scheds)
 # TODO: random scale
 # TODO: cyclic, clr, cawr
 # TODO: triplet mining
-# TODO: reduce plato
 # TODO: print fold
 # TODO: correct tensorboard visualization
 # TODO: correct color jitter
@@ -401,8 +401,8 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         images = images_to_rgb(images)[:16]
-        print('[EPOCH {}][TRAIN] {}'.format(
-            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        print('[FOLD {}][EPOCH {}][TRAIN] {}'.format(
+            fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
@@ -447,10 +447,10 @@ def eval_epoch(model, data_loader, fold, epoch):
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
             metrics[k] = metric[k].mean().data.cpu().numpy()
-
+           
         images = images_to_rgb(images)[:16]
-        print('[EPOCH {}][EVAL] {}'.format(
-            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
+            fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
