@@ -31,6 +31,8 @@ from lr_scheduler import OneCycleScheduler
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref
+# TODO: label smoothing
+
 
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
 # TODO: plato sched, (other scheds)

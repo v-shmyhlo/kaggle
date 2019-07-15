@@ -144,10 +144,12 @@ class BatchSampler(torch.utils.data.Sampler):
         self.batch_size = batch_size
         self.drop_last = drop_last
 
+    def build_indices(self):
         label_idxs = [[] for _ in range(NUM_CLASSES)]
-        for idx, label in enumerate(data['sirna']):
+        for idx, label in enumerate(self.data['sirna']):
             label_idxs[label].append(idx)
 
+        label_idxs = [np.array(idxs)[np.random.permutation(len(idxs))] for idxs in label_idxs]
         label_idxs = [iter(idxs) for idxs in label_idxs]
         res = []
         while True:
@@ -156,12 +158,13 @@ class BatchSampler(torch.utils.data.Sampler):
                 res.extend(itertools.islice(idxs, 4))
             if len(res) == size:
                 break
-        assert data.iloc[res[:500]]['sirna'].nunique() == 125  # TODO:
-        self.res = res
+        assert self.data.iloc[res[:500]]['sirna'].nunique() == 125  # TODO:
 
+        return res
+  
     def __iter__(self):
         batch = []
-        for idx in self.res:
+        for idx in self.build_indices():
             batch.append(idx)
             if len(batch) == self.batch_size:
                 yield batch
@@ -297,7 +300,7 @@ def mixup(images_1, labels_1, ids, alpha):
 
 def compute_loss(input, embeddings, target):
     ce = F.cross_entropy(input=input, target=target, reduction='none')
-    tl = batch_hard_triplet_loss(embeddings, target, margin=0.5)
+    tl = batch_hard_triplet_loss(embeddings, target, margin=0.1)
     assert ce.size() == tl.size()
     loss = ce * 0.9 + tl * 0.1
 
