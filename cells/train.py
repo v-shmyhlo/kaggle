@@ -170,7 +170,7 @@ train_transform = T.Compose([
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
-    # NormalizeByRefStats(),
+    NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
@@ -182,7 +182,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
-    # NormalizeByRefStats(),
+    NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
@@ -194,7 +194,7 @@ test_transform = T.Compose([
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
-    # NormalizeByRefStats(),
+    NormalizeByRefStats(),
     Extract(['image', 'feat', 'id']),
 ])
 
