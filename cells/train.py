@@ -28,11 +28,17 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# no mask: cv - 0.5937, lb - 0.6840
+# mask: cv - 0.6242, lb - 0.4930
+
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref
 # TODO: label smoothing
 
+# TODO: show score on temp search
+
+# TODO: how to split? fair split not working
 
 # TODO: diverse model
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
@@ -216,6 +222,7 @@ def find_temp_global(input, target, data):
     plt.xscale('log')
     plt.axvline(temp)
     plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
+    print('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp)) # FIXME:
 
     return temp, fig
 
@@ -447,7 +454,6 @@ def eval_epoch(model, data_loader, fold, epoch):
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
             metrics[k] = metric[k].mean().data.cpu().numpy()
-           
         images = images_to_rgb(images)[:16]
         print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
             fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
@@ -596,7 +602,7 @@ def predict_on_test_using_fold(fold, test_data):
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1).repeat(1, n).view(b * n)  # TODO: check
+            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)  # TODO: check
             logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
 

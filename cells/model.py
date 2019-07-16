@@ -95,6 +95,10 @@ class Model(nn.Module):
         #     NormalizedLinear(embedding_size, num_classes))
         # self.arc_face = ArcFace(num_classes)
 
+        # self.mask = torch.zeros(4, num_classes, dtype=torch.uint8)
+        # for sirna, plate in enumerate(torch.tensor(np.load('./cells/ignored.npy') - 1)):
+        #     self.mask[plate, sirna] = True
+
     def forward(self, input, feats, target=None):
         if self.training:
             assert target is not None
@@ -116,6 +120,9 @@ class Model(nn.Module):
         # arc_output = self.arc_output(input)
 
         # arc_output = self.arc_face(arc_output, target)
+
+        # mask = self.mask[feats[:, 1]]
+        # output[mask] = float('-inf')
 
         return output
 
