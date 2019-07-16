@@ -75,14 +75,15 @@ class Model(nn.Module):
 
         self.norm = nn.BatchNorm2d(6)
 
+        # self.emb1 = nn.Embedding(4, 6)
+        # self.emb2 = nn.Embedding(4, 6)
+
         self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
         # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
         #     6, 32, kernel_size=3, stride=2, bias=False)
         self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
         self.model._dropout = model.dropout
         self.model._fc = nn.Linear(self.model._fc.in_features, num_classes)
-
-        # self.embedding = nn.Embedding(4, embedding_size)
 
         self.output = nn.Sequential()
 
@@ -106,6 +107,12 @@ class Model(nn.Module):
             assert target is None
 
         input = self.norm(input)
+
+        # emb = self.emb1(feats[:, 0]) + self.emb2(feats[:, 1])
+        # emb = emb.view(emb.size(0), emb.size(1), 1, 1)
+        # emb = emb.repeat(1, 1, input.size(2), input.size(3))
+        # input = torch.cat([input, emb], 1)
+
         input = self.model(input)
 
         # embedding = self.embedding(feats)

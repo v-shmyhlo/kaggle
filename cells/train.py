@@ -31,6 +31,11 @@ from lr_scheduler import OneCycleScheduler
 # no mask: cv - 0.5937, lb - 0.6840
 # mask: cv - 0.6242, lb - 0.4930
 
+
+# TODO: do not cycle beta
+# TODO: model diverse split
+# TODO: well coding
+# TODO: learn normalization per plate
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref
@@ -176,7 +181,7 @@ train_transform = T.Compose([
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
-    NormalizeByRefStats(),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 eval_transform = T.Compose([
@@ -188,7 +193,7 @@ eval_transform = T.Compose([
             CenterCrop(config.image_size),
             ToTensor(),
         ])),
-    NormalizeByRefStats(),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'label', 'id']),
 ])
 test_transform = T.Compose([
@@ -200,7 +205,7 @@ test_transform = T.Compose([
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
-    NormalizeByRefStats(),
+    # NormalizeByRefStats(),
     Extract(['image', 'feat', 'id']),
 ])
 
@@ -222,7 +227,7 @@ def find_temp_global(input, target, data):
     plt.xscale('log')
     plt.axvline(temp)
     plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
-    print('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp)) # FIXME:
+    print('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
 
     return temp, fig
 
@@ -284,7 +289,6 @@ def build_optimizer(optimizer, parameters):
         return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
-            # alpha=0.9999,#FIXME:
             momentum=optimizer.rmsprop.momentum,
             weight_decay=optimizer.weight_decay)
     else:
