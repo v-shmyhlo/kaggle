@@ -32,6 +32,7 @@ from lr_scheduler import OneCycleScheduler
 # mask: cv - 0.6242, lb - 0.4930
 
 
+# TODO: binarize image?
 # TODO: do not cycle beta
 # TODO: model diverse split
 # TODO: well coding

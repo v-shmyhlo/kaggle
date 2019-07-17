@@ -1,13 +1,9 @@
 import efficientnet_pytorch
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 import utils
-
-
-# TODO: norm layers
 
 
 class NormalizedLinear(nn.Module):
@@ -48,35 +44,10 @@ class ArcFace(nn.Module):
 
 
 class Model(nn.Module):
-    # def __init__(self, model, num_classes):
-    #     super().__init__()
-    #
-    #     self.norm = nn.BatchNorm2d(6)
-    #
-    #     self.model = pretrainedmodels.resnet18(num_classes=1000, pretrained='imagenet')
-    #     self.model.conv1 = nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False)
-    #     self.model.avgpool = nn.AdaptiveAvgPool2d(1)
-    #     embedding_size = self.model.last_linear.in_features
-    #     self.model.last_linear = nn.Sequential()
-    #
-    #     # self.embedding = nn.Embedding(4, embedding_size)
-    #
-    #     self.output = nn.Sequential(
-    #         nn.Dropout(model.dropout),
-    #         nn.Linear(embedding_size, num_classes))
-    #
-    #     # self.arc_output = nn.Sequential(
-    #     #     nn.Dropout(model.dropout),
-    #     #     NormalizedLinear(embedding_size, num_classes))
-    #     # self.arc_face = ArcFace(num_classes)
-
     def __init__(self, model, num_classes):
         super().__init__()
 
         self.norm = nn.BatchNorm2d(6)
-
-        # self.emb1 = nn.Embedding(4, 6)
-        # self.emb2 = nn.Embedding(4, 6)
 
         self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
         # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
@@ -87,19 +58,6 @@ class Model(nn.Module):
 
         self.output = nn.Sequential()
 
-        # self.output = nn.Sequential(
-        #     nn.Dropout(model.dropout),
-        #     nn.Linear(embedding_size, num_classes))
-
-        # self.arc_output = nn.Sequential(
-        #     nn.Dropout(model.dropout),
-        #     NormalizedLinear(embedding_size, num_classes))
-        # self.arc_face = ArcFace(num_classes)
-
-        # self.mask = torch.zeros(4, num_classes, dtype=torch.uint8)
-        # for sirna, plate in enumerate(torch.tensor(np.load('./cells/ignored.npy') - 1)):
-        #     self.mask[plate, sirna] = True
-
     def forward(self, input, feats, target=None):
         if self.training:
             assert target is not None
@@ -107,38 +65,7 @@ class Model(nn.Module):
             assert target is None
 
         input = self.norm(input)
-
-        # emb = self.emb1(feats[:, 0]) + self.emb2(feats[:, 1])
-        # emb = emb.view(emb.size(0), emb.size(1), 1, 1)
-        # emb = emb.repeat(1, 1, input.size(2), input.size(3))
-        # input = torch.cat([input, emb], 1)
-
         input = self.model(input)
-
-        # embedding = self.embedding(feats)
-        # input = input + embedding
-
-        # if target is not None:
-        #     alpha = torch.rand(target.size(0), 1).to(input.device)
-        #     indices = get_shuffle_indices(target)
-        #     input = alpha * input + (1 - alpha) * input[indices]
-
         output = self.output(input)
-        # arc_output = self.arc_output(input)
-
-        # arc_output = self.arc_face(arc_output, target)
-
-        # mask = self.mask[feats[:, 1]]
-        # output[mask] = float('-inf')
 
         return output
-
-
-def get_shuffle_indices(target):
-    eq = target.unsqueeze(1) == target.unsqueeze(0)
-    eq[torch.eye(target.size(0)).byte()] = 0
-    indices = [np.where(row)[0] for row in eq.data.cpu().numpy()]
-    indices = [np.random.choice(row) if row.shape[0] > 0 else i for i, row in enumerate(indices)]
-    indices = torch.tensor(indices).to(target.device)
-
-    return indices
