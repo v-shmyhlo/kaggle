@@ -28,6 +28,8 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: arcface
+# TODO: plot temp search
 # TODO: fix rotation order
 # TODO: metric per type
 # TODO: metric per experiment
@@ -458,8 +460,12 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
-        # temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
-        temp, fig = 1., plt.figure()
+        if epoch % 10 == 0:
+            temp = 1.
+            _, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+            writer.add_figure('temps', fig, global_step=epoch)
+        else:
+            temp = 1.
         fold_preds = assign_classes(
             probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
@@ -475,7 +481,6 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
-        writer.add_figure('temps', fig, global_step=epoch)
 
         return metrics
 
