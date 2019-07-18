@@ -28,6 +28,9 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: fix rotation order
+# TODO: metric per type
+# TODO: metric per experiment
 # TODO: onecycle remove plat area
 # TODO: no cycle beta
 # TODO: b2/b3
@@ -410,7 +413,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
-        lr, _ = scheduler.get_lr()
+        lr = scheduler.get_lr()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()

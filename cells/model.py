@@ -71,7 +71,7 @@ class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
-        assert model.type in ['b0', 'b1']
+        assert model.type in ['b0', 'b1', 'b2']
 
         self.norm = nn.BatchNorm2d(6)
         # self.sample_norm = SampleNorm(6)
