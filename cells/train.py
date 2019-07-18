@@ -28,10 +28,14 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
-# no mask: cv - 0.5937, lb - 0.6840
-# mask: cv - 0.6242, lb - 0.4930
-
-
+# TODO: onecycle remove plat area
+# TODO: no cycle beta
+# TODO: b2/b3
+# TODO: shift / scale
+# TODO: crop from fullsize
+# TODO: random stitch sites
+# TODO: no crop?
+# TODO: finetune full size
 # TODO: distort aspect ratio
 # TODO: well info
 # TODO: cutout
@@ -180,7 +184,7 @@ train_transform = T.Compose([
             RandomCrop(config.image_size),
             RandomFlip(),
             RandomTranspose(),
-            RandomRotation(180),
+            RandomRotation(180),  # FIXME:
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
@@ -673,8 +677,6 @@ def find_temp_for_folds(folds, train_eval_data):
         labels = torch.cat(labels, 0)
         data = pd.concat(data)
         temp, fig = find_temp_global(input=logits, target=labels, data=data)
-
-        print('temp: {:.4f}'.format(temp))
 
         return temp
 

@@ -40,5 +40,6 @@ sched:
   onecycle:
     anneal: linear
     beta: [0.95, 0.85]
-    peak_pos: 0.4
-    end_pos: 0.8
+    peak_pos: 0.45
+    end_pos: 0.9
+
