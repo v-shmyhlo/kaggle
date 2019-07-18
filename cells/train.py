@@ -22,12 +22,14 @@ import lr_scheduler_wrapper
 import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
-from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter, RandomRotation
+from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
+    NormalizedColorJitter, RandomRotation
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: training less epochs
+# TODO: check if sites can be stitched
 # TODO: 512 size
 # TODO: remove crop/resize if not used
 # TODO: check temps for arcface
@@ -143,6 +145,7 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+assert config.resize_size == config.image_size
 
 
 class NormalizeByRefStats(object):
@@ -189,7 +192,7 @@ train_transform = T.Compose([
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
-            RandomCrop(config.image_size),
+            # RandomCrop(config.image_size),
             RandomFlip(),
             RandomTranspose(),
             RandomRotation(180),  # FIXME:
@@ -205,7 +208,7 @@ eval_transform = T.Compose([
         T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
-            CenterCrop(config.image_size),
+            # CenterCrop(config.image_size),
             ToTensor(),
         ])),
     # NormalizeByRefStats(),
@@ -216,7 +219,7 @@ test_transform = T.Compose([
         ['image'],
         T.Compose([
             Resize(config.resize_size),
-            CenterCrop(config.image_size),
+            # CenterCrop(config.image_size),
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
@@ -227,7 +230,7 @@ test_transform = T.Compose([
 
 # TODO: use pool
 def find_temp_global(input, target, data):
-    temps = np.logspace(np.log(0.01), np.log(1.), 20, base=np.e)
+    temps = np.logspace(np.log(0.001), np.log(1.), 30, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), data=data)
