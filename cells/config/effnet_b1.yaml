@@ -1,7 +1,7 @@
 seed: 42
 epochs: 50
 batch_size: 56
-resize_size: 274
+resize_size: 240
 image_size: 240
 
 model:
@@ -42,4 +42,3 @@ sched:
     beta: [0.95, 0.85]
     peak_pos: 0.45
     end_pos: 0.9
-

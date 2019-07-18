@@ -28,6 +28,9 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: 512 size
+# TODO: remove crop/resize if not used
+# TODO: check temps for arcface
 # TODO: arcface
 # TODO: plot temp search
 # TODO: fix rotation order
