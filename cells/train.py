@@ -32,6 +32,12 @@ from lr_scheduler import OneCycleScheduler
 # mask: cv - 0.6242, lb - 0.4930
 
 
+# TODO: distort aspect ratio
+# TODO: well info
+# TODO: cutout
+# TODO: autoaugment
+# TODO: Population Based Training
+# TODO: no image crop
 # TODO: binarize image?
 # TODO: do not cycle beta
 # TODO: model diverse split
@@ -39,7 +45,7 @@ from lr_scheduler import OneCycleScheduler
 # TODO: learn normalization per plate
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
-# TODO: normalize by ref
+# TODO: normalize by ref (?)
 # TODO: label smoothing
 
 # TODO: show score on temp search
@@ -48,16 +54,12 @@ from lr_scheduler import OneCycleScheduler
 
 # TODO: diverse model
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
-# TODO: plato sched, (other scheds)
 # TODO: random scale
 # TODO: cyclic, clr, cawr
-# TODO: triplet mining
-# TODO: print fold
 # TODO: correct tensorboard visualization
 # TODO: correct color jitter
 # TODO: visualize!!!
 # TODO: normalize embedding by ref
-# TODO: onecycle does not platoes
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature

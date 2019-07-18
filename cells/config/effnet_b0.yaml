@@ -1,0 +1,44 @@
+seed: 42
+epochs: 100
+batch_size: 90
+resize_size: 256
+image_size: 224
+
+model:
+  type: b0
+
+aug:
+  channel_weight: 0.5
+
+opt:
+  type: sgd
+  lr: 0.6
+  weight_decay: 1e-4
+
+  sgd:
+    momentum: 0.9
+
+  rmsprop:
+    momentum: 0.9
+
+sched:
+  type: onecycle
+
+  step:
+    decay: 0.99
+    step_size: 100
+
+  plateau:
+    decay: 0.5
+    patience: 5
+
+  cyclic:
+    step_size_up: 2
+    step_size_down: 2
+    decay: 0.75
+
+  onecycle:
+    anneal: linear
+    beta: [0.95, 0.85]
+    peak_pos: 0.4
+    end_pos: 0.8
