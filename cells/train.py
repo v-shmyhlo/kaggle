@@ -28,6 +28,7 @@ from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
+# TODO: finetune with arcface
 # TODO: knn classifier
 # TODO: training less epochs
 # TODO: check if sites can be stitched
