@@ -1,25 +1,24 @@
 import efficientnet_pytorch
-import numpy as np
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+from cells.modules import ArcFace, NormalizedLinear
 
 
 class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
 
+        assert model.type in ['b0', 'b1', 'b2']
+
         self.norm = nn.BatchNorm2d(6)
 
-        self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
+        self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-{}'.format(model.type))
         # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
         #     6, 32, kernel_size=3, stride=2, bias=False)
         self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
-        self.model._dropout = model.dropout
-        embedding_size = self.model._fc.in_features
-        self.model._fc = nn.Linear(embedding_size, num_classes)
+        self.model._fc = NormalizedLinear(self.model._fc.in_features, num_classes)
 
-        self.out_norm = nn.BatchNorm1d(embedding_size)
+        self.arc_face = ArcFace()
 
     def forward(self, input, feats, target=None):
         if self.training:
@@ -27,28 +26,16 @@ class Model(nn.Module):
         else:
             assert target is None
 
+        assert input.size(2) == input.size(3) == self.model._global_params.image_size
+
         input = self.norm(input)
+        input = self.model(input)
 
-        # Convolution layers
-        input = self.model.extract_features(input)
+        output = input
 
-        # Pooling and final linear layer
-        input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
-        input = self.out_norm(input)
-        features = input
+        if target is None:
+            arc_output = None
+        else:
+            arc_output = self.arc_face(input, target)
 
-        if self.model._dropout:
-            input = F.dropout(input, p=self.model._dropout, training=self.training)
-        input = self.model._fc(input)
-
-        return input, features
-
-
-def get_shuffle_indices(target):
-    eq = target.unsqueeze(1) == target.unsqueeze(0)
-    eq[torch.eye(target.size(0)).byte()] = 0
-    indices = [np.where(row)[0] for row in eq.data.cpu().numpy()]
-    indices = [np.random.choice(row) if row.shape[0] > 0 else i for i, row in enumerate(indices)]
-    indices = torch.tensor(indices).to(target.device)
-
-    return indices
+        return output, arc_output

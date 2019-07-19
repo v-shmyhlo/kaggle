@@ -1,6 +1,5 @@
 import argparse
 import gc
-import itertools
 import math
 import os
 import shutil
@@ -22,38 +21,65 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
-from cells.model_m import Model
-from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, CenterCrop, RandomCrop, \
-    ToTensor, RandomSite, SplitInSites, NormalizedColorJitter, RandomRotation
+from cells.model import Model
+from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
+    NormalizedColorJitter, RandomRotation
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from triplet_loss import batch_hard_triplet_loss
 
+# TODO: knn classifier
+# TODO: training less epochs
+# TODO: check if sites can be stitched
+# TODO: 512 size
+# TODO: remove crop/resize if not used
+# TODO: check temps for arcface
+# TODO: arcface
+# TODO: plot temp search
+# TODO: fix rotation order
+# TODO: metric per type
+# TODO: metric per experiment
+# TODO: onecycle remove plat area
+# TODO: no cycle beta
+# TODO: b2/b3
+# TODO: shift / scale
+# TODO: crop from fullsize
+# TODO: random stitch sites
+# TODO: no crop?
+# TODO: finetune full size
+# TODO: distort aspect ratio
+# TODO: well info
+# TODO: cutout
+# TODO: autoaugment
+# TODO: Population Based Training
+# TODO: no image crop
+# TODO: binarize image?
+# TODO: do not cycle beta
+# TODO: model diverse split
+# TODO: well coding
+# TODO: learn normalization per plate
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
+# TODO: normalize by ref (?)
+# TODO: label smoothing
 
-# TODO: smaller embeddings
-# TODO: margin
-# TODO: batch sampler
-# TODO: triplet ref margin
+# TODO: show score on temp search
 
+# TODO: how to split? fair split not working
+
+# TODO: diverse model
+# TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
+# TODO: random scale
 # TODO: cyclic, clr, cawr
-# TODO: triplet mining
-# TODO: reduce plato
-# TODO: print fold
 # TODO: correct tensorboard visualization
 # TODO: correct color jitter
 # TODO: visualize!!!
 # TODO: normalize embedding by ref
-# TODO: onecycle does not platoes
-# TODO: onecycle longer last stage
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
 # TODO: EffNet
 # TODO: optimize data loading
-# TODO: rmsprop
 # TODO: gradacum
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
@@ -71,14 +97,11 @@ from triplet_loss import batch_hard_triplet_loss
 # TODO: different heads for different cell types
 # TODO: mix sites
 # TODO: concat pool
-# TODO: rmsprop
 # TODO: greedy assign
 # TODO: gem pool
 # TODO: more out layers
-# TODO: sampler for triplet/mixup
 # TODO: deep supervision
 # TODO: parallel temp search
-# TODO: hard triplet loss
 # TODO: eval site selection
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
@@ -123,60 +146,7 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-
-
-# TODO: shuffle!!!
-
-
-class BatchSampler(torch.utils.data.Sampler):
-    def __init__(self, data, batch_size, drop_last):
-        super().__init__(data)
-
-        if not isinstance(batch_size, torch.utils.data.sampler._int_classes) or isinstance(batch_size, bool) or \
-                batch_size <= 0:
-            raise ValueError("batch_size should be a positive integer value, "
-                             "but got batch_size={}".format(batch_size))
-        if not isinstance(drop_last, bool):
-            raise ValueError("drop_last should be a boolean value, but got "
-                             "drop_last={}".format(drop_last))
-
-        self.data = data
-        self.batch_size = batch_size
-        self.drop_last = drop_last
-
-    def build_indices(self):
-        label_idxs = [[] for _ in range(NUM_CLASSES)]
-        for idx, label in enumerate(self.data['sirna']):
-            label_idxs[label].append(idx)
-
-        label_idxs = [np.array(idxs)[np.random.permutation(len(idxs))] for idxs in label_idxs]
-        label_idxs = [iter(idxs) for idxs in label_idxs]
-        res = []
-        while True:
-            size = len(res)
-            for idxs in label_idxs:
-                res.extend(itertools.islice(idxs, 4))
-            if len(res) == size:
-                break
-        assert self.data.iloc[res[:500]]['sirna'].nunique() == 125  # TODO:
-
-        return res
-  
-    def __iter__(self):
-        batch = []
-        for idx in self.build_indices():
-            batch.append(idx)
-            if len(batch) == self.batch_size:
-                yield batch
-                batch = []
-        if len(batch) > 0 and not self.drop_last:
-            yield batch
-
-    def __len__(self):
-        if self.drop_last:
-            return len(self.data) // self.batch_size
-        else:
-            return (len(self.data) + self.batch_size - 1) // self.batch_size
+assert config.resize_size == config.image_size
 
 
 class NormalizeByRefStats(object):
@@ -223,10 +193,10 @@ train_transform = T.Compose([
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
-            RandomCrop(config.image_size),
+            # RandomCrop(config.image_size),
             RandomFlip(),
             RandomTranspose(),
-            RandomRotation(180),
+            RandomRotation(180),  # FIXME:
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
@@ -239,7 +209,7 @@ eval_transform = T.Compose([
         T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
-            CenterCrop(config.image_size),
+            # CenterCrop(config.image_size),
             ToTensor(),
         ])),
     # NormalizeByRefStats(),
@@ -250,7 +220,7 @@ test_transform = T.Compose([
         ['image'],
         T.Compose([
             Resize(config.resize_size),
-            CenterCrop(config.image_size),
+            # CenterCrop(config.image_size),
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
@@ -261,7 +231,7 @@ test_transform = T.Compose([
 
 # TODO: use pool
 def find_temp_global(input, target, data):
-    temps = np.logspace(np.log(0.01), np.log(1.), 20, base=np.e)
+    temps = np.logspace(np.log(0.001), np.log(1.), 30, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), data=data)
@@ -276,6 +246,7 @@ def find_temp_global(input, target, data):
     plt.xscale('log')
     plt.axvline(temp)
     plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
+    print('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
 
     return temp, fig
 
@@ -298,11 +269,14 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def compute_loss(input, embeddings, target):
-    ce = F.cross_entropy(input=input, target=target, reduction='none')
-    tl = batch_hard_triplet_loss(embeddings, target, margin=0.1)
-    assert ce.size() == tl.size()
-    loss = ce * 0.9 + tl * 0.1
+def compute_loss(input, target):
+    input, arc_input = input
+
+    loss = F.cross_entropy(input=input, target=target, reduction='none')
+
+    if arc_input is not None:
+        arc_loss = F.cross_entropy(input=arc_input, target=target, reduction='none')
+        loss = (loss + arc_loss) / 2
 
     return loss
 
@@ -340,26 +314,30 @@ def build_optimizer(optimizer, parameters):
         return torch.optim.RMSprop(
             parameters,
             optimizer.lr,
-            # alpha=0.9999,#FIXME:
             momentum=optimizer.rmsprop.momentum,
             weight_decay=optimizer.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer.type))
 
 
-# TODO: check
-# TODO: fair split
 def indices_for_fold(fold, dataset):
+    fold_eval_exps = [
+        None,
+        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+         'U2OS-01'],
+        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+         'U2OS-02'],
+        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+         'U2OS-03'],
+    ]
+
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
-    eval_exps = \
-        ['HEPG2-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
-        ['HUVEC-{:02d}'.format(i + 1) for i in range((fold - 1) * 3, fold * 3)] + \
-        ['RPE-{:02d}'.format(i + 1) for i in range((fold - 1) * 2, fold * 2)] + \
-        ['U2OS-{:02d}'.format(i + 1) for i in range((fold - 1) * 1, fold * 1)]
+    eval_exps = fold_eval_exps[fold]
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
+    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
 
     return train_indices, eval_indices
 
@@ -368,7 +346,9 @@ def lr_search(train_eval_data):
     train_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_sampler=BatchSampler(train_dataset.data, config.batch_size, drop_last=True),
+        batch_size=config.batch_size,
+        drop_last=True,
+        shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -391,9 +371,10 @@ def lr_search(train_eval_data):
     model.train()
     for images, feats, labels, ids in tqdm(train_data_loader, desc='lr search'):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits, embeddings = model(images, feats, labels)
+        logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
+        loss = compute_loss(input=logits, target=labels)
+        logits, _ = logits
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -443,12 +424,13 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     model.train()
     for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits, embeddings = model(images, feats, labels)
+        logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
+        loss = compute_loss(input=logits, target=labels)
+        logits, _ = logits
         metrics['loss'].update(loss.data.cpu().numpy())
 
-        lr, _ = scheduler.get_lr()
+        lr = scheduler.get_lr()
         optimizer.zero_grad()
         loss.mean().backward()
         optimizer.step()
@@ -457,8 +439,8 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         images = images_to_rgb(images)[:16]
-        print('[EPOCH {}][TRAIN] {}'.format(
-            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        print('[FOLD {}][EPOCH {}][TRAIN] {}'.format(
+            fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
@@ -481,9 +463,10 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits, embeddings = model(images, feats)
+            logits = model(images, feats)
 
-            loss = compute_loss(input=logits, embeddings=embeddings, target=labels)
+            loss = compute_loss(input=logits, target=labels)
+            logits, _ = logits
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)
@@ -493,8 +476,12 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
-        # temp, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
-        temp, fig = 1., plt.figure()
+        if epoch % 10 == 0:
+            temp = 1.
+            _, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+            writer.add_figure('temps', fig, global_step=epoch)
+        else:
+            temp = 1.
         fold_preds = assign_classes(
             probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
@@ -503,15 +490,13 @@ def eval_epoch(model, data_loader, fold, epoch):
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
             metrics[k] = metric[k].mean().data.cpu().numpy()
-
         images = images_to_rgb(images)[:16]
-        print('[EPOCH {}][EVAL] {}'.format(
-            epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
+        print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
+            fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
-        writer.add_figure('temps', fig, global_step=epoch)
 
         return metrics
 
@@ -522,7 +507,9 @@ def train_fold(fold, train_eval_data):
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_sampler=BatchSampler(train_dataset.data, config.batch_size, drop_last=True),
+        batch_size=config.batch_size,
+        drop_last=True,
+        shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
@@ -572,7 +559,11 @@ def train_fold(fold, train_eval_data):
     elif config.sched.type == 'plateau':
         scheduler = lr_scheduler_wrapper.ScoreWrapper(
             torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=0, verbose=True))
+                optimizer,
+                mode='max',
+                factor=config.sched.plateau.decay,
+                patience=config.sched.plateau.patience,
+                verbose=True))
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
@@ -646,7 +637,7 @@ def predict_on_test_using_fold(fold, test_data):
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1).repeat(1, n).view(b * n)  # TODO: check
+            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)  # TODO: check
             logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
 
@@ -710,8 +701,6 @@ def find_temp_for_folds(folds, train_eval_data):
         labels = torch.cat(labels, 0)
         data = pd.concat(data)
         temp, fig = find_temp_global(input=logits, target=labels, data=data)
-
-        print('temp: {:.4f}'.format(temp))
 
         return temp
 

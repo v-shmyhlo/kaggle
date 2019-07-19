@@ -13,6 +13,8 @@ aug:
 opt:
   type: sgd
   lr: 0.3
+  # lr: 0.0016871764074081897
+  # lr: 0.005
   weight_decay: 1e-4
 
   sgd:
