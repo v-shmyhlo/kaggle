@@ -1,8 +1,8 @@
 seed: 42
-epochs: 100
-batch_size: 90
-resize_size: 224
-image_size: 224
+epochs: 50
+batch_size: 32
+resize_size: 512
+image_size: 512
 
 model:
   type: b0
@@ -12,7 +12,7 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.3
+  lr: 0.075
   weight_decay: 1e-4
 
   sgd:
@@ -25,8 +25,8 @@ sched:
   type: onecycle
 
   step:
-    decay: 0.5
-    step_size: 5
+    decay: 0.99
+    step_size: 100
 
   plateau:
     decay: 0.5

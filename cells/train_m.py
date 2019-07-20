@@ -21,115 +21,12 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
-from cells.model import Model
+from cells.model_m import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
     NormalizedColorJitter, RandomRotation
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
-
-# TODO: knn classifier
-# TODO: training less epochs
-# TODO: check if sites can be stitched
-# TODO: 512 size
-# TODO: remove crop/resize if not used
-# TODO: check temps for arcface
-# TODO: arcface
-# TODO: plot temp search
-# TODO: fix rotation order
-# TODO: metric per type
-# TODO: metric per experiment
-# TODO: onecycle remove plat area
-# TODO: no cycle beta
-# TODO: b2/b3
-# TODO: shift / scale
-# TODO: crop from fullsize
-# TODO: random stitch sites
-# TODO: no crop?
-# TODO: finetune full size
-# TODO: distort aspect ratio
-# TODO: well info
-# TODO: cutout
-# TODO: autoaugment
-# TODO: Population Based Training
-# TODO: no image crop
-# TODO: binarize image?
-# TODO: do not cycle beta
-# TODO: model diverse split
-# TODO: well coding
-# TODO: learn normalization per plate
-# TODO: triplet loss
-# TODO: TVN (Typical Variation Normalization)
-# TODO: normalize by ref (?)
-# TODO: label smoothing
-
-# TODO: show score on temp search
-
-# TODO: how to split? fair split not working
-
-# TODO: diverse model
-# TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
-# TODO: random scale
-# TODO: cyclic, clr, cawr
-# TODO: correct tensorboard visualization
-# TODO: correct color jitter
-# TODO: visualize!!!
-# TODO: normalize embedding by ref
-# TODO: speedup eval
-# TODO: mix features for same class (multiple layers)
-# TODO: relevant literature
-# TODO: EffNet
-# TODO: optimize data loading
-# TODO: gradacum
-# TODO: resized crop
-# TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
-# TODO: learn closer to negative control and further to other batches
-# TODO: add feats to image
-# TODO: batch/plate effects
-# TODO: better split
-# TODO: k shot learning
-# TODO: https://github.com/recursionpharma/rxrx1-utils
-# TODO: 2 images as control
-# TODO: https://data.broadinstitute.org/bbbc/image_sets.html
-# TODO: https://github.com/awesomedata/awesome-public-datasets#biology
-# TODO: use all controls for training
-# TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
-# TODO: different heads for different cell types
-# TODO: mix sites
-# TODO: concat pool
-# TODO: greedy assign
-# TODO: gem pool
-# TODO: more out layers
-# TODO: deep supervision
-# TODO: parallel temp search
-# TODO: eval site selection
-# TODO: check predictions/targets name
-# TODO: more fc layers for arcface
-# TODO: pseudo labeling
-# TODO: greedy assignment
-# TODO: better minimum for lr
-# TODO: grad accum
-# TODO: eval with tta?
-# TODO: tta
-# TODO: val tta (sites)
-# TODO: lr schedules
-# TODO: allow shuffle of plate refs within experiment
-# TODO: mixup within class
-# TODO: opts
-# TODO: adam
-# TODO: domain adaptation
-# TODO: dropout
-# TODO: user other images stats
-# TODO: cutout
-# TODO: mixup
-# TODO: other cyclic (1cycle) impl
-# TODO: focal
-# TODO: https://www.rxrx.ai/
-# TODO: batch effects
-# TODO: metric learning
-# TODO: context modelling notes in rxrx
-# TODO: generalization notes in rxrx
-
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -147,45 +44,6 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.image_size
-
-
-class NormalizeByRefStats(object):
-    def __call__(self, input):
-        image, ref_stats = input['image'], input['ref_stats']
-
-        ref_stats = ref_stats[np.random.randint(ref_stats.size(0))]
-        mean, std = torch.split(ref_stats, 1, 1)
-        mean, std = mean.view(mean.size(0), 1, 1), std.view(std.size(0), 1, 1)
-        image = (image - mean) / std
-
-        return {
-            **input,
-            'image': image
-        }
-
-
-class StatColorJitter(object):
-    def __init__(self):
-        class_to_stats = torch.load('./stats.pth')
-        class_to_stats = [s.view(*s.size(), 1, 1) for s in class_to_stats]
-
-        self.class_to_stats = class_to_stats
-
-    # TODO: check
-    def __call__(self, input):
-        stats = self.class_to_stats[input['label']]
-        mean, std = stats[np.random.randint(stats.size(0))]
-        dim = (1, 2)
-
-        image = input['image']
-        image = (image - image.mean(dim, keepdim=True)) / image.std(dim, keepdim=True).clamp(min=1e-7)
-        image = image * std + mean
-
-        return {
-            **input,
-            'image': image,
-        }
-
 
 train_transform = T.Compose([
     ApplyTo(
@@ -246,9 +104,8 @@ def find_temp_global(input, target, data):
     plt.xscale('log')
     plt.axvline(temp)
     plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
-    print('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
 
-    return temp, fig
+    return temp, metric.item(), fig
 
 
 def worker_init_fn(_):
@@ -276,7 +133,7 @@ def compute_loss(input, target):
 
     if arc_input is not None:
         arc_loss = F.cross_entropy(input=arc_input, target=target, reduction='none')
-        loss = (loss + arc_loss) / 2
+        loss = loss * 0.8 + arc_loss * 0.2
 
     return loss
 
@@ -343,9 +200,9 @@ def indices_for_fold(fold, dataset):
 
 
 def lr_search(train_eval_data):
-    train_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
-    train_data_loader = torch.utils.data.DataLoader(
-        train_dataset,
+    train_eval_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
+    train_eval_data_loader = torch.utils.data.DataLoader(
+        train_eval_dataset,
         batch_size=config.batch_size,
         drop_last=True,
         shuffle=True,
@@ -354,7 +211,7 @@ def lr_search(train_eval_data):
 
     min_lr = 1e-7
     max_lr = 10.
-    gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
+    gamma = (max_lr / min_lr)**(1 / len(train_eval_data_loader))
 
     lrs = []
     losses = []
@@ -369,7 +226,7 @@ def lr_search(train_eval_data):
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
     model.train()
-    for images, feats, labels, ids in tqdm(train_data_loader, desc='lr search'):
+    for images, feats, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
@@ -477,11 +334,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = torch.cat(fold_logits, 0)
         assert all(data_loader.dataset.data['id_code'] == fold_ids)
         if epoch % 10 == 0:
-            temp = 1.
-            _, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+            temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, data=data_loader.dataset.data)
+            writer.add_scalar('temp', temp, global_step=epoch)
+            writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
-        else:
-            temp = 1.
+        temp = 1.  # use default temp
         fold_preds = assign_classes(
             probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), data=data_loader.dataset.data)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
@@ -568,7 +425,7 @@ def train_fold(fold, train_eval_data):
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
     best_score = 0
-    for epoch in range(config.epochs):
+    for epoch in range(1, config.epochs + 1):
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -637,7 +494,7 @@ def predict_on_test_using_fold(fold, test_data):
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)  # TODO: check
+            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
 
@@ -684,7 +541,6 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         return fold_labels, fold_logits, fold_ids, eval_data
 
 
-# TODO: log metric
 def find_temp_for_folds(folds, train_eval_data):
     with torch.no_grad():
         labels = []
@@ -700,7 +556,8 @@ def find_temp_for_folds(folds, train_eval_data):
         logits = torch.cat(logits, 0)
         labels = torch.cat(labels, 0)
         data = pd.concat(data)
-        temp, fig = find_temp_global(input=logits, target=labels, data=data)
+        temp, metric, _ = find_temp_global(input=logits, target=labels, data=data)
+        print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
 
         return temp
 

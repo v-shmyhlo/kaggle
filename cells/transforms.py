@@ -2,6 +2,7 @@ import numbers
 import random
 from collections.abc import Iterable
 
+import numpy as np
 import torch
 import torchvision
 import torchvision.transforms.functional as F
@@ -152,7 +153,7 @@ class RandomRotation(object):
         angle = self.get_params(self.degrees)
 
         return [F.rotate(c, angle, self.resample, self.expand, self.center) for c in image]
-   
+
     def __repr__(self):
         format_string = self.__class__.__name__ + '(degrees={0}'.format(self.degrees)
         format_string += ', resample={0}'.format(self.resample)
@@ -212,3 +213,41 @@ def transpose(image):
         raise TypeError('image should be PIL Image. Got {}'.format(type(image)))
 
     return image.transpose(Image.TRANSPOSE)
+
+
+class StatColorJitter(object):
+    def __init__(self):
+        class_to_stats = torch.load('./stats.pth')
+        class_to_stats = [s.view(*s.size(), 1, 1) for s in class_to_stats]
+
+        self.class_to_stats = class_to_stats
+
+    # TODO: check
+    def __call__(self, input):
+        stats = self.class_to_stats[input['label']]
+        mean, std = stats[np.random.randint(stats.size(0))]
+        dim = (1, 2)
+
+        image = input['image']
+        image = (image - image.mean(dim, keepdim=True)) / image.std(dim, keepdim=True).clamp(min=1e-7)
+        image = image * std + mean
+
+        return {
+            **input,
+            'image': image,
+        }
+
+
+class NormalizeByRefStats(object):
+    def __call__(self, input):
+        image, ref_stats = input['image'], input['ref_stats']
+
+        ref_stats = ref_stats[np.random.randint(ref_stats.size(0))]
+        mean, std = torch.split(ref_stats, 1, 1)
+        mean, std = mean.view(mean.size(0), 1, 1), std.view(std.size(0), 1, 1)
+        image = (image - mean) / std
+
+        return {
+            **input,
+            'image': image
+        }
