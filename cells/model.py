@@ -22,7 +22,7 @@ class Model(nn.Module):
         else:
             assert target is None
 
-        assert input.size(2) == input.size(3) == self.model._global_params.image_size
+        # assert input.size(2) == input.size(3) == self.model._global_params.image_size
 
         input = self.norm(input)
         input = self.model(input)

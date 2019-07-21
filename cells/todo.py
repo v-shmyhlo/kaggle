@@ -1,3 +1,12 @@
+# lr_search base: 0.301
+# lr_search acc1: 0.301
+# lr_search acc2: 0.715
+# lr_search acc5: 1.696
+# lr_search acc10: 1.944
+
+
+# TODO: progressive resize for lr search
+# TODO: always check relative plots
 # TODO: metric learning separate branch
 # TODO: triplet loss with all lessons learned from arcface
 # TODO: log temp search metric

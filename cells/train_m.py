@@ -126,14 +126,14 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def compute_loss(input, target):
+def compute_loss(input, target, weight=0.8):
     input, arc_input = input
 
     loss = F.cross_entropy(input=input, target=target, reduction='none')
 
     if arc_input is not None:
         arc_loss = F.cross_entropy(input=arc_input, target=target, reduction='none')
-        loss = loss * 0.8 + arc_loss * 0.2
+        loss = loss * weight + arc_loss * (1 - weight)
 
     return loss
 

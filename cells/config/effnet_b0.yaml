@@ -14,6 +14,7 @@ opt:
   type: sgd
   lr: 0.3
   weight_decay: 1e-4
+  acc_steps: 1
 
   sgd:
     momentum: 0.9
