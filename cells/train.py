@@ -609,6 +609,7 @@ def main():
         for fold in folds:
             train_fold(fold, train_eval_data)
 
+    update_transforms(config.crop_size)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
     build_submission(folds, test_data, temp)
 

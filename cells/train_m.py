@@ -23,7 +23,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model_m import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomRotation
+    NormalizedColorJitter, RandomRotation, RandomCrop, CenterCrop
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -43,7 +43,22 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert config.resize_size == config.image_size
+assert config.resize_size == config.crop_size
+
+
+class Resetable(object):
+    def __init__(self, build_transform):
+        self.build_transform = build_transform
+
+    def __call__(self, input):
+        return self.transform(input)
+
+    def reset(self, *args, **kwargs):
+        self.transform = self.build_transform(*args, **kwargs)
+
+
+random_crop = Resetable(RandomCrop)
+center_crop = Resetable(CenterCrop)
 
 train_transform = T.Compose([
     ApplyTo(
@@ -51,7 +66,7 @@ train_transform = T.Compose([
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
-            # RandomCrop(config.image_size),
+            random_crop,
             RandomFlip(),
             RandomTranspose(),
             RandomRotation(180),  # FIXME:
@@ -67,7 +82,7 @@ eval_transform = T.Compose([
         T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
-            # CenterCrop(config.image_size),
+            center_crop,
             ToTensor(),
         ])),
     # NormalizeByRefStats(),
@@ -78,13 +93,19 @@ test_transform = T.Compose([
         ['image'],
         T.Compose([
             Resize(config.resize_size),
-            # CenterCrop(config.image_size),
+            center_crop,
             SplitInSites(),
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
     # NormalizeByRefStats(),
     Extract(['image', 'feat', 'id']),
 ])
+
+
+def update_transforms(image_size):
+    print('update transforms: {}'.format(image_size))
+    random_crop.reset(image_size)
+    center_crop.reset(image_size)
 
 
 # TODO: use pool
@@ -225,8 +246,10 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
+    update_transforms(config.crop_size)
     model.train()
-    for images, feats, labels, ids in tqdm(train_eval_data_loader, desc='lr search'):
+    optimizer.zero_grad()
+    for i, (images, feats, labels, ids) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
@@ -242,9 +265,12 @@ def lr_search(train_eval_data):
         if lim < losses[-1]:
             break
 
-        optimizer.zero_grad()
-        loss.mean().backward()
-        optimizer.step()
+        (loss.mean() / config.opt.acc_steps).backward()
+
+        if i % config.opt.acc_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
         scheduler.step()
 
     writer = SummaryWriter(os.path.join(args.experiment_path, 'lr_search'))
@@ -278,19 +304,24 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         'loss': utils.Mean(),
     }
 
+    update_transforms(round(224 + (config.crop_size - 224) * np.linspace(0, 1, config.epochs)[epoch - 1].item()))
     model.train()
-    for images, feats, labels, ids in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+    optimizer.zero_grad()
+    for i, (images, feats, labels, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, weight=1 - np.linspace(0., 1., config.epochs)[epoch - 1])
         logits, _ = logits
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
-        optimizer.zero_grad()
-        loss.mean().backward()
-        optimizer.step()
+        (loss.mean() / config.opt.acc_steps).backward()
+
+        if i % config.opt.acc_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
         scheduler.step()
 
     with torch.no_grad():
