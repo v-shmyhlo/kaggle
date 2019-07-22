@@ -29,10 +29,10 @@ class RandomFlip(object):
 
     def __call__(self, image):
         if random.random() < self.p:
-            return [F.hflip(c) for c in image]
+            return hflip(image)
 
         if random.random() < self.p:
-            return [F.vflip(c) for c in image]
+            return vflip(image)
 
         return image
 
@@ -251,3 +251,23 @@ class NormalizeByRefStats(object):
             **input,
             'image': image
         }
+
+
+class TTA(object):
+    def __call__(self, input):
+        return [input, rotate(input, 90), rotate(input, 180), rotate(input, 270)]
+
+
+# TODO: refactor
+
+
+def hflip(image):
+    return [F.hflip(c) for c in image]
+
+
+def vflip(image):
+    return [F.vflip(c) for c in image]
+
+
+def rotate(image, angle, resample=False, expand=False, center=None):
+    return [F.rotate(c, angle, resample, expand, center) for c in image]

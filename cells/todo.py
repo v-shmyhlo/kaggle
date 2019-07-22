@@ -4,7 +4,10 @@
 # lr_search acc5: 1.696
 # lr_search acc10: 1.944
 
+# metric: 0.8451, temp: 0.0108
+# metric: 0.9137, temp: 0.0085
 
+# TODO: valid rotate
 # TODO: wider temp search space for metric learning models
 # TODO: metric learning and additional feats
 # TODO: huge batch
