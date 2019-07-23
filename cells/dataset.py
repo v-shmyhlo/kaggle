@@ -36,6 +36,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         input = {
             'image': image,
             'feat': feat,
+            'exp': row['experiment'],
             'ref_stats': ref_stats,
             'label': row['sirna'],
             'id': row['id_code'],
@@ -77,6 +78,7 @@ class TestDataset(torch.utils.data.Dataset):
         input = {
             'image': image,
             'feat': feat,
+            'exp': row['experiment'],
             'ref_stats': ref_stats,
             'id': row['id_code']
         }

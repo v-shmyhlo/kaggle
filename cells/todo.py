@@ -7,6 +7,7 @@
 # metric: 0.8451, temp: 0.0108
 # metric: 0.9137, temp: 0.0085
 
+# TODO: remove id_code and other data asserts
 # TODO: valid rotate
 # TODO: wider temp search space for metric learning models
 # TODO: metric learning and additional feats
