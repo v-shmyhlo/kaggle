@@ -352,6 +352,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
+
         if epoch % 10 == 0:
             temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
             writer.add_scalar('temp', temp, global_step=epoch)
@@ -561,7 +562,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-       
+
         return fold_labels, fold_logits, fold_exps, fold_ids
 
 
@@ -580,9 +581,9 @@ def find_temp_for_folds(folds, train_eval_data):
             exps.extend(fold_exps)
             ids.extend(fold_ids)
 
-        # TODO: check aggregated correctly
-        logits = torch.cat(logits, 0)
         labels = torch.cat(labels, 0)
+        logits = torch.cat(logits, 0)
+
         temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
         print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
         torch.save((labels, logits, exps, ids), './oof.pth')
