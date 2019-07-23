@@ -9,6 +9,7 @@
 # metric: 0.9137, temp: 0.0085
 
 
+# TODO: hints from cells telegram channel
 # TODO: infer with sigmoid
 # TODO: remove id_code and other data asserts
 # TODO: valid rotate
@@ -18,13 +19,11 @@
 # TODO: prog arc 0.2
 # TODO: prog arc 1.0
 # TODO: cyclic arcface weight
-# TODO: progressive arcface
 # TODO: stabilize arcface
 # TODO: progressive resize for lr search
 # TODO: always check relative plots
 # TODO: metric learning separate branch
 # TODO: triplet loss with all lessons learned from arcface
-# TODO: log temp search metric
 # TODO: label smoothing
 # TODO: ref metric learning
 # TODO: ref subtract on logits
@@ -96,7 +95,6 @@
 # TODO: eval with tta?
 # TODO: tta
 # TODO: val tta (sites)
-# TODO: lr schedules
 # TODO: allow shuffle of plate refs within experiment
 # TODO: domain adaptation
 # TODO: user other images stats

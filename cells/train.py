@@ -241,7 +241,7 @@ def lr_search(train_eval_data):
     update_transforms(config.crop_size)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, labels, ids) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
@@ -298,7 +298,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(round(224 + (config.crop_size - 224) * np.linspace(0, 1, config.epochs)[epoch - 1].item()))
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, labels, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
@@ -338,9 +338,8 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = []
         fold_logits = []
         fold_exps = []
-        fold_ids = []
 
-        for images, feats, exps, labels, ids in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
             logits = model(images, feats)
 
@@ -350,11 +349,9 @@ def eval_epoch(model, data_loader, fold, epoch):
             fold_labels.append(labels)
             fold_logits.append(logits)
             fold_exps.extend(exps)
-            fold_ids.extend(ids)
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-        assert all(data_loader.dataset.data['id_code'] == fold_ids)
         if epoch % 10 == 0:
             temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
             writer.add_scalar('temp', temp, global_step=epoch)
@@ -487,7 +484,6 @@ def build_submission(folds, test_data, temp):
         probs = probs / len(folds)
         probs = probs.data.cpu().numpy()
         assert len(probs) == len(exps) == len(ids)
-        assert all(test_data['id_code'] == ids)
         classes = assign_classes(probs=probs, exps=exps)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
@@ -529,7 +525,7 @@ def predict_on_test_using_fold(fold, test_data):
         fold_logits = torch.cat(fold_logits, 0)
 
     torch.save((fold_logits, fold_exps, fold_ids), './test_{}.pth'.format(fold))
-   
+
     return fold_logits, fold_exps, fold_ids
 
 
@@ -565,8 +561,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-        assert all(eval_data['id_code'] == fold_ids)
-
+       
         return fold_labels, fold_logits, fold_exps, fold_ids
 
 
