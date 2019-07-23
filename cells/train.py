@@ -161,8 +161,9 @@ def compute_metric(input, target):
 def assign_classes(probs, exps):
     # TODO: refactor numpy/torch usage
 
+    exps = np.array(exps)
     classes = np.zeros(probs.shape[0], dtype=np.int64)
-    for exp in exps.unique():
+    for exp in np.unique(exps):
         subset = exps == exp
         preds = probs[subset]
         _, c, _ = lap.lapjv(1 - preds, extend_cost=True)
@@ -485,7 +486,7 @@ def build_submission(folds, test_data, temp):
 
         probs = probs / len(folds)
         probs = probs.data.cpu().numpy()
-        assert len(ids) == len(probs)
+        assert len(probs) == len(exps) == len(ids)
         assert all(test_data['id_code'] == ids)
         classes = assign_classes(probs=probs, exps=exps)
 
@@ -527,6 +528,8 @@ def predict_on_test_using_fold(fold, test_data):
 
         fold_logits = torch.cat(fold_logits, 0)
 
+    torch.save((fold_logits, fold_exps, fold_ids), './test_{}.pth'.format(fold))
+   
     return fold_logits, fold_exps, fold_ids
 
 
@@ -572,19 +575,22 @@ def find_temp_for_folds(folds, train_eval_data):
         labels = []
         logits = []
         exps = []
+        ids = []
 
         for fold in folds:
-            fold_labels, fold_logits, fold_exps, _ = predict_on_eval_using_fold(fold, train_eval_data)
+            fold_labels, fold_logits, fold_exps, fold_ids = predict_on_eval_using_fold(fold, train_eval_data)
 
             labels.append(fold_labels)
             logits.append(fold_logits)
             exps.extend(fold_exps)
+            ids.extend(fold_ids)
 
         # TODO: check aggregated correctly
         logits = torch.cat(logits, 0)
         labels = torch.cat(labels, 0)
         temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
         print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
+        torch.save((labels, logits, exps, ids), './oof.pth')
 
         return temp
 

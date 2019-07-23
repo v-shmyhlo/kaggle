@@ -4,9 +4,12 @@
 # lr_search acc5: 1.696
 # lr_search acc10: 1.944
 
-# metric: 0.8451, temp: 0.0108
+# SOFTMAX: metric: 0.8451, temp: 0.0108
+# SIGMOID: metric: 0.8443, temp: 0.0174
 # metric: 0.9137, temp: 0.0085
 
+
+# TODO: infer with sigmoid
 # TODO: remove id_code and other data asserts
 # TODO: valid rotate
 # TODO: wider temp search space for metric learning models
