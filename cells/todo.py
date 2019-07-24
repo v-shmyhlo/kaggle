@@ -17,6 +17,7 @@
 # tta4 full logits:      metric: 0.9134, temp: 0.0001
 
 
+# TODO: soft-f1, lsep, focal
 # TODO: huge batch rmsprop
 # TODO: other losses
 # TODO: check last metric learning experiment loss plot
