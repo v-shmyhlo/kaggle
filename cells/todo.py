@@ -8,9 +8,20 @@
 # SIGMOID: metric: 0.8443, temp: 0.0174
 # metric: 0.9137, temp: 0.0085
 
+# base:                  metric: 0.8451, temp: 0.0108
+# tta base:              metric: 0.8441, temp: 0.0026
+# tta site avg:          metric: 0.9112, temp: 0.0010
+# tta site avg low temp: metric: 0.9118, temp: 0.0011
+# tta4 full:             metric: 0.9143, temp: 0.0002
+# tta4 full sigmoid:     metric: 0.9137, temp: 0.0240
+# tta4 full logits:      metric: 0.9134, temp: 0.0001
 
+# TODO: check last metric learning experiment loss plot
+# TODO: even wider temp search space
+# TODO: metric inverted/cyclic weight progress
 # TODO: hints from cells telegram channel
 # TODO: infer with sigmoid
+# TODO: remove transpose
 # TODO: remove id_code and other data asserts
 # TODO: valid rotate
 # TODO: wider temp search space for metric learning models
@@ -67,7 +78,6 @@
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
-# TODO: gradacum
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: learn closer to negative control and further to other batches

@@ -107,7 +107,7 @@ def update_transforms(image_size):
 
 # TODO: use pool
 def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(0.001), np.log(1.), 30, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), exps=exps)
@@ -122,6 +122,7 @@ def find_temp_global(input, target, exps):
     plt.xscale('log')
     plt.axvline(temp)
     plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
+    plt.savefig('./fig.png')
 
     return temp, metric.item(), fig
 
