@@ -19,6 +19,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
+import optim
 import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
@@ -173,22 +174,30 @@ def assign_classes(probs, exps):
     return classes
 
 
-def build_optimizer(optimizer, parameters):
-    if optimizer.type == 'sgd':
-        return torch.optim.SGD(
+def build_optimizer(optimizer_config, parameters):
+    if optimizer_config.type == 'sgd':
+        optimizer = torch.optim.SGD(
             parameters,
-            optimizer.lr,
-            momentum=optimizer.sgd.momentum,
-            weight_decay=optimizer.weight_decay,
+            optimizer_config.lr,
+            momentum=optimizer_config.sgd.momentum,
+            weight_decay=optimizer_config.weight_decay,
             nesterov=True)
-    elif optimizer.type == 'rmsprop':
-        return torch.optim.RMSprop(
+    elif optimizer_config.type == 'rmsprop':
+        optimizer = torch.optim.RMSprop(
             parameters,
-            optimizer.lr,
-            momentum=optimizer.rmsprop.momentum,
-            weight_decay=optimizer.weight_decay)
+            optimizer_config.lr,
+            momentum=optimizer_config.rmsprop.momentum,
+            weight_decay=optimizer_config.weight_decay)
     else:
-        raise AssertionError('invalid OPT {}'.format(optimizer.type))
+        raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
+
+    if optimizer_config.lookahead is not None:
+        optimizer = optim.LA(
+            optimizer,
+            optimizer_config.lookahead.lr,
+            num_steps=optimizer_config.lookahead.steps)
+       
+    return optimizer
 
 
 def indices_for_fold(fold, dataset):
