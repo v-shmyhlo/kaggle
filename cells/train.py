@@ -66,10 +66,10 @@ train_transform = T.Compose([
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
+            RandomRotation(180),
             random_crop,
             RandomFlip(),
             RandomTranspose(),
-            RandomRotation(180),  # FIXME:
             ToTensor(),
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
@@ -619,6 +619,7 @@ def main():
 
     update_transforms(config.crop_size)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
+    gc.collect()
     build_submission(folds, test_data, temp)
 
 

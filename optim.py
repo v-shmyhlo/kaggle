@@ -1,5 +1,55 @@
 import math
+
 import torch
+
+
+class LA(torch.optim.Optimizer):
+    def __init__(self, optimizer, lr, num_steps):
+        self.optimizer = optimizer
+        self.num_steps = num_steps
+
+        # self.defaults = self.optimizer.defaults
+
+        self.param_groups = self.optimizer.param_groups
+
+        # self.state = defaultdict(dict)
+        # self.opt_state = self.optimizer.state
+
+        for group in self.param_groups:
+            group['la_step_counter'] = 0
+            group['la_lr'] = lr
+            group['la_params'] = []
+            for p in group['params']:
+                la_p = torch.empty_like(p.data)
+                la_p.copy_(p.data)
+                group['la_params'].append(la_p)
+
+    def update_la_group(self, group):
+        for p, la_p in zip(group['params'], group['la_params']):
+            # if 'la_params' not in group:
+            #     group['la_params'] = torch.zeros_like(p.data)
+            #     group['la_params'].copy_(p.data)
+            # la_p = group['la_params']
+
+            # la_d_p =
+
+            # la_p.add_(la_d_p)
+            # la_p.addcmul_(-group['lr'], p.data, mul)
+
+            la_p.add_(group['la_lr'], p.data - la_p)
+            p.data.copy_(la_p)
+
+    def step(self, closure=None):
+        loss = self.optimizer.step(closure)
+
+        for group in self.param_groups:
+            group['la_step_counter'] += 1
+            step_counter = group['la_step_counter']
+
+            if step_counter % self.num_steps == 0:
+                self.update_la_group(group)
+
+        return loss
 
 
 class AdamW(torch.optim.Optimizer):

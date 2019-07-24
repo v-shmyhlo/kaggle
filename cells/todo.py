@@ -16,19 +16,18 @@
 # tta4 full sigmoid:     metric: 0.9137, temp: 0.0240
 # tta4 full logits:      metric: 0.9134, temp: 0.0001
 
+
+# TODO: huge batch rmsprop
+# TODO: other losses
 # TODO: check last metric learning experiment loss plot
 # TODO: even wider temp search space
 # TODO: metric inverted/cyclic weight progress
 # TODO: hints from cells telegram channel
-# TODO: infer with sigmoid
 # TODO: remove transpose
 # TODO: remove id_code and other data asserts
 # TODO: valid rotate
 # TODO: wider temp search space for metric learning models
 # TODO: metric learning and additional feats
-# TODO: huge batch
-# TODO: prog arc 0.2
-# TODO: prog arc 1.0
 # TODO: cyclic arcface weight
 # TODO: stabilize arcface
 # TODO: progressive resize for lr search
@@ -46,7 +45,7 @@
 # TODO: knn classifier
 # TODO: training less epochs
 # TODO: check if sites can be stitched
-# TODO: fix rotation order
+# TODO: fix rotation order <<<
 # TODO: metric per type
 # TODO: metric per experiment
 # TODO: onecycle remove plat area
@@ -56,7 +55,6 @@
 # TODO: random stitch sites
 # TODO: distort aspect ratio
 # TODO: well info
-# TODO: cutout
 # TODO: autoaugment
 # TODO: Population Based Training
 # TODO: binarize image?
@@ -67,8 +65,6 @@
 # TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref (?)
-# TODO: label smoothing
-# TODO: diverse model
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
 # TODO: random scale
 # TODO: cyclic, clr, cawr
@@ -92,7 +88,6 @@
 # TODO: different heads for different cell types
 # TODO: mix sites
 # TODO: concat pool
-# TODO: greedy assign
 # TODO: gem pool
 # TODO: deep supervision
 # TODO: parallel temp search
@@ -101,7 +96,6 @@
 # TODO: more fc layers for arcface
 # TODO: pseudo labeling
 # TODO: greedy assignment
-# TODO: better minimum for lr
 # TODO: eval with tta?
 # TODO: tta
 # TODO: val tta (sites)
@@ -110,7 +104,6 @@
 # TODO: user other images stats
 # TODO: cutout
 # TODO: other cyclic (1cycle) impl
-# TODO: focal
 # TODO: https://www.rxrx.ai/
 # TODO: batch effects
 # TODO: context modelling notes in rxrx

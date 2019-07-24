@@ -641,6 +641,7 @@ def main():
 
     update_transforms(config.crop_size)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
+    gc.collect()
     build_submission(folds, test_data, temp)
 
 

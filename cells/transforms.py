@@ -8,6 +8,8 @@ import torchvision
 import torchvision.transforms.functional as F
 from PIL import Image
 
+import transforms
+
 
 class ApplyTo(object):
     def __init__(self, tos, transform):
@@ -46,7 +48,7 @@ class RandomTranspose(object):
 
     def __call__(self, image):
         if random.random() < self.p:
-            return [transpose(c) for c in image]
+            return transpose(image)
 
         return image
 
@@ -61,7 +63,7 @@ class Resize(object):
         self.interpolation = interpolation
 
     def __call__(self, image):
-        return [F.resize(c, self.size, self.interpolation) for c in image]
+        return resize(image, self.size, self.interpolation)
 
     def __repr__(self):
         interpolate_str = torchvision.transforms.functional._pil_interpolation_to_str[self.interpolation]
@@ -152,7 +154,7 @@ class RandomRotation(object):
     def __call__(self, image):
         angle = self.get_params(self.degrees)
 
-        return [F.rotate(c, angle, self.resample, self.expand, self.center) for c in image]
+        return rotate(image, angle, self.resample, self.expand, self.center)
 
     def __repr__(self):
         format_string = self.__class__.__name__ + '(degrees={0}'.format(self.degrees)
@@ -208,13 +210,6 @@ class Extract(object):
         return tuple(input[k] for k in self.fields)
 
 
-def transpose(image):
-    if not torchvision.transforms.functional._is_pil_image(image):
-        raise TypeError('image should be PIL Image. Got {}'.format(type(image)))
-
-    return image.transpose(Image.TRANSPOSE)
-
-
 class StatColorJitter(object):
     def __init__(self):
         class_to_stats = torch.load('./stats.pth')
@@ -260,6 +255,9 @@ class TTA(object):
 
 # TODO: refactor
 
+def resize(image, size, interpolation=Image.BILINEAR):
+    return [F.resize(c, size, interpolation) for c in image]
+
 
 def hflip(image):
     return [F.hflip(c) for c in image]
@@ -267,6 +265,10 @@ def hflip(image):
 
 def vflip(image):
     return [F.vflip(c) for c in image]
+
+
+def transpose(image):
+    return [transforms.transpose(c) for c in image]
 
 
 def rotate(image, angle, resample=False, expand=False, center=None):
