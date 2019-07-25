@@ -16,7 +16,9 @@
 # tta4 full sigmoid:     metric: 0.9137, temp: 0.0240
 # tta4 full logits:      metric: 0.9134, temp: 0.0001
 
+# 0.00022102159384486934
 
+# TODO: continute from best cp
 # TODO: soft-f1, lsep, focal
 # TODO: huge batch rmsprop
 # TODO: other losses
