@@ -21,13 +21,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
 
         image = []
         for s in [1, 2]:
-            image.extend([
-                Image.open(os.path.join(
-                    row['root'],
-                    row['experiment'],
-                    'Plate{}'.format(row['plate']),
-                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
-                for c in range(1, 7)])
+            image.extend(load_image(row['root'], row['experiment'], row['plate'], row['well'], s))
 
         ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
         cell_type = row['experiment'].split('-')[0]
@@ -63,13 +57,7 @@ class TestDataset(torch.utils.data.Dataset):
 
         image = []
         for s in [1, 2]:
-            image.extend([
-                Image.open(os.path.join(
-                    row['root'],
-                    row['experiment'],
-                    'Plate{}'.format(row['plate']),
-                    '{}_s{}_w{}.png'.format(row['well'], s, c)))
-                for c in range(1, 7)])
+            image.extend(load_image(row['root'], row['experiment'], row['plate'], row['well'], s))
 
         ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
         cell_type = row['experiment'].split('-')[0]
@@ -87,3 +75,18 @@ class TestDataset(torch.utils.data.Dataset):
             input = self.transform(input)
 
         return input
+
+
+def load_image(root, experiment, plate, well, site):
+    image = []
+
+    for c in range(1, 7):
+        path = os.path.join(
+            root,
+            experiment,
+            'Plate{}'.format(plate),
+            '{}_s{}_w{}.png'.format(well, site, c))
+
+        image.append(Image.open(path))
+       
+    return image

@@ -19,6 +19,7 @@
 # 0.00022102159384486934
 
 
+# TODO: use all controll files (train_controls.csv)
 # TODO: start from hard aug and lower with each epoch
 # TODO: continute from best cp
 # TODO: soft-f1, lsep, focal

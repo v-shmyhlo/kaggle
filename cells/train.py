@@ -24,7 +24,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop
+    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -60,7 +60,14 @@ class Resetable(object):
 
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
+to_tensor = ToTensor()
 
+if config.normalize:
+    normalize = NormalizeByExperimentStats(
+        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
+else:
+    normalize = T.Compose([])
+   
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -70,9 +77,10 @@ train_transform = T.Compose([
             random_crop,
             RandomFlip(),
             RandomTranspose(),
-            ToTensor(),
+            to_tensor,
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
+    normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 eval_transform = T.Compose([
@@ -82,8 +90,9 @@ eval_transform = T.Compose([
             RandomSite(),  # FIXME:
             Resize(config.resize_size),
             center_crop,
-            ToTensor(),
+            to_tensor,
         ])),
+    normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 test_transform = T.Compose([
@@ -93,8 +102,9 @@ test_transform = T.Compose([
             Resize(config.resize_size),
             center_crop,
             SplitInSites(),
-            T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
+            T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
         ])),
+    normalize,
     Extract(['image', 'feat', 'exp', 'id']),
 ])
 

@@ -248,6 +248,22 @@ class NormalizeByRefStats(object):
         }
 
 
+class NormalizeByExperimentStats(object):
+    def __init__(self, stats):
+        self.stats = stats
+
+    def __call__(self, input):
+        mean, std = self.stats[input['exp']]
+        mean, std = mean.view(mean.size(0), 1, 1), std.view(std.size(0), 1, 1)
+
+        image = (input['image'] - mean) / std
+
+        return {
+            **input,
+            'image': image
+        }
+
+
 class TTA(object):
     def __call__(self, input):
         return [input, rotate(input, 90), rotate(input, 180), rotate(input, 270)]
