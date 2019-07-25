@@ -96,8 +96,8 @@ class RandomCrop(object):
         self.padding_mode = padding_mode
 
     @staticmethod
-    def get_params(img, output_size):
-        w, h = img.size
+    def get_params(image, output_size):
+        w, h = image.size
         th, tw = output_size
         if w == tw and h == th:
             return 0, 0, h, w

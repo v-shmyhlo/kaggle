@@ -18,6 +18,8 @@
 
 # 0.00022102159384486934
 
+
+# TODO: start from hard aug and lower with each epoch
 # TODO: continute from best cp
 # TODO: soft-f1, lsep, focal
 # TODO: huge batch rmsprop

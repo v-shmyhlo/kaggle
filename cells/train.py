@@ -24,7 +24,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomRotation, RandomCrop, CenterCrop
+    NormalizedColorJitter, RandomCrop, CenterCrop
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -67,7 +67,6 @@ train_transform = T.Compose([
         T.Compose([
             RandomSite(),
             Resize(config.resize_size),
-            RandomRotation(180),
             random_crop,
             RandomFlip(),
             RandomTranspose(),
@@ -196,7 +195,7 @@ def build_optimizer(optimizer_config, parameters):
             optimizer,
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
-       
+
     return optimizer
 
 
