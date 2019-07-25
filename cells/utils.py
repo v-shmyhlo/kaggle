@@ -19,14 +19,27 @@ RANGES = torch.tensor([
 ], dtype=torch.float) / 255
 
 
-def images_to_rgb(input, clamp=False):
+# def images_to_rgb(input, clamp=False):
+#     colors, ranges = COLORS.to(input.device), RANGES.to(input.device)
+#
+#     min, max = ranges[:, 0], ranges[:, 1]
+#     min, max = min.view(1, 6, 1, 1), max.view(1, 6, 1, 1)
+#     input = input / (max - min) + min
+#     if clamp:
+#         input = input.clamp(0., 1.)
+#
+#     colors = colors.reshape((1, 6, 3, 1, 1))
+#     input = input.unsqueeze(2)
+#     input = input * colors
+#     input = input.mean(1)
+#
+#     return input
+
+def images_to_rgb(input):
     colors, ranges = COLORS.to(input.device), RANGES.to(input.device)
-   
-    min, max = ranges[:, 0], ranges[:, 1]
-    min, max = min.view(1, 6, 1, 1), max.view(1, 6, 1, 1)
-    input = input / (max - min) + min
-    if clamp:
-        input = input.clamp(0., 1.)
+
+    min, max = input.min(), input.max()
+    input = (input - min) / (max - min)
 
     colors = colors.reshape((1, 6, 3, 1, 1))
     input = input.unsqueeze(2)
