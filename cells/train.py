@@ -58,6 +58,19 @@ class Resetable(object):
         self.transform = self.build_transform(*args, **kwargs)
 
 
+class RandomResize(object):
+    def __init__(self, min_size, max_size):
+        self.min_size = min_size
+        self.max_size = max_size
+
+    def __call__(self, input):
+        size = round(np.random.uniform(self.min_size, self.max_size))
+        input = Resize(size)(input)
+
+        return input
+
+
+random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
 to_tensor = ToTensor()
@@ -67,7 +80,7 @@ if config.normalize:
         torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
 else:
     normalize = T.Compose([])
-   
+
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -109,10 +122,18 @@ test_transform = T.Compose([
 ])
 
 
-def update_transforms(image_size):
-    print('update transforms: {}'.format(image_size))
-    random_crop.reset(image_size)
-    center_crop.reset(image_size)
+def update_transforms(p):
+    assert 0. <= p <= 1.
+
+    crop_size = round(224 + (config.crop_size - 224) * p)
+    delta = config.resize_size - crop_size
+    resize_size = config.resize_size - delta, config.resize_size + delta
+    assert sum(resize_size) / 2 == config.resize_size
+    print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
+
+    random_resize.reset(*resize_size)
+    random_crop.reset(crop_size)
+    center_crop.reset(crop_size)
 
 
 # TODO: use pool
@@ -257,7 +278,7 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
-    update_transforms(config.crop_size)
+    update_transforms(1.)
     model.train()
     optimizer.zero_grad()
     for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
@@ -314,7 +335,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         'loss': utils.Mean(),
     }
 
-    update_transforms(round(224 + (config.crop_size - 224) * np.linspace(0, 1, config.epochs)[epoch - 1].item()))
+    update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
     for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
@@ -635,7 +656,7 @@ def main():
         for fold in folds:
             train_fold(fold, train_eval_data)
 
-    update_transforms(config.crop_size)  # FIXME:
+    update_transforms(1.)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
     gc.collect()
     build_submission(folds, test_data, temp)

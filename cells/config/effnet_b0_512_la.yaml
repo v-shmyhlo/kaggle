@@ -3,6 +3,7 @@ epochs: 50
 batch_size: 16
 resize_size: 512
 crop_size: 512
+normalize: True
 
 model:
   type: b0

@@ -16,9 +16,10 @@
 # tta4 full sigmoid:     metric: 0.9137, temp: 0.0240
 # tta4 full logits:      metric: 0.9134, temp: 0.0001
 
-# 0.00022102159384486934
 
-
+# TODO: random resize separate width/height
+# TODO: progressive random resize
+# TODO: progressive jitter
 # TODO: use all controll files (train_controls.csv)
 # TODO: start from hard aug and lower with each epoch
 # TODO: continute from best cp
