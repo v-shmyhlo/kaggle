@@ -146,9 +146,10 @@ class Decoder(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, model, num_classes):
         super().__init__()
 
+        self.norm = nn.BatchNorm2d(3)
         self.encoder = Encoder()
         self.decoder = Decoder()
         self.output = Conv(64, num_classes, 1)
@@ -161,6 +162,7 @@ class Model(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, input):
+        input = self.norm(input)
         input = self.encoder(input)
         input = self.decoder(input)
         input = self.output(input)

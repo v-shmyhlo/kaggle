@@ -1,99 +1,75 @@
 import numbers
 import random
-from collections.abc import Iterable
 
-import numpy as np
-import torch
-import torchvision.transforms as T
 import torchvision.transforms.functional as F
-from PIL import Image
 
 
-class ToTensor(object):
-    def __call__(self, input):
-        image, mask = input
-        assert image.size == mask.size
-
-        image = F.to_tensor(image)
-        mask = torch.from_numpy(np.array(mask, dtype=np.int64, copy=False))
-        mask = mask.unsqueeze(0)
-
-        return image, mask
-
-    def __repr__(self):
-        return self.__class__.__name__ + '()'
-
-
-class Normalize(object):
-    def __init__(self, mean, std, inplace=False):
-        self.mean = mean
-        self.std = std
-        self.inplace = inplace
+class ApplyTo(object):
+    def __init__(self, tos, transform):
+        self.tos = tos
+        self.transform = transform
 
     def __call__(self, input):
-        image, mask = input
+        input = {
+            **input,
+            **{to: self.transform(input[to]) for to in self.tos},
+        }
 
-        image = F.normalize(image, self.mean, self.std, self.inplace)
-
-        return image, mask
-
-    def __repr__(self):
-        return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
-
-
-class Resize(object):
-    def __init__(self, size, interpolation=Image.BILINEAR):
-        assert isinstance(size, int) or (isinstance(size, Iterable) and len(size) == 2)
-        self.size = size
-        self.interpolation = interpolation
-
-    def __call__(self, input):
-        image, mask = input
-        assert image.size == mask.size
-
-        image = F.resize(image, self.size, self.interpolation)
-        mask = F.resize(mask, self.size, Image.NEAREST)
-
-        return image, mask
-
-    def __repr__(self):
-        interpolate_str = T._pil_interpolation_to_str[self.interpolation]
-        return self.__class__.__name__ + '(size={0}, interpolation={1})'.format(self.size, interpolate_str)
+        return input
 
 
 class RandomCrop(object):
-    def __init__(self, size):
+    def __init__(self, size, padding=None, pad_if_needed=False, fill=0, padding_mode='constant'):
         if isinstance(size, numbers.Number):
             self.size = (int(size), int(size))
         else:
             self.size = size
+        self.padding = padding
+        self.pad_if_needed = pad_if_needed
+        self.fill = fill
+        self.padding_mode = padding_mode
 
     @staticmethod
     def get_params(img, output_size):
         w, h = img.size
         th, tw = output_size
-
         if w == tw and h == th:
             return 0, 0, h, w
 
         i = random.randint(0, h - th)
         j = random.randint(0, w - tw)
-
         return i, j, th, tw
 
     def __call__(self, input):
-        image, mask = input
-        assert image.size == mask.size
+        image = self.preprocess(input['image'])
+        mask = self.preprocess(input['mask'])
 
         i, j, h, w = self.get_params(image, self.size)
 
         image = F.crop(image, i, j, h, w)
         mask = F.crop(mask, i, j, h, w)
 
-        return image, mask
+        return {
+            **input,
+            'image': image,
+            'mask': mask,
+        }
 
     def __repr__(self):
-        return self.__class__.__name__ + '(size={0})'.format(self.size)
+        return self.__class__.__name__ + '(size={0}, padding={1})'.format(self.size, self.padding)
+
+    def preprocess(self, image):
+        if self.padding is not None:
+            image = F.pad(image, self.padding, self.fill, self.padding_mode)
+
+        # pad the width if needed
+        if self.pad_if_needed and image.size[0] < self.size[1]:
+            image = F.pad(image, (self.size[1] - image.size[0], 0), self.fill, self.padding_mode)
+        # pad the height if needed
+        if self.pad_if_needed and image.size[1] < self.size[0]:
+            image = F.pad(image, (0, self.size[0] - image.size[1]), self.fill, self.padding_mode)
+
+        return image
 
 
 class CenterCrop(object):
@@ -104,13 +80,22 @@ class CenterCrop(object):
             self.size = size
 
     def __call__(self, input):
-        image, mask = input
-        assert image.size == mask.size
+        image = F.center_crop(input['image'], self.size)
+        mask = F.center_crop(input['mask'], self.size)
 
-        image = F.center_crop(image, self.size)
-        mask = F.center_crop(mask, self.size)
-
-        return image, mask
+        return {
+            **input,
+            'image': image,
+            'mask': mask,
+        }
 
     def __repr__(self):
         return self.__class__.__name__ + '(size={0})'.format(self.size)
+
+
+class Extract(object):
+    def __init__(self, fields):
+        self.fields = fields
+
+    def __call__(self, input):
+        return tuple(input[k] for k in self.fields)

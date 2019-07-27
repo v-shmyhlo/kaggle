@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from stal.utils import rle_decode
 
-NUM_CLASSES = 1108
+NUM_CLASSES = 5
 
 
 class TrainEvalDataset(torch.utils.data.Dataset):
@@ -23,13 +23,14 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         id, rles, root = self.data[item]
 
         image = Image.open(os.path.join(root, id))
-        mask = np.stack([rle_decode(rle, image.size) for rle in rles], 2)
-        assert np.all(mask.sum(2) <= 1)
-        mask = np.argmax(mask, 2)
+        mask = np.zeros((image.size[1], image.size[0]), dtype=np.int32)
+        for i, rle in enumerate(rles, 1):
+            m = rle_decode(rle, image.size)
+            assert m.dtype == np.bool
+            assert np.all(mask[m] == 0)
+            mask[m] = i
         mask = Image.fromarray(mask)
         assert image.size == mask.size
-
-        print(image.mode, mask.mode)
 
         input = {
             'image': image,
@@ -37,9 +38,8 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             'id': id,
         }
 
-        #
-        # if self.transform is not None:
-        #     input = self.transform(input)
+        if self.transform is not None:
+            input = self.transform(input)
 
         return input
 

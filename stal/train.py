@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -22,17 +21,18 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
+from loss import dice_loss
 from lr_scheduler import OneCycleScheduler
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from stal.model import Model
-from stal.transforms import Resize
+from stal.transforms import RandomCrop, CenterCrop, ApplyTo, Extract
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
-parser.add_argument('--experiment-path', type=str, default='./tf_log/cells')
+parser.add_argument('--experiment-path', type=str, default='./tf_log/stal')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--restore-path', type=str)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
@@ -81,44 +81,26 @@ class RandomResize(object):
 # else:
 #     normalize = T.Compose([])
 
+
 train_transform = T.Compose([
-    # ApplyTo(
-    #     ['image'],
-    #     T.Compose([
-    #         RandomSite(),
-    #         Resize(config.resize_size),
-    #         random_crop,
-    #         RandomFlip(),
-    #         RandomTranspose(),
-    #         to_tensor,
-    #         NormalizedColorJitter(config.aug.channel_weight),
-    #     ])),
-    # normalize,
-    # Extract(['image', 'feat', 'exp', 'label', 'id']),
+    RandomCrop(256),
+    ApplyTo(
+        ['image', 'mask'],
+        T.ToTensor()),
+    Extract(['image', 'mask', 'id']),
 ])
 eval_transform = T.Compose([
-    # ApplyTo(
-    #     ['image'],
-    #     T.Compose([
-    #         RandomSite(),  # FIXME:
-    #         Resize(config.resize_size),
-    #         center_crop,
-    #         to_tensor,
-    #     ])),
-    # normalize,
-    # Extract(['image', 'feat', 'exp', 'label', 'id']),
+    CenterCrop(256),
+    ApplyTo(
+        ['image', 'mask'],
+        T.ToTensor()),
+    Extract(['image', 'mask', 'id']),
 ])
 test_transform = T.Compose([
-    # ApplyTo(
-    #     ['image'],
-    #     T.Compose([
-    #         Resize(config.resize_size),
-    #         center_crop,
-    #         SplitInSites(),
-    #         T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
-    #     ])),
-    # normalize,
-    # Extract(['image', 'feat', 'exp', 'id']),
+    ApplyTo(
+        ['image'],
+        T.ToTensor()),
+    Extract(['image', 'id']),
 ])
 
 
@@ -177,7 +159,13 @@ def mixup(images_1, labels_1, ids, alpha):
 
 
 def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+    # TODO: check loss
+
+    assert target.dtype == torch.int32
+    input = input.softmax(1)
+    target = utils.one_hot(target.long().squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+
+    loss = dice_loss(input=input, target=target, axis=(1, 2, 3))
 
     return loss
 
@@ -268,11 +256,11 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, (images, masks, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+        images, masks = images.to(DEVICE), masks.to(DEVICE)
+        logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=masks)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -325,11 +313,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, (images, masks, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+        images, masks = images.to(DEVICE), masks.to(DEVICE)
+        logits = model(images)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=masks)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -407,10 +395,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    train_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
-    for _ in tqdm(train_dataset):
-        pass
-    fail
+    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,

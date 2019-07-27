@@ -20,9 +20,9 @@ def rle_decode(rle, size):
     starts, lengths = [np.asarray(x) for x in (rle[0:][::2], rle[1:][::2])]
     starts -= 1
     ends = starts + lengths
-    image = np.zeros(size[0] * size[1], dtype=np.int32)
+    image = np.zeros(size[0] * size[1], dtype=np.bool)
 
     for lo, hi in zip(starts, ends):
         image[lo:hi] = 1
-
+       
     return image.reshape(size).T
