@@ -15,6 +15,7 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
+from PIL import Image
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -68,6 +69,40 @@ class RandomResize(object):
         input = Resize(size)(input)
 
         return input
+
+
+class MixSites(object):
+    def __call__(self, input):
+        w, h = input[0].size
+        s1, s2 = SplitInSites()(input)
+        if np.random.rand() > 0.5:
+            s1, s2 = s2, s1
+
+        lam = np.random.uniform(0, 1)
+        r_x = np.random.uniform(0, w)
+        r_y = np.random.uniform(0, h)
+        r_w = w * np.sqrt(1 - lam)
+        r_h = h * np.sqrt(1 - lam)
+        x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
+        x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
+        y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
+        y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
+
+        mode = s1[0].mode
+        for c in input:
+            assert c.mode == mode
+
+        s1 = [np.array(c) for c in s1]
+        s2 = [np.array(c) for c in s2]
+
+        for c1, c2 in zip(s1, s2):
+            c1[x1:x2, y1:y2] = c2[x1:x2, y1:y2]
+
+        s1 = [Image.fromarray(c) for c in s1]
+
+        assert s1[0].mode == mode
+
+        return s1
 
 
 random_resize = Resetable(RandomResize)

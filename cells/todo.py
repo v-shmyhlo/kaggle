@@ -16,9 +16,17 @@
 # tta4 full sigmoid:     metric: 0.9137, temp: 0.0240
 # tta4 full logits:      metric: 0.9134, temp: 0.0001
 
+# crop-norm:             metric: 0.8602, temp: 0.0063
 
+
+# TODO: SEARCH THRESHOLD USING AVERAGE OF 2 SITES
+# TODO: delta with ref + arcface
+# TODO: try to learn diverse model
+# TODO: mix 2 sites
+# TODO: remove color jitter
+# TODO: CutMix on sites
+# TODO: CutMix on all data
 # TODO: random resize separate width/height
-# TODO: progressive random resize
 # TODO: progressive jitter
 # TODO: use all controll files (train_controls.csv)
 # TODO: start from hard aug and lower with each epoch
@@ -30,13 +38,10 @@
 # TODO: even wider temp search space
 # TODO: metric inverted/cyclic weight progress
 # TODO: hints from cells telegram channel
-# TODO: remove transpose
 # TODO: remove id_code and other data asserts
-# TODO: valid rotate
 # TODO: wider temp search space for metric learning models
 # TODO: metric learning and additional feats
 # TODO: cyclic arcface weight
-# TODO: stabilize arcface
 # TODO: progressive resize for lr search
 # TODO: always check relative plots
 # TODO: metric learning separate branch
@@ -56,9 +61,7 @@
 # TODO: metric per type
 # TODO: metric per experiment
 # TODO: onecycle remove plat area
-# TODO: no cycle beta
 # TODO: b2/b3
-# TODO: shift / scale
 # TODO: random stitch sites
 # TODO: distort aspect ratio
 # TODO: well info
