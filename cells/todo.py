@@ -18,7 +18,11 @@
 
 # crop-norm:             metric: 0.8602, temp: 0.0063
 
+# crop-norm-la:
+# crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
+
+# TODO: lookahead larger step size
 # TODO: SEARCH THRESHOLD USING AVERAGE OF 2 SITES
 # TODO: delta with ref + arcface
 # TODO: try to learn diverse model
@@ -26,14 +30,12 @@
 # TODO: remove color jitter
 # TODO: CutMix on sites
 # TODO: CutMix on all data
-# TODO: random resize separate width/height
 # TODO: progressive jitter
 # TODO: use all controll files (train_controls.csv)
 # TODO: start from hard aug and lower with each epoch
 # TODO: continute from best cp
-# TODO: soft-f1, lsep, focal
 # TODO: huge batch rmsprop
-# TODO: other losses
+# TODO: other losses, soft-f1, lsep, focal
 # TODO: check last metric learning experiment loss plot
 # TODO: even wider temp search space
 # TODO: metric inverted/cyclic weight progress

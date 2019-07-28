@@ -90,6 +90,18 @@ eval_transform = T.Compose([
         ])),
     Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
+eval_infer_transform = T.Compose([
+    ApplyTo(
+        ['image'],
+        T.Compose([
+            Resize(config.resize_size),
+            center_crop,
+            SplitInSites(),
+            T.Lambda(lambda xs: flatten([TTA()(x) for x in xs])),
+            T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
+        ])),
+    Extract(['image', 'feat', 'exp', 'label', 'id']),
+])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -101,18 +113,6 @@ test_transform = T.Compose([
             T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
         ])),
     Extract(['image', 'feat', 'exp', 'id']),
-])
-tmp_transform = T.Compose([
-    ApplyTo(
-        ['image'],
-        T.Compose([
-            Resize(config.resize_size),
-            center_crop,
-            SplitInSites(),
-            T.Lambda(lambda xs: flatten([TTA()(x) for x in xs])),
-            T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
-        ])),
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 
 
@@ -559,7 +559,7 @@ def predict_on_test_using_fold(fold, test_data):
 def predict_on_eval_using_fold(fold, train_eval_data):
     _, eval_indices = indices_for_fold(fold, train_eval_data)
     eval_data = train_eval_data.iloc[eval_indices]
-    eval_dataset = TrainEvalDataset(eval_data, transform=tmp_transform)
+    eval_dataset = TrainEvalDataset(eval_data, transform=eval_infer_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size // 2,

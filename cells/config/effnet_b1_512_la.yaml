@@ -1,16 +1,25 @@
 seed: 42
-epochs: 100
-batch_size: 32
+epochs: 40
+batch_size: 12
+resize_size: 512
+crop_size: 512
+normalize: True
 
 model:
+  type: b1
+
+aug:
+  channel_weight: 0.5
 
 opt:
   type: sgd
-  lr: 0.2
+  lr: 0.6
   weight_decay: 1e-4
-  acc_steps: 1
+  acc_steps: 8
 
   lookahead:
+    lr: 0.5
+    steps: 10
 
   sgd:
     momentum: 0.9
@@ -39,4 +48,3 @@ sched:
     beta: [0.95, 0.85]
     peak_pos: 0.45
     end_pos: 0.9
-

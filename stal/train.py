@@ -13,7 +13,6 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-from sklearn.model_selection import KFold
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -26,6 +25,7 @@ from lr_scheduler import OneCycleScheduler
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from stal.model import Model
 from stal.transforms import RandomCrop, CenterCrop, ApplyTo, Extract
+from stal.utils import mask_to_image
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -83,17 +83,23 @@ class RandomResize(object):
 
 
 train_transform = T.Compose([
-    RandomCrop(256),
+    RandomCrop((256, 1024)),
     ApplyTo(
         ['image', 'mask'],
         T.ToTensor()),
+    ApplyTo(
+        ['mask'],
+        T.Lambda(lambda x: x.long())),
     Extract(['image', 'mask', 'id']),
 ])
 eval_transform = T.Compose([
-    CenterCrop(256),
+    CenterCrop((256, 1024)),
     ApplyTo(
         ['image', 'mask'],
         T.ToTensor()),
+    ApplyTo(
+        ['mask'],
+        T.Lambda(lambda x: x.long())),
     Extract(['image', 'mask', 'id']),
 ])
 test_transform = T.Compose([
@@ -126,7 +132,7 @@ def find_temp_global(input, target, exps):
         fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), exps=exps)
         fold_preds = torch.tensor(fold_preds).to(input.device)
         metric = compute_metric(input=fold_preds, target=target)
-        metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
+        metrics.append(metric['dice'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
     metric = metrics[np.argmax(metrics)]
@@ -158,38 +164,60 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def compute_loss(input, target):
-    # TODO: check loss
+def compute_nrow(images):
+    b, _, h, w = images.size()
+    nrow = math.ceil(math.sqrt(h * b / w))
 
-    assert target.dtype == torch.int32
-    input = input.softmax(1)
-    target = utils.one_hot(target.long().squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+    return nrow
 
-    loss = dice_loss(input=input, target=target, axis=(1, 2, 3))
+
+def focal_loss(input, target, gamma=2.):
+    axis = 1
+
+    prob = input.softmax(axis)
+    weight = (1 - prob)**gamma
+    loss = -(weight * target * input.log_softmax(axis)).sum(axis)
 
     return loss
 
 
+def compute_loss(input, target):
+    target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+    loss = focal_loss(input=input, target=target)
+    loss = loss.mean((1, 2))
+
+    return loss
+
+
+# def compute_loss(input, target):
+#     # TODO: check loss
+#
+#     input = input.softmax(1)
+#     target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+#
+#     # input, target = input[:, 1:], target[:, 1:]
+#
+#     loss = dice_loss(input=input, target=target, axis=(2, 3))
+#
+#     return loss
+
+
 def compute_metric(input, target):
+    input = utils.one_hot(input.argmax(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+    target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+
+    input, target = input[:, 1:], target[:, 1:]
+
+    dice = dice_loss(input=input, target=target, axis=(2, 3), eps=0.)
+    dice = (-dice).exp()
+    dice[dice != dice] = 0.
+    # dice[(input.sum((2, 3)) == 0.) & (target.sum((2, 3)) == 0.)] = 1.
+
     metric = {
-        'accuracy@1': (input == target).float(),
+        'dice': dice
     }
 
     return metric
-
-
-def assign_classes(probs, exps):
-    # TODO: refactor numpy/torch usage
-
-    exps = np.array(exps)
-    classes = np.zeros(probs.shape[0], dtype=np.int64)
-    for exp in np.unique(exps):
-        subset = exps == exp
-        preds = probs[subset]
-        _, c, _ = lap.lapjv(1 - preds, extend_cost=True)
-        classes[subset] = c
-
-    return classes
 
 
 def build_optimizer(optimizer_config, parameters):
@@ -200,6 +228,11 @@ def build_optimizer(optimizer_config, parameters):
             momentum=optimizer_config.sgd.momentum,
             weight_decay=optimizer_config.weight_decay,
             nesterov=True)
+    elif optimizer_config.type == 'adam':
+        optimizer = torch.optim.Adam(
+            parameters,
+            optimizer_config.lr,
+            weight_decay=optimizer_config.weight_decay)
     elif optimizer_config.type == 'rmsprop':
         optimizer = torch.optim.RMSprop(
             parameters,
@@ -218,11 +251,27 @@ def build_optimizer(optimizer_config, parameters):
     return optimizer
 
 
+# def indices_for_fold(fold, dataset):
+#     kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
+#     splits = list(kfold.split(list(range(len(dataset)))))
+#     train_indices, eval_indices = splits[fold - 1]
+#     print(len(train_indices), len(eval_indices))
+#     assert len(train_indices) + len(eval_indices) == len(dataset)
+#
+#     return train_indices, eval_indices
+
+
 def indices_for_fold(fold, dataset):
-    kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
-    splits = list(kfold.split(list(range(len(dataset)))))
-    train_indices, eval_indices = splits[fold - 1]
-    assert len(train_indices) + len(eval_indices) == len(dataset)
+    ids = dataset['ImageId_ClassId'].apply(lambda x: x.split('_')[0])
+
+    unique_ids = ids.unique()
+    unique_ids = unique_ids[np.random.RandomState(42).permutation(len(unique_ids))]
+    train_ids, eval_ids = unique_ids[len(unique_ids) // 5:], unique_ids[:len(unique_ids) // 5]
+
+    indices = np.arange(len(dataset))
+    train_indices, eval_indices = indices[ids.isin(train_ids)], indices[ids.isin(eval_ids)]
+
+    print(len(train_indices), len(eval_indices))
 
     return train_indices, eval_indices
 
@@ -331,14 +380,22 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
-        images = images_to_rgb(images)[:16]
         print('[FOLD {}][EPOCH {}][TRAIN] {}'.format(
             fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
+
+        images = images[:32]
+        masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
+        preds = mask_to_image(logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+
         writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+            images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
+        writer.add_image('masks', torchvision.utils.make_grid(
+            masks, nrow=compute_nrow(masks), normalize=True), global_step=epoch)
+        writer.add_image('preds', torchvision.utils.make_grid(
+            preds, nrow=compute_nrow(preds), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, fold, epoch):
@@ -346,54 +403,44 @@ def eval_epoch(model, data_loader, fold, epoch):
 
     metrics = {
         'loss': utils.Mean(),
+        'dice': utils.Mean(),
     }
 
     model.eval()
     with torch.no_grad():
-        fold_labels = []
-        fold_logits = []
-        fold_exps = []
+        for images, masks, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, masks = images.to(DEVICE), masks.to(DEVICE)
+            logits = model(images)
 
-        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
-
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=masks)
             metrics['loss'].update(loss.data.cpu().numpy())
 
-            fold_labels.append(labels)
-            fold_logits.append(logits)
-            fold_exps.extend(exps)
-
-        fold_labels = torch.cat(fold_labels, 0)
-        fold_logits = torch.cat(fold_logits, 0)
-
-        if epoch % 10 == 0:
-            temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-            writer.add_scalar('temp', temp, global_step=epoch)
-            writer.add_scalar('metric_final', metric, global_step=epoch)
-            writer.add_figure('temps', fig, global_step=epoch)
-        temp = 1.  # use default temp
-        fold_preds = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
-        fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
-        metric = compute_metric(input=fold_preds, target=fold_labels)
+            metric = compute_metric(input=logits, target=masks)
+            for k in metric:
+                metrics[k].update(metric[k].data.cpu().numpy())
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
-        for k in metric:
-            metrics[k] = metric[k].mean().data.cpu().numpy()
-        images = images_to_rgb(images)[:16]
         print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
             fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
+
+        images = images[:32]
+        masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
+        preds = mask_to_image(logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+
         writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
+            images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
+        writer.add_image('masks', torchvision.utils.make_grid(
+            masks, nrow=compute_nrow(masks), normalize=True), global_step=epoch)
+        writer.add_image('preds', torchvision.utils.make_grid(
+            preds, nrow=compute_nrow(preds), normalize=True), global_step=epoch)
 
         return metrics
 
 
 def train_fold(fold, train_eval_data):
-    train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
+    train_indices, eval_indices = indices_for_fold(fold, train_eval_data)  # FIXME: dataset size
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
@@ -475,7 +522,7 @@ def train_fold(fold, train_eval_data):
             epoch=epoch)
         gc.collect()
 
-        score = metric['accuracy@1']
+        score = metric['dice']
 
         scheduler.step_epoch()
         scheduler.step_score(score)

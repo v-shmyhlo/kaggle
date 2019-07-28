@@ -105,7 +105,7 @@ class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.model = torchvision.models.resnet50(pretrained=True)
+        self.model = torchvision.models.resnet18(pretrained=True)
 
     def forward(self, input):
         input = self.model.conv1(input)
@@ -129,10 +129,12 @@ class Decoder(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.merge1 = UpsampleMerge(256, 64)
-        self.merge2 = UpsampleMerge(512, 256)
-        self.merge3 = UpsampleMerge(1024, 512)
-        self.merge4 = UpsampleMerge(2048, 1024)
+        k = 1
+
+        self.merge1 = UpsampleMerge(64 * k, 64)
+        self.merge2 = UpsampleMerge(128 * k, 64 * k)
+        self.merge3 = UpsampleMerge(256 * k, 128 * k)
+        self.merge4 = UpsampleMerge(512 * k, 256 * k)
 
     def forward(self, fmaps):
         input = fmaps[5]

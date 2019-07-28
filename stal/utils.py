@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def rle_encode(image):
@@ -24,5 +25,16 @@ def rle_decode(rle, size):
 
     for lo, hi in zip(starts, ends):
         image[lo:hi] = 1
-       
+
     return image.reshape(size).T
+
+
+def mask_to_image(mask, num_classes):
+    colors = np.random.RandomState(42).uniform(0.5, 1., size=(num_classes, 3))
+    colors[0] = 0.
+    colors = torch.tensor(colors, dtype=torch.float).to(mask.device)
+
+    image = colors[mask.squeeze(1)]
+    image = image.permute(0, 3, 1, 2)
+
+    return image

@@ -8,7 +8,7 @@ from lovasz_losses import lovasz_hinge
 # TODO: reduce same way everything
 
 
-def focal_loss(input, target, gamma=2.):
+def focal_loss(input, target, axis=-1, gamma=2.):
     target = target.float()
     max_val = (-input).clamp(min=0)
     loss = input - input * target + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
@@ -16,8 +16,7 @@ def focal_loss(input, target, gamma=2.):
     invprobs = F.logsigmoid(-input * (target * 2.0 - 1.0))
     loss = (invprobs * gamma).exp() * loss
 
-    loss = loss.sum(-1)
-    loss = loss.mean()
+    loss = loss.sum(axis)
 
     return loss
 
