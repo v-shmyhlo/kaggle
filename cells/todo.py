@@ -22,11 +22,11 @@
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
+# TODO: pretrain on huge dataset
 # TODO: lookahead larger step size
 # TODO: SEARCH THRESHOLD USING AVERAGE OF 2 SITES
 # TODO: delta with ref + arcface
 # TODO: try to learn diverse model
-# TODO: mix 2 sites
 # TODO: remove color jitter
 # TODO: CutMix on sites
 # TODO: CutMix on all data
@@ -59,7 +59,6 @@
 # TODO: knn classifier
 # TODO: training less epochs
 # TODO: check if sites can be stitched
-# TODO: fix rotation order <<<
 # TODO: metric per type
 # TODO: metric per experiment
 # TODO: onecycle remove plat area
@@ -69,12 +68,9 @@
 # TODO: well info
 # TODO: autoaugment
 # TODO: Population Based Training
-# TODO: binarize image?
-# TODO: do not cycle beta
 # TODO: model diverse split
 # TODO: well coding
 # TODO: learn normalization per plate
-# TODO: triplet loss
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref (?)
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
@@ -89,6 +85,7 @@
 # TODO: resized crop
 # TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: learn closer to negative control and further to other batches
+# TODO: compute norm stats only from controls
 # TODO: batch/plate effects
 # TODO: k shot learning
 # TODO: https://github.com/recursionpharma/rxrx1-utils
@@ -99,22 +96,22 @@
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: different heads for different cell types
 # TODO: mix sites
+
 # TODO: concat pool
 # TODO: gem pool
+
 # TODO: deep supervision
+
 # TODO: parallel temp search
 # TODO: eval site selection
 # TODO: check predictions/targets name
 # TODO: more fc layers for arcface
 # TODO: pseudo labeling
 # TODO: greedy assignment
-# TODO: eval with tta?
-# TODO: tta
-# TODO: val tta (sites)
-# TODO: allow shuffle of plate refs within experiment
+
+
 # TODO: domain adaptation
 # TODO: user other images stats
-# TODO: cutout
 # TODO: other cyclic (1cycle) impl
 # TODO: https://www.rxrx.ai/
 # TODO: batch effects
