@@ -380,7 +380,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         logits = model(images, feats, labels)
 
         loss = compute_loss(
-            input=logits, target=labels, weight=np.linspace(0.5, 1., config.epochs)[epoch - 1].item())
+            input=logits, target=labels, weight=np.linspace(1 / len(logits), 1., config.epochs)[epoch - 1].item())
         metrics['loss'].update(loss.data.cpu().numpy())
         *_, logits = logits
 
@@ -423,7 +423,7 @@ def eval_epoch(model, data_loader, fold, epoch):
             logits = model(images, feats)
 
             loss = compute_loss(
-                input=logits, target=labels, weight=np.linspace(0.5, 1., config.epochs)[epoch - 1].item())
+                input=logits, target=labels, weight=np.linspace(1 / len(logits), 1., config.epochs)[epoch - 1].item())
             metrics['loss'].update(loss.data.cpu().numpy())
             *_, logits = logits
 
