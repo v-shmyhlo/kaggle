@@ -211,8 +211,10 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+def compute_loss(input, target, weight=1.):
+    losses = [F.cross_entropy(input=x, target=target, reduction='none') for x in input]
+    *losses, loss = losses
+    loss = weight * loss + (1 - weight) * (sum(losses) / len(losses))
 
     return loss
 
@@ -377,8 +379,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(
+            input=logits, target=labels, weight=np.linspace(0.5, 1., config.epochs)[epoch - 1].item())
         metrics['loss'].update(loss.data.cpu().numpy())
+        *_, logits = logits
 
         lr = scheduler.get_lr()
         (loss.mean() / config.opt.acc_steps).backward()
@@ -418,8 +422,10 @@ def eval_epoch(model, data_loader, fold, epoch):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
             logits = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(
+                input=logits, target=labels, weight=np.linspace(0.5, 1., config.epochs)[epoch - 1].item())
             metrics['loss'].update(loss.data.cpu().numpy())
+            *_, logits = logits
 
             fold_labels.append(labels)
             fold_logits.append(logits)

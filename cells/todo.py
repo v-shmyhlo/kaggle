@@ -100,7 +100,6 @@
 # TODO: concat pool
 # TODO: gem pool
 
-# TODO: deep supervision
 
 # TODO: parallel temp search
 # TODO: eval site selection
