@@ -37,8 +37,8 @@ def main(dataset_path, workers):
     data = pd.concat([train_data, test_data])
 
     stats = {}
-    for exp in tqdm(data['experiment'].unique()):
-        dataset = TestDataset(data[data['experiment'] == exp], transform=transform)
+    for exp, group in tqdm(data.groupby('experiment')):
+        dataset = TestDataset(group, transform=transform)
         data_loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=32,

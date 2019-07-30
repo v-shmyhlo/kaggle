@@ -25,7 +25,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats
+    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -110,11 +110,16 @@ random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
 to_tensor = ToTensor()
 
-if config.normalize:
+if config.normalize is None:
+    normalize = T.Compose([])
+elif config.normalize == 'experiment':
     normalize = NormalizeByExperimentStats(
         torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
+elif config.normalize == 'plate':
+    normalize = NormalizeByPlateStats(
+        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
-    normalize = T.Compose([])
+    raise AssertionError('invalide normalization {}'.format(config.normalize))
 
 train_transform = T.Compose([
     ApplyTo(

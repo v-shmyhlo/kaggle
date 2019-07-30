@@ -18,10 +18,18 @@
 
 # crop-norm:             metric: 0.8602, temp: 0.0063
 
-# crop-norm-la:
+# crop-norm-la:          metric: 0.8586, temp: 0.0008
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
+# TODO: check new stats generation
+
+# TODO: b1
+# TODO: pseudo labeling
+# TODO: train on all data (with controls)
+# TODO: compute stats/fold splits using train.csv + train_controls.csv
+# TODO: better kfold split (mean image of each experiment)
+# TODO: normalize by plate stats
 # TODO: pretrain on huge dataset
 # TODO: lookahead larger step size
 # TODO: SEARCH THRESHOLD USING AVERAGE OF 2 SITES

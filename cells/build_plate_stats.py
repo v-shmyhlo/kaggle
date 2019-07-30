@@ -1,25 +1,60 @@
+import gc
 import os
-from multiprocessing import Pool
+import resource
 
 import click
 import pandas as pd
+import torch
+import torch.utils.data
+import torchvision.transforms as T
+from tqdm import tqdm
 
-from cells.dataset import NUM_CLASSES
+from cells.dataset import TestDataset
+from cells.transforms import ApplyTo, SplitInSites, Extract, ToTensor
+
+rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
 
 @click.command()
 @click.option('--dataset-path', type=click.Path(), required=True)
 @click.option('--workers', type=click.INT, default=os.cpu_count())
 def main(dataset_path, workers):
-    data = pd.read_csv(os.path.join(dataset_path, 'train.csv'))
-    stats = pd.read_csv(os.path.join(dataset_path, 'pixel_stats.csv'))
+    transform = T.Compose([
+        ApplyTo(
+            ['image'],
+            T.Compose([
+                SplitInSites(),
+                T.Lambda(lambda xs: torch.stack([ToTensor()(x) for x in xs], 0)),
+            ])),
+        Extract(['image']),
+    ])
 
-    with Pool(workers) as pool:
-        class_to_stats = pool.map(
-            partial(build_class_stats, data=data, stats=stats),
-            tqdm(range(NUM_CLASSES), desc='building class stats'))
+    train_data = pd.read_csv(os.path.join(dataset_path, 'train.csv'))
+    train_data['root'] = os.path.join(dataset_path, 'train')
+    test_data = pd.read_csv(os.path.join(dataset_path, 'test.csv'))
+    test_data['root'] = os.path.join(dataset_path, 'test')
+    data = pd.concat([train_data, test_data])
 
-    torch.save(class_to_stats, './stats.pth')
+    stats = {}
+    for (exp, plate), group in tqdm(data.groupby(['experiment', 'plate'])):
+        dataset = TestDataset(group, transform=transform)
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=32,
+            num_workers=workers)
+
+        with torch.no_grad():
+            images = [images for images, in data_loader]
+            images = torch.cat(images, 0)
+            mean = images.mean((0, 1, 3, 4))
+            std = images.std((0, 1, 3, 4))
+            stats[(exp, plate)] = mean, std
+
+            del images, mean, std
+            gc.collect()
+
+    torch.save(stats, 'plate_stats.pth')
 
 
 if __name__ == '__main__':

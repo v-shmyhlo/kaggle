@@ -31,6 +31,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             'image': image,
             'feat': feat,
             'exp': row['experiment'],
+            'plate': row['plate'],
             'ref_stats': ref_stats,
             'label': row['sirna'],
             'id': row['id_code'],
@@ -67,6 +68,7 @@ class TestDataset(torch.utils.data.Dataset):
             'image': image,
             'feat': feat,
             'exp': row['experiment'],
+            'plate': row['plate'],
             'ref_stats': ref_stats,
             'id': row['id_code']
         }
@@ -88,5 +90,5 @@ def load_image(root, experiment, plate, well, site):
             '{}_s{}_w{}.png'.format(well, site, c))
 
         image.append(Image.open(path))
-       
+
     return image
