@@ -24,18 +24,20 @@ class Model(nn.Module):
         else:
             assert target is None
 
-        assert input.size(2) == input.size(3) == self.model._global_params.image_size
-
         input = torch.cat([input, ref], 0)
         input = self.norm(input)
 
+        # Convolution layers
         input = self.model.extract_features(input)
+
+        # Pooling and final linear layer
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
-        if self.model._dropout:
-            input = F.dropout(input, p=self.model._dropout, training=self.training)
-        input = self.model._fc(input)
 
         input, ref = torch.split(input, input.size(0) // 2, 0)
         input = input - ref
+
+        if self.model._dropout:
+            input = F.dropout(input, p=self.model._dropout, training=self.training)
+        input = self.model._fc(input)
 
         return input

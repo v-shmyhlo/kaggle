@@ -22,9 +22,9 @@
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
-# TODO: check new stats generation
-
-# TODO: b1
+# TODO: precompute ref embeddings (at each epoch) for ref models
+# TODO: train longer
+# TODO: b1,b2,b3
 # TODO: pseudo labeling
 # TODO: train on all data (with controls)
 # TODO: compute stats/fold splits using train.csv + train_controls.csv
@@ -35,7 +35,6 @@
 # TODO: SEARCH THRESHOLD USING AVERAGE OF 2 SITES
 # TODO: delta with ref + arcface
 # TODO: try to learn diverse model
-# TODO: remove color jitter
 # TODO: CutMix on sites
 # TODO: CutMix on all data
 # TODO: progressive jitter
@@ -50,9 +49,9 @@
 # TODO: hints from cells telegram channel
 # TODO: remove id_code and other data asserts
 # TODO: wider temp search space for metric learning models
+# TODO: progressive jitter
 # TODO: metric learning and additional feats
 # TODO: cyclic arcface weight
-# TODO: progressive resize for lr search
 # TODO: always check relative plots
 # TODO: metric learning separate branch
 # TODO: triplet loss with all lessons learned from arcface
@@ -70,7 +69,6 @@
 # TODO: metric per type
 # TODO: metric per experiment
 # TODO: onecycle remove plat area
-# TODO: b2/b3
 # TODO: random stitch sites
 # TODO: distort aspect ratio
 # TODO: well info
@@ -100,7 +98,6 @@
 # TODO: 2 images as control
 # TODO: https://data.broadinstitute.org/bbbc/image_sets.html
 # TODO: https://github.com/awesomedata/awesome-public-datasets#biology
-# TODO: use all controls for training
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: different heads for different cell types
 # TODO: mix sites

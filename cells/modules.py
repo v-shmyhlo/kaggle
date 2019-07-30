@@ -71,27 +71,3 @@ class ArcFace(nn.Module):
         output *= self.s
 
         return output
-
-
-class SampleNorm(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels * 4, 1),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(channels * 4, channels, 1))
-
-    def forward(self, input):
-        unnormalized = input
-
-        input = self.conv(input)
-        mean, log_std = torch.split(input, input.size(1) // 2, 1)
-        std = log_std.exp() + 1e-7
-
-        print(input.shape, mean.shape, std.shape)
-
-        input = (unnormalized - mean) / std
-
-        return input
