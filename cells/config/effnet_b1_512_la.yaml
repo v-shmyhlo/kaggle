@@ -3,7 +3,7 @@ epochs: 40
 batch_size: 12
 resize_size: 512
 crop_size: 512
-normalize: True
+normalize: experiment
 
 model:
   type: b1
