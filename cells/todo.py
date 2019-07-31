@@ -22,6 +22,7 @@
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
+# TODO: 1cycle decay to zero?
 # TODO: precompute ref embeddings (at each epoch) for ref models
 # TODO: train longer
 # TODO: b1,b2,b3
