@@ -45,7 +45,7 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
-samples_in_a_row = config.batch_size
+samples_in_a_row = config.batch_size // 2
 
 
 class Sampler(torch.utils.data.Sampler):
@@ -244,7 +244,7 @@ def lsep_loss(input, target, exp):
     pos_mask = target > 0.5
     neg_mask = target <= 0.5
 
-    loss = 0.
+    loss = []
     for e in np.unique(exp):
         e_mask = torch.tensor(exp == e, dtype=pos_mask.dtype, device=input.device)
         e_mask = e_mask.unsqueeze(1)
@@ -255,7 +255,9 @@ def lsep_loss(input, target, exp):
         pos_examples = pos_examples.unsqueeze(1)
         neg_examples = neg_examples.unsqueeze(0)
 
-        loss += torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples), 1))
+        loss.append(torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples), 1)))
+
+    loss = torch.cat(loss, 0)
 
     return loss
 
