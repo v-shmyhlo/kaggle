@@ -45,6 +45,30 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
+samples_in_a_row = config.batch_size
+
+
+class Sampler(torch.utils.data.Sampler):
+    def __init__(self, data, samples_in_a_row, shuffle=False):
+        super().__init__(data)
+
+        data = data[['experiment']].copy()
+        data.index = np.arange(len(data))
+
+        if shuffle:
+            data = data.sample(frac=1)
+
+        buckets = [bucket.index.values for _, bucket in data.groupby('experiment')]
+        max_len = min(len(bucket) for bucket in buckets) // samples_in_a_row * samples_in_a_row
+        buckets = np.array([bucket[:max_len] for bucket in buckets])
+        buckets = np.concatenate(np.split(buckets, max_len // samples_in_a_row, 1), 0)
+        self.indices = buckets.reshape(buckets.shape[0] * buckets.shape[1])
+
+    def __iter__(self):
+        return iter(self.indices)
+
+    def __len__(self):
+        return self.indices.shape[0]
 
 
 class Resetable(object):
@@ -215,7 +239,28 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
-def lsep_loss(input, target):
+def lsep_loss(input, target, exp):
+    target = utils.one_hot(target, NUM_CLASSES)
+    pos_mask = target > 0.5
+    neg_mask = target <= 0.5
+
+    loss = 0.
+    for e in np.unique(exp):
+        e_mask = torch.tensor(exp == e, dtype=pos_mask.dtype, device=input.device)
+        e_mask = e_mask.unsqueeze(1)
+
+        pos_examples = input[pos_mask & e_mask]
+        neg_examples = input[neg_mask & e_mask]
+
+        pos_examples = pos_examples.unsqueeze(1)
+        neg_examples = neg_examples.unsqueeze(0)
+
+        loss += torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples), 1))
+
+    return loss
+
+
+def hinge_loss(input, target, exp, margin=1.):
     target = utils.one_hot(target, NUM_CLASSES)
     pos_indices = target > 0.5
     neg_indices = target <= 0.5
@@ -226,14 +271,18 @@ def lsep_loss(input, target):
     pos_examples = pos_examples.unsqueeze(1)
     neg_examples = neg_examples.unsqueeze(0)
 
-    loss = torch.log(1 + torch.sum(torch.exp(neg_examples - pos_examples), 1))
+    zero = torch.tensor(0., dtype=torch.float, device=DEVICE)
+    loss = torch.sum(torch.max(zero, margin + neg_examples - pos_examples), 1)
 
     return loss
 
 
-def compute_loss(input, target):
+def compute_loss(input, target, exp):
+    assert np.unique(exp).shape[0] == config.batch_size // samples_in_a_row, np.unique(exp)
+    exp = np.array(exp)
+
     # loss = F.cross_entropy(input=input, target=target, reduction='none')
-    loss = lsep_loss(input=input, target=target)
+    loss = lsep_loss(input=input, target=target, exp=exp)
 
     return loss
 
@@ -314,7 +363,7 @@ def lr_search(train_eval_data):
         train_eval_dataset,
         batch_size=config.batch_size,
         drop_last=True,
-        shuffle=True,
+        sampler=Sampler(train_eval_dataset.data, samples_in_a_row, shuffle=True),
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -337,11 +386,11 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+    for i, (images, feats, exps, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, exp=exps)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -394,11 +443,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+    for i, (images, feats, exps, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, exp=exps)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -439,7 +488,7 @@ def eval_epoch(model, data_loader, fold, epoch):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
             logits = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=labels, exp=exps)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)
@@ -481,13 +530,14 @@ def train_fold(fold, train_eval_data):
         train_dataset,
         batch_size=config.batch_size,
         drop_last=True,
-        shuffle=True,
+        sampler=Sampler(train_dataset.data, samples_in_a_row, shuffle=True),
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
+        sampler=Sampler(eval_dataset.data, samples_in_a_row),
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 

@@ -22,6 +22,7 @@
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
+# TODO: do not use softmax with lsep
 # TODO: hinge loss
 # TODO: lsep loss
 # TODO: lsep within experiment
