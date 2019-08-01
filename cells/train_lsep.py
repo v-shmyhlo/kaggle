@@ -46,6 +46,7 @@ config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
 samples_in_a_row = config.batch_size // 2
+assert config.batch_size % samples_in_a_row == 0
 
 
 class Sampler(torch.utils.data.Sampler):
