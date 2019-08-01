@@ -468,7 +468,9 @@ def train_fold(fold, train_eval_data):
         shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
-    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
+    tmp = pd.read_csv('./oof_{}.csv'.format(fold))
+    tmp['root'] = os.path.join(args.dataset_path, 'train')
+    eval_dataset = TrainEvalDataset(pd.concat([train_eval_data.iloc[eval_indices], tmp]), transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
@@ -643,9 +645,8 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_logits = torch.cat(fold_logits, 0)
 
         tmp = train_eval_data.iloc[eval_indices].copy()
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        c = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
-        print('{:.2f}'.format((tmp['sirna'] == c).mean()))
+        c = assign_classes(probs=(fold_logits * 0.01).softmax(1), exps=fold_exps)
+        print((tmp['sirna'] == c).mean())
         tmp['sirna'] = c
         tmp.to_csv('./eval_{}.csv'.format(fold), index=False)
 
