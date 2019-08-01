@@ -1,5 +1,5 @@
 seed: 42
-epochs: 50
+epochs: 30
 batch_size: 16
 resize_size: 512
 crop_size: 512

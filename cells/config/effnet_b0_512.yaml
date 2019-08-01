@@ -3,10 +3,10 @@ epochs: 50
 batch_size: 16
 resize_size: 512
 crop_size: 512
-normalize: True
+normalize: experiment
 
 model:
-  type: b0
+  type: efficientnet-b0
 
 aug:
   channel_weight: 0.5

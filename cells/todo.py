@@ -22,6 +22,13 @@
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
 
+# TODO: hinge loss
+# TODO: lsep loss
+# TODO: lsep within experiment
+# TODO: train longer
+# TODO: train second cycle
+# TODO: use LAP to compute error/loss for update
+# TODO: use LAP for OHEM
 # TODO: 1cycle decay to zero?
 # TODO: precompute ref embeddings (at each epoch) for ref models
 # TODO: train longer
