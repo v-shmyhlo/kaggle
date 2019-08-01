@@ -59,7 +59,8 @@ class Sampler(torch.utils.data.Sampler):
             data = data.sample(frac=1)
 
         buckets = [bucket.index.values for _, bucket in data.groupby('experiment')]
-        max_len = min(len(bucket) for bucket in buckets) // samples_in_a_row * samples_in_a_row
+        max_len = min(len(bucket) for bucket in buckets)
+        max_len = max_len // samples_in_a_row * samples_in_a_row
         buckets = np.array([bucket[:max_len] for bucket in buckets])
         buckets = np.concatenate(np.split(buckets, max_len // samples_in_a_row, 1), 0)
         self.indices = buckets.reshape(buckets.shape[0] * buckets.shape[1])
