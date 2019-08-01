@@ -460,7 +460,10 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
+    tmp = pd.read_csv('./eval_{}.csv'.format(fold))
+    tmp['root'] = os.path.join(args.dataset_path, 'train')
+    print(len(tmp), len(train_indices))
+    train_dataset = TrainEvalDataset(pd.concat([train_eval_data.iloc[train_indices], tmp]), transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -468,9 +471,7 @@ def train_fold(fold, train_eval_data):
         shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
-    tmp = pd.read_csv('./oof_{}.csv'.format(fold))
-    tmp['root'] = os.path.join(args.dataset_path, 'train')
-    eval_dataset = TrainEvalDataset(pd.concat([train_eval_data.iloc[eval_indices], tmp]), transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
