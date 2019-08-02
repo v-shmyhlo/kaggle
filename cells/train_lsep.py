@@ -637,6 +637,10 @@ def build_submission(folds, test_data, temp):
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
 
+        tmp = test_data.copy()
+        tmp['sirna'] = classes
+        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
+
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
         submission.to_csv('./submission.csv', index=False)
@@ -682,8 +686,7 @@ def predict_on_test_using_fold(fold, test_data):
 
 def predict_on_eval_using_fold(fold, train_eval_data):
     _, eval_indices = indices_for_fold(fold, train_eval_data)
-    eval_data = train_eval_data.iloc[eval_indices]
-    eval_dataset = TrainEvalDataset(eval_data, transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
@@ -712,6 +715,13 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
+
+        tmp = train_eval_data.iloc[eval_indices].copy()
+        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
+        classes = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
+        print('{:.2f}'.format((tmp['sirna'] == classes).mean()))
+        tmp['sirna'] = classes
+        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
 
         return fold_labels, fold_logits, fold_exps, fold_ids
 
