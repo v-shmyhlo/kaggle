@@ -6,7 +6,7 @@ import torch
 
 
 class OneCycleScheduler(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.45, end_pos=0.9):
+    def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.45, end_pos=0.9, last_epoch=-1):
         assert peak_pos < end_pos, '{} should be less than {}'.format(peak_pos, end_pos)
 
         if annealing == 'linear':
@@ -23,7 +23,8 @@ class OneCycleScheduler(torch.optim.lr_scheduler._LRScheduler):
         self.annealing = annealing
         self.peak_pos = peak_pos
         self.end_pos = end_pos
-        self.last_epoch = 0
+
+        super().__init__(optimizer, last_epoch)
 
     def step(self):
         self.last_epoch += 1
