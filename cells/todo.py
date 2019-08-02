@@ -21,7 +21,10 @@
 # crop-norm-la:          metric: 0.8586, temp: 0.0008
 # crop-norm-la-avg:      metric: 0.9210, temp: 0.0233
 
+# 1589, 3525
 
+# TODO: use tta for oof thresh search, especially for PL generation
+# TODO: reduce amount of pseudolabeled data with each epoch
 # TODO: pl soft probs
 # TODO: pl+mixup
 # TODO: do not use softmax with lsep

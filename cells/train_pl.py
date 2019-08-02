@@ -460,10 +460,14 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    tmp = pd.read_csv('./eval_{}.csv'.format(fold))
-    tmp['root'] = os.path.join(args.dataset_path, 'train')
-    print(len(tmp), len(train_indices))
-    train_dataset = TrainEvalDataset(pd.concat([train_eval_data.iloc[train_indices], tmp]), transform=train_transform)
+    eval_pl = pd.read_csv('./tf_log/cells/tmp-512-progres-crop-norm-la/eval_{}.csv'.format(fold))
+    eval_pl['root'] = os.path.join(args.dataset_path, 'train')
+    test_pl = pd.read_csv('./tf_log/cells/tmp-512-progres-crop-norm-la/test.csv')
+    test_pl['root'] = os.path.join(args.dataset_path, 'test')
+    print(len(eval_pl) / len(train_indices))
+
+    train_dataset = TrainEvalDataset(
+        pd.concat([train_eval_data.iloc[train_indices], eval_pl, test_pl]), transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -649,7 +653,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         c = assign_classes(probs=(fold_logits * 0.01).softmax(1), exps=fold_exps)
         print((tmp['sirna'] == c).mean())
         tmp['sirna'] = c
-        tmp.to_csv('./eval_{}.csv'.format(fold), index=False)
+        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
 
         return fold_labels, fold_logits, fold_exps, fold_ids
 
