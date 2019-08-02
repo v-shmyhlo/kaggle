@@ -517,8 +517,8 @@ def train_fold(fold, train_eval_data):
         pl = pd.concat([eval_pl, test_pl])
         pl_size = len(pl)
         pl = pl.sample(frac=np.linspace(1., 0., config.epochs)[epoch - 1].item())
-        print(len(pl) / pl_size)
-       
+        print('frac: {:.4f}, lr: {:.8f}'.format(len(pl) / pl_size, scheduler.get_lr()))
+
         train_dataset = TrainEvalDataset(
             pd.concat([train_eval_data.iloc[train_indices], pl]), transform=train_transform)
         train_data_loader = torch.utils.data.DataLoader(
