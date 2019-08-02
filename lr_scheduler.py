@@ -1,18 +1,11 @@
 import numpy as np
+import torch
 
 
 # TODO: refactor to use optimizers LR (check torch code)
 
 
-class LRScheduler(object):
-    def step(self):
-        raise NotImplementedError
-
-    def get_lr(self):
-        raise NotImplementedError
-
-
-class OneCycleScheduler(LRScheduler):
+class OneCycleScheduler(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.45, end_pos=0.9):
         assert peak_pos < end_pos, '{} should be less than {}'.format(peak_pos, end_pos)
 
@@ -76,25 +69,6 @@ class OneCycleScheduler(LRScheduler):
             beta = self.beta[0]
 
         return beta
-
-
-class LinearScheduler(LRScheduler):
-    def __init__(self, optimizer, delta):
-        self.optimizer = optimizer
-        self.delta = delta
-        self.lr_initial = np.squeeze([param_group['lr'] for param_group in optimizer.param_groups])
-        self.last_epoch = 0
-
-    def step(self):
-        self.last_epoch += 1
-
-        lr = self.get_lr()
-
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
-
-    def get_lr(self):
-        return self.lr_initial + self.delta * self.last_epoch
 
 
 def annealing_linear(start, end, r):
