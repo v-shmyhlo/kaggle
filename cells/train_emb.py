@@ -248,7 +248,6 @@ def mixup(images_1, labels_1, ids, alpha):
 
 def embedding_loss(input, target):
     dists = torch.norm(input.unsqueeze(0) - input.unsqueeze(1), 2, 2)
-    dists = dists**2
 
     eqs = target.unsqueeze(0) == target.unsqueeze(1)
     eye = torch.eye(target.size(0), dtype=torch.uint8).to(input.device)
