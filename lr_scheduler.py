@@ -2,9 +2,6 @@ import numpy as np
 import torch
 
 
-# TODO: refactor to use optimizers LR (check torch code)
-
-
 class OneCycleScheduler(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, lr, beta, max_steps, annealing, peak_pos=0.45, end_pos=0.9, last_epoch=-1):
         assert peak_pos < end_pos, '{} should be less than {}'.format(peak_pos, end_pos)
@@ -26,8 +23,10 @@ class OneCycleScheduler(torch.optim.lr_scheduler._LRScheduler):
 
         super().__init__(optimizer, last_epoch)
 
-    def step(self):
-        self.last_epoch += 1
+    def step(self, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch
 
         lr = self.get_lr()
         beta = self.get_beta()
