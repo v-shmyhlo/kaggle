@@ -13,7 +13,7 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.3
+  lr: 0.15
   weight_decay: 1e-4
   acc_steps: 4
 

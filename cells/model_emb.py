@@ -37,9 +37,9 @@ class Model(nn.Module):
 
         # Pooling and final linear layer
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
+        embs = input
         if self.model._dropout:
             input = F.dropout(input, p=self.model._dropout, training=self.training)
-        embs = input
         input = self.model._fc(input)
 
         return input, embs

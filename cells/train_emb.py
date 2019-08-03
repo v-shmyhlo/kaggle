@@ -46,7 +46,7 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
-samples_in_a_row = config.batch_size // 2
+samples_in_a_row = 8
 assert config.batch_size % samples_in_a_row == 0
 
 
@@ -83,6 +83,10 @@ class Sampler(torch.utils.data.Sampler):
 
         buckets = [bucket[:self.max_len] for bucket in buckets]
         buckets = np.array(buckets)
+
+        if self.shuffle:
+            buckets = buckets[np.random.permutation(buckets.shape[0])]
+
         buckets = np.concatenate(np.split(buckets, self.max_len // self.samples_in_a_row, 1), 0)
         indices = buckets.reshape(buckets.shape[0] * buckets.shape[1])
 
@@ -246,8 +250,29 @@ def mixup(images_1, labels_1, ids, alpha):
     return images, labels, ids
 
 
+# def embedding_loss(input, target):
+#     dists = torch.norm(input.unsqueeze(0) - input.unsqueeze(1), 2, 2)
+#     eqs = target.unsqueeze(0) == target.unsqueeze(1)
+#     eye = torch.eye(target.size(0), dtype=torch.uint8).to(input.device)
+#
+#     pos_mask = eqs & ~eye
+#     neg_mask = ~eqs & ~eye
+#
+#     pos_examples = dists[pos_mask]
+#     neg_examples = dists[neg_mask]
+#
+#     pos_examples = pos_examples.unsqueeze(1)
+#     neg_examples = neg_examples.unsqueeze(0)
+#
+#     loss = torch.log(1 + torch.exp(pos_examples - neg_examples))
+#
+#     # margin = 1.0
+#     # loss = (margin + pos_examples - neg_examples).clamp(min=0.)
+#
+#     return loss
+
 def embedding_loss(input, target):
-    dists = torch.norm(input.unsqueeze(0) - input.unsqueeze(1), 2, 2)
+    dists = (input.unsqueeze(0) * input.unsqueeze(1)).sum(2)
 
     eqs = target.unsqueeze(0) == target.unsqueeze(1)
     eye = torch.eye(target.size(0), dtype=torch.uint8).to(input.device)
@@ -258,15 +283,17 @@ def embedding_loss(input, target):
     pos_examples = dists[pos_mask]
     neg_examples = dists[neg_mask]
 
-    pos_examples = pos_examples.unsqueeze(1)
-    neg_examples = neg_examples.unsqueeze(0)
+    pos_loss = F.binary_cross_entropy_with_logits(
+        input=pos_examples, target=torch.ones_like(pos_examples), reduction='none')
+    neg_loss = F.binary_cross_entropy_with_logits(
+        input=neg_examples, target=torch.zeros_like(neg_examples), reduction='none')
 
-    loss = torch.log(1 + torch.exp(pos_examples - neg_examples))
+    loss = pos_loss.mean() + neg_loss.mean()
 
     return loss
 
 
-def compute_loss(input, embs, target, weight=0.5):
+def compute_loss(input, embs, target, weight=0.9):
     assert torch.unique(target).size(0) == config.batch_size // samples_in_a_row, torch.unique(target)
 
     loss = F.cross_entropy(input=input, target=target, reduction='none')
@@ -434,9 +461,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     optimizer.zero_grad()
     for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+        logits, embs = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, embs=embs, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -475,9 +502,9 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+            logits, embs = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, embs=embs, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)

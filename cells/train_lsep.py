@@ -267,23 +267,6 @@ def lsep_loss(input, target, exp):
     return loss
 
 
-def hinge_loss(input, target, exp, margin=1.):
-    target = utils.one_hot(target, NUM_CLASSES)
-    pos_indices = target > 0.5
-    neg_indices = target <= 0.5
-
-    pos_examples = input[pos_indices]
-    neg_examples = input[neg_indices]
-
-    pos_examples = pos_examples.unsqueeze(1)
-    neg_examples = neg_examples.unsqueeze(0)
-
-    zero = torch.tensor(0., dtype=torch.float, device=DEVICE)
-    loss = torch.sum(torch.max(zero, margin + neg_examples - pos_examples), 1)
-
-    return loss
-
-
 def compute_loss(input, target, exp):
     assert np.unique(exp).shape[0] == config.batch_size // samples_in_a_row, np.unique(exp)
     exp = np.array(exp)

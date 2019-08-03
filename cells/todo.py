@@ -28,6 +28,8 @@
 # return mu + eps*std
 
 
+# TODO: check train_emb.py Sampler corner cases
+# TODO: check train_lsep.py Sampler corner cases
 # TODO: normalize last layer (embeddings) by experiment
 # TODO: use tta for oof thresh search, especially for PL generation
 # TODO: reduce amount of pseudolabeled data with each epoch
