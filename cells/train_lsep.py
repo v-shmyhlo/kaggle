@@ -55,22 +55,36 @@ class Sampler(torch.utils.data.Sampler):
 
         data = data[['experiment']].copy()
         data.index = np.arange(len(data))
-
-        if shuffle:
-            data = data.sample(frac=1)
-
         buckets = [bucket.index.values for _, bucket in data.groupby('experiment')]
         max_len = min(len(bucket) for bucket in buckets)
         max_len = max_len // samples_in_a_row * samples_in_a_row
-        buckets = np.array([bucket[:max_len] for bucket in buckets])
-        buckets = np.concatenate(np.split(buckets, max_len // samples_in_a_row, 1), 0)
-        self.indices = buckets.reshape(buckets.shape[0] * buckets.shape[1])
+
+        self.max_len = max_len
+        self.buckets = buckets
+        self.samples_in_a_row = samples_in_a_row
+        self.shuffle = shuffle
 
     def __iter__(self):
-        return iter(self.indices)
+        indices = self.build_indices()
+        assert len(indices) == len(self), (len(indices), len(self))
+
+        return iter(indices)
 
     def __len__(self):
-        return self.indices.shape[0]
+        return len(self.buckets) * self.max_len
+
+    def build_indices(self):
+        buckets = self.buckets
+
+        if self.shuffle:
+            buckets = [bucket[np.random.permutation(bucket.shape[0])] for bucket in buckets]
+
+        buckets = [bucket[:self.max_len] for bucket in buckets]
+        buckets = np.array(buckets)
+        buckets = np.concatenate(np.split(buckets, self.max_len // self.samples_in_a_row, 1), 0)
+        indices = buckets.reshape(buckets.shape[0] * buckets.shape[1])
+
+        return indices
 
 
 class Resetable(object):

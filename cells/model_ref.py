@@ -16,7 +16,15 @@ class Model(nn.Module):
         # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
         #     6, 32, kernel_size=3, stride=2, bias=False)
         self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
-        self.model._fc = nn.Linear(self.model._fc.in_features, num_classes)
+        embedding_size = self.model._fc.in_features
+        self.model._fc = nn.Linear(512, num_classes)
+
+        self.input_output = nn.Sequential(
+            nn.Linear(embedding_size, 512),
+            nn.BatchNorm1d(512))
+        self.ref_output = nn.Sequential(
+            nn.Linear(embedding_size, 1024),
+            nn.BatchNorm1d(1024))
 
     def forward(self, input, ref, feats, target=None):
         if self.training:
@@ -34,7 +42,14 @@ class Model(nn.Module):
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
 
         input, ref = torch.split(input, input.size(0) // 2, 0)
-        input = input - ref
+
+        input = self.input_output(input)
+        ref = self.ref_output(ref)
+
+        mean, log_var = torch.split(ref, ref.size(1) // 2, 1)
+        std = torch.exp(0.5 * log_var)
+
+        input = (input - mean) / std
 
         if self.model._dropout:
             input = F.dropout(input, p=self.model._dropout, training=self.training)

@@ -612,8 +612,7 @@ def predict_on_test_using_fold(fold, test_data):
 
 def predict_on_eval_using_fold(fold, train_eval_data):
     _, eval_indices = indices_for_fold(fold, train_eval_data)
-    eval_data = train_eval_data.iloc[eval_indices]
-    eval_dataset = TrainEvalDataset(eval_data, transform=eval_transform)
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,

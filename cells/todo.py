@@ -23,6 +23,12 @@
 
 # 1589, 3525
 
+# std = torch.exp(0.5*logvar)
+# eps = torch.randn_like(std)
+# return mu + eps*std
+
+
+# TODO: normalize last layer (embeddings) by experiment
 # TODO: use tta for oof thresh search, especially for PL generation
 # TODO: reduce amount of pseudolabeled data with each epoch
 # TODO: pl soft probs

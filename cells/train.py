@@ -25,7 +25,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats
+    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -46,17 +46,6 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
-
-
-class Resetable(object):
-    def __init__(self, build_transform):
-        self.build_transform = build_transform
-
-    def __call__(self, input):
-        return self.transform(input)
-
-    def reset(self, *args, **kwargs):
-        self.transform = self.build_transform(*args, **kwargs)
 
 
 class RandomResize(object):
