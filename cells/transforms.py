@@ -291,6 +291,8 @@ class Resetable(object):
         self.transform = None
 
     def __call__(self, input):
+        assert self.transform is not None, 'transform is not initialized'
+
         return self.transform(input)
 
     def reset(self, *args, **kwargs):

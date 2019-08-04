@@ -25,7 +25,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats
+    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -46,17 +46,6 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
-
-
-class Resetable(object):
-    def __init__(self, build_transform):
-        self.build_transform = build_transform
-
-    def __call__(self, input):
-        return self.transform(input)
-
-    def reset(self, *args, **kwargs):
-        self.transform = self.build_transform(*args, **kwargs)
 
 
 class RandomResize(object):
@@ -460,9 +449,12 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    eval_pl = pd.read_csv('./tf_log/cells/tmp-512-progres-crop-norm-la/eval_{}.csv'.format(fold))
+    # pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la'
+    pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la-pl-f'
+
+    eval_pl = pd.read_csv(os.path.join(pl_path, 'eval_{}.csv'.format(fold)))
     eval_pl['root'] = os.path.join(args.dataset_path, 'train')
-    test_pl = pd.read_csv('./tf_log/cells/tmp-512-progres-crop-norm-la/test.csv')
+    test_pl = pd.read_csv(os.path.join(pl_path, 'test.csv'))
     test_pl['root'] = os.path.join(args.dataset_path, 'test')
     print(len(eval_pl) / len(train_indices))
 
