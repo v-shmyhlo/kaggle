@@ -10,7 +10,6 @@ class TrainEvalDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
         self.transform = transform
-        self.plate_to_stats = torch.load('./cells/plate_stats.pth')
         self.cell_type_to_id = {cell_type: i for i, cell_type in enumerate(['HEPG2', 'HUVEC', 'RPE', 'U2OS'])}
 
     def __len__(self):
@@ -23,7 +22,6 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         for s in [1, 2]:
             image.extend(load_image(row['root'], row['experiment'], row['plate'], row['well'], s))
 
-        ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
         cell_type = row['experiment'].split('-')[0]
         feat = torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1])
 
@@ -32,7 +30,6 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             'feat': feat,
             'exp': row['experiment'],
             'plate': row['plate'],
-            'ref_stats': ref_stats,
             'label': row['sirna'],
             'id': row['id_code'],
         }
@@ -47,7 +44,6 @@ class TestDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
         self.transform = transform
-        self.plate_to_stats = torch.load('./cells/plate_stats.pth')
         self.cell_type_to_id = {cell_type: i for i, cell_type in enumerate(['HEPG2', 'HUVEC', 'RPE', 'U2OS'])}
 
     def __len__(self):
@@ -60,7 +56,6 @@ class TestDataset(torch.utils.data.Dataset):
         for s in [1, 2]:
             image.extend(load_image(row['root'], row['experiment'], row['plate'], row['well'], s))
 
-        ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
         cell_type = row['experiment'].split('-')[0]
         feat = torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1])
 
@@ -69,7 +64,6 @@ class TestDataset(torch.utils.data.Dataset):
             'feat': feat,
             'exp': row['experiment'],
             'plate': row['plate'],
-            'ref_stats': ref_stats,
             'id': row['id_code']
         }
 
