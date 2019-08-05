@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -31,6 +30,10 @@ from lr_scheduler import OneCycleScheduler
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+SHARPEN_TEMP = 0.5
+LAM_U = 100
+MIX_ALPHA = 0.75
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -59,10 +62,42 @@ class RandomResize(object):
         return input
 
 
+def dist_sharpen(dist, temp):
+    assert dist.dim() == 2
+
+    dist = dist**(1 / temp)
+    dist = dist / dist.sum(1, keepdim=True)
+
+    return dist
+
+
+def cut_mix(images_1, labels_1):
+    b, _, h, w = images_1.size()
+    perm = np.random.permutation(b)
+    images_2, labels_2 = images_1[perm], labels_1[perm]
+
+    lam = np.random.uniform(0, 1)  # TODO: beta?
+    lam = max(lam, 1 - lam)
+    r_x = np.random.uniform(0, w)
+    r_y = np.random.uniform(0, h)
+    r_w = w * np.sqrt(1 - lam)
+    r_h = h * np.sqrt(1 - lam)
+    x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
+    x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
+    y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
+    y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
+
+    images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
+    images = images_1
+    labels = lam * labels_1 + (1 - lam) * labels_2
+
+    return images, labels
+
+
 random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
-infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
+eval_site_select = Resetable(lambda random: RandomSite() if random else SplitInSites())
 to_tensor = ToTensor()
 
 if config.normalize is None:
@@ -75,20 +110,6 @@ elif config.normalize == 'plate':
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalide normalization {}'.format(config.normalize))
-
-eval_image_transform = T.Compose([
-    RandomSite(),
-    Resize(config.resize_size),
-    center_crop,
-    to_tensor,
-])
-
-test_image_transform = T.Compose([
-    Resize(config.resize_size),
-    center_crop,
-    SplitInSites(),
-    T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
-])
 
 train_transform = T.Compose([
     ApplyTo(
@@ -103,21 +124,48 @@ train_transform = T.Compose([
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'exp', 'label', 'id']),
 ])
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
-        infer_image_transform),
+        T.Compose([
+            eval_site_select,
+            Resize(config.resize_size),
+            center_crop,
+            to_tensor,
+        ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'exp', 'label', 'id']),
+])
+unsup_transform = T.Compose([
+    ApplyTo(
+        ['image'],
+        T.Compose([
+            Resize(config.resize_size),
+            random_crop,
+            RandomFlip(),
+            RandomTranspose(),
+            SplitInSites(),
+            T.Lambda(
+                lambda xs: torch.stack(
+                    [NormalizedColorJitter(config.aug.channel_weight)(to_tensor(x)) for x in xs],
+                    0)),
+        ])),
+    normalize,
+    Extract(['image', 'exp', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        infer_image_transform),
+        T.Compose([
+            Resize(config.resize_size),
+            center_crop,
+            SplitInSites(),
+            T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
+        ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'id']),
+    Extract(['image', 'exp', 'id']),
 ])
 
 
@@ -174,9 +222,35 @@ def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
-def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+def ce(input, target):
+    axis = 1
+    loss = -(target * input.log_softmax(axis)).sum(axis)
 
+    return loss
+
+
+def l2(input, target):
+    input = input.softmax(1)
+    loss = torch.norm(input - target, 2, 1)**2
+    loss = loss / NUM_CLASSES
+
+    return loss
+
+
+def compute_loss(input, target, unsup):
+    assert input.dim() == target.dim() == 2
+
+    if unsup:
+        input_s, input_u = input.split(input.size(0) // 2, 0)
+        target_s, target_u = target.split(target.size(0) // 2, 0)
+
+        loss_s = ce(input_s, target_s)
+        loss_u = l2(input_u, target_u)
+
+        loss = loss_s + LAM_U * loss_u
+    else:
+        loss = ce(input, target)
+       
     return loss
 
 
@@ -281,9 +355,12 @@ def lr_search(train_eval_data):
     optimizer.zero_grad()
     for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+        labels = utils.one_hot(labels, NUM_CLASSES)
+        images, labels = cut_mix(images, labels)
+        logits = model(images, None, True)
 
         loss = compute_loss(input=logits, target=labels)
+        labels = labels.argmax(1)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -326,7 +403,9 @@ def lr_search(train_eval_data):
         return minima_lr
 
 
-def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
+def train_epoch(model, optimizer, scheduler, data_loader, unsup_data_loader, fold, epoch):
+    assert len(data_loader) <= len(unsup_data_loader), (len(data_loader), len(unsup_data_loader))
+
     writer = SummaryWriter(os.path.join(args.experiment_path, 'fold{}'.format(fold), 'train'))
 
     metrics = {
@@ -334,14 +413,37 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     }
 
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
+    data = zip(data_loader, unsup_data_loader)
+    total = min(len(data_loader), len(unsup_data_loader))
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, ((images_s, _, labels_s, _), (images_u, _, _)) \
+            in enumerate(tqdm(data, desc='epoch {} train'.format(epoch), total=total), 1):
+        images_s, labels_s, images_u = images_s.to(DEVICE), labels_s.to(DEVICE), images_u.to(DEVICE)
+        labels_s = utils.one_hot(labels_s, NUM_CLASSES)
 
-        loss = compute_loss(input=logits, target=labels)
+        with torch.no_grad():
+            # TODO: model.eval() ?
+            model.eval()
+
+            b, n, c, h, w = images_u.size()
+            images_u = images_u.view(b * n, c, h, w)
+            logits_u = model(images_u, None)
+            logits_u = logits_u.view(b, n, NUM_CLASSES)
+            labels_u = logits_u.softmax(2).mean(1, keepdim=True)
+            labels_u = labels_u.repeat(1, n, 1).view(b * n, NUM_CLASSES)
+            labels_u = dist_sharpen(labels_u, temp=SHARPEN_TEMP)
+
+            # TODO: model.train() ?
+            model.train()
+
+        images, labels = torch.cat([images_s, images_u], 0), torch.cat([labels_s, labels_u], 0)
+        images, labels = cut_mix(images, labels)
+        logits = model(images, None, True)
+
+        loss = compute_loss(input=logits, target=labels, unsup=True)
         metrics['loss'].update(loss.data.cpu().numpy())
+        labels = labels.argmax(1)
 
         lr = scheduler.get_lr()
         (loss.mean() / config.opt.acc_steps).backward()
@@ -377,12 +479,14 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_exps = []
 
-        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+        for images, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+            labels = utils.one_hot(labels, NUM_CLASSES)
+            logits = model(images, None)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=labels, unsup=False)
             metrics['loss'].update(loss.data.cpu().numpy())
+            labels = labels.argmax(1)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -412,19 +516,19 @@ def eval_epoch(model, data_loader, fold, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
-        writer.add_histogram('logits', fold_logits, global_step=epoch)
-        writer.add_histogram('probs', to_prob(fold_logits, 1.), global_step=epoch)
-
-        fold_exps = np.array(fold_exps)
-        fold_probs = to_prob(fold_logits, 1.).data.cpu().numpy()
-        for exp in np.unique(fold_exps):
-            image = fold_probs[fold_exps == exp]
-            writer.add_image('experiment_probs/{}'.format(exp.item()), image, dataformats='hw', global_step=epoch)
+        # writer.add_histogram('logits', fold_logits, global_step=epoch)
+        # writer.add_histogram('probs', to_prob(fold_logits, 1.), global_step=epoch)
+        #
+        # fold_exps = np.array(fold_exps)
+        # fold_probs = to_prob(fold_logits, 1.).data.cpu().numpy()
+        # for exp in np.unique(fold_exps):
+        #     image = fold_probs[fold_exps == exp]
+        #     writer.add_image('experiment_probs/{}'.format(exp.item()), image, dataformats='hw', global_step=epoch)
 
         return metrics
 
 
-def train_fold(fold, train_eval_data):
+def train_fold(fold, train_eval_data, unsup_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
@@ -439,6 +543,12 @@ def train_fold(fold, train_eval_data):
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
+        num_workers=args.workers,
+        worker_init_fn=worker_init_fn)
+    unsup_data = TestDataset(unsup_data, transform=unsup_transform)
+    unsup_data_loader = torch.utils.data.DataLoader(
+        unsup_data,
+        batch_size=config.batch_size // 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -497,6 +607,7 @@ def train_fold(fold, train_eval_data):
             optimizer=optimizer,
             scheduler=scheduler,
             data_loader=train_data_loader,
+            unsup_data_loader=unsup_data_loader,
             fold=fold,
             epoch=epoch)
         gc.collect()
@@ -603,12 +714,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         for images, feats, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-
-            b, n, c, h, w = images.size()
-            images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
-            logits = logits.view(b, n, NUM_CLASSES)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -663,7 +769,7 @@ def main():
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
     test_data['root'] = os.path.join(args.dataset_path, 'test')
 
-    infer_image_transform.reset(tta=False)
+    eval_site_select.reset(random=True)
 
     if args.lr_search:
         lr = lr_search(train_eval_data)
@@ -678,9 +784,9 @@ def main():
 
     if not args.infer:
         for fold in folds:
-            train_fold(fold, train_eval_data)
+            train_fold(fold, train_eval_data, test_data)
 
-    infer_image_transform.reset(tta=True)
+    eval_site_select.reset(random=False)
 
     update_transforms(1.)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)

@@ -27,16 +27,15 @@
 # eps = torch.randn_like(std)
 # return mu + eps*std
 
-# TODO: iteratively  optimize single batch on pseudo-labels
 
+# TODO: use mixmatch-like distribution sharpening
+# TODO: iteratively  optimize single batch on pseudo-labels
 # TODO: fix 0.9 -> 0.92
 # TODO: add tta for thresh search
-
 # TODO: learn normalization
 # TODO: learn image to extract from experiment images to normalize
 # TODO: learn features to extract from experiment features to normalize
 # TODO: mixup
-
 # TODO: train longer
 # TODO: plot outliers/error analysis
 # TODO: better visualizations
