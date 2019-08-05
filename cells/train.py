@@ -412,15 +412,6 @@ def eval_epoch(model, data_loader, fold, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
-        writer.add_histogram('logits', fold_logits, global_step=epoch)
-        writer.add_histogram('probs', to_prob(fold_logits, 1.), global_step=epoch)
-
-        fold_exps = np.array(fold_exps)
-        fold_probs = to_prob(fold_logits, 1.).data.cpu().numpy()
-        for exp in np.unique(fold_exps):
-            image = fold_probs[fold_exps == exp]
-            writer.add_image('experiment_probs/{}'.format(exp.item()), image, dataformats='hw', global_step=epoch)
-
         return metrics
 
 
