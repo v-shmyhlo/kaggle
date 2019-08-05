@@ -76,8 +76,10 @@ def cut_mix(images_1, labels_1):
     perm = np.random.permutation(b)
     images_2, labels_2 = images_1[perm], labels_1[perm]
 
-    lam = np.random.uniform(0, 1)  # TODO: beta?
+    # lam = np.random.uniform(0, 1)
+    lam = np.random.beta(MIX_ALPHA, MIX_ALPHA)
     lam = max(lam, 1 - lam)
+
     r_x = np.random.uniform(0, w)
     r_y = np.random.uniform(0, h)
     r_w = w * np.sqrt(1 - lam)
@@ -250,7 +252,7 @@ def compute_loss(input, target, unsup):
         loss = loss_s + LAM_U * loss_u
     else:
         loss = ce(input, target)
-       
+
     return loss
 
 
@@ -516,20 +518,16 @@ def eval_epoch(model, data_loader, fold, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
-        # writer.add_histogram('logits', fold_logits, global_step=epoch)
-        # writer.add_histogram('probs', to_prob(fold_logits, 1.), global_step=epoch)
-        #
-        # fold_exps = np.array(fold_exps)
-        # fold_probs = to_prob(fold_logits, 1.).data.cpu().numpy()
-        # for exp in np.unique(fold_exps):
-        #     image = fold_probs[fold_exps == exp]
-        #     writer.add_image('experiment_probs/{}'.format(exp.item()), image, dataformats='hw', global_step=epoch)
-
         return metrics
 
 
 def train_fold(fold, train_eval_data, unsup_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
+
+    # unsup_data = pd.concat([
+    #     train_eval_data.iloc[eval_indices],
+    #     unsup_data,
+    # ])
 
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
@@ -645,10 +643,6 @@ def build_submission(folds, test_data, temp):
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
 
-        tmp = test_data.copy()
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
-
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
         submission.to_csv('./submission.csv', index=False)
@@ -723,13 +717,6 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-
-        tmp = train_eval_data.iloc[eval_indices].copy()
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
-        print('{:.2f}'.format((tmp['sirna'] == classes).mean()))
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
 
         return fold_labels, fold_logits, fold_exps, fold_ids
 
