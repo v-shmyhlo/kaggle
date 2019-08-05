@@ -59,7 +59,6 @@ class RandomResize(object):
         return input
 
 
-random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
 infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
@@ -123,14 +122,9 @@ test_transform = T.Compose([
 
 def update_transforms(p):
     assert 0. <= p <= 1.
-
+   
     crop_size = round(224 + (config.crop_size - 224) * p)
-    delta = config.resize_size - crop_size
-    resize_size = config.resize_size - delta, config.resize_size + delta
-    assert sum(resize_size) / 2 == config.resize_size
-    print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
-
-    random_resize.reset(*resize_size)
+    print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
 
