@@ -24,6 +24,9 @@
 # 1589, 3525
 
 
+# TODO: predict group
+# TODO: penalize errors not in group
+# TODO: lsep within plate
 # TODO: freeze BN
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening

@@ -122,7 +122,7 @@ test_transform = T.Compose([
 
 def update_transforms(p):
     assert 0. <= p <= 1.
-   
+
     crop_size = round(224 + (config.crop_size - 224) * p)
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)

@@ -16,7 +16,6 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-from PIL import Image
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -26,7 +25,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats
+    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -49,18 +48,14 @@ shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 assert config.resize_size == config.crop_size
 
 groups = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
-groups = groups.groupby(['experiment', 'plate'])['sirna'].apply(sorted).apply(tuple).values
-
-
-class Resetable(object):
-    def __init__(self, build_transform):
-        self.build_transform = build_transform
-
-    def __call__(self, input):
-        return self.transform(input)
-
-    def reset(self, *args, **kwargs):
-        self.transform = self.build_transform(*args, **kwargs)
+groups = groups.groupby(['experiment', 'plate'])['sirna'].apply(sorted).apply(tuple)
+groups = groups[groups.apply(len) == NUM_CLASSES // 4].unique()
+assert len(groups) == 4
+x = np.zeros((4, 4), dtype=np.int32)
+for i in range(4):
+    for j in range(4):
+        x[i, j] = len(set(groups[i]).intersection(set(groups[j])))
+print(x)
 
 
 class RandomResize(object):
@@ -75,43 +70,9 @@ class RandomResize(object):
         return input
 
 
-class MixSites(object):
-    def __call__(self, input):
-        w, h = input[0].size
-        s1, s2 = SplitInSites()(input)
-        if np.random.rand() > 0.5:
-            s1, s2 = s2, s1
-
-        lam = np.random.uniform(0, 1)
-        r_x = np.random.uniform(0, w)
-        r_y = np.random.uniform(0, h)
-        r_w = w * np.sqrt(1 - lam)
-        r_h = h * np.sqrt(1 - lam)
-        x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
-        x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
-        y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
-        y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
-
-        mode = s1[0].mode
-        for c in input:
-            assert c.mode == mode
-
-        s1 = [np.array(c) for c in s1]
-        s2 = [np.array(c) for c in s2]
-
-        for c1, c2 in zip(s1, s2):
-            c1[x1:x2, y1:y2] = c2[x1:x2, y1:y2]
-
-        s1 = [Image.fromarray(c) for c in s1]
-
-        assert s1[0].mode == mode
-
-        return s1
-
-
-random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
+infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
 to_tensor = ToTensor()
 
 if config.normalize is None:
@@ -124,6 +85,20 @@ elif config.normalize == 'plate':
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalide normalization {}'.format(config.normalize))
+
+eval_image_transform = T.Compose([
+    RandomSite(),
+    Resize(config.resize_size),
+    center_crop,
+    to_tensor,
+])
+
+test_image_transform = T.Compose([
+    Resize(config.resize_size),
+    center_crop,
+    SplitInSites(),
+    T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
+])
 
 train_transform = T.Compose([
     ApplyTo(
@@ -143,24 +118,14 @@ train_transform = T.Compose([
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            RandomSite(),  # FIXME:
-            Resize(config.resize_size),
-            center_crop,
-            to_tensor,
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            Resize(config.resize_size),
-            center_crop,
-            SplitInSites(),
-            T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'feat', 'exp', 'id']),
 ])
@@ -170,14 +135,22 @@ def update_transforms(p):
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
-    delta = config.resize_size - crop_size
-    resize_size = config.resize_size - delta, config.resize_size + delta
-    assert sum(resize_size) / 2 == config.resize_size
-    print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
-
-    random_resize.reset(*resize_size)
+    print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
+
+
+def to_prob(input, temp):
+    if input.dim() == 2:
+        # (B, C)
+        input = (input * temp).softmax(1)
+    elif input.dim() == 3:
+        # (B, N, C)
+        input = (input * temp).softmax(2).mean(1)
+    else:
+        raise AssertionError('invalid input shape: {}'.format(input.size()))
+
+    return input
 
 
 # TODO: use pool
@@ -185,7 +158,7 @@ def find_temp_global(input, target, exps):
     temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), exps=exps)
+        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
         fold_preds = torch.tensor(fold_preds).to(input.device)
         metric = compute_metric(input=fold_preds, target=target)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
@@ -204,20 +177,6 @@ def find_temp_global(input, target, exps):
 
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
-
-
-def mixup(images_1, labels_1, ids, alpha):
-    dist = torch.distributions.beta.Beta(alpha, alpha)
-    indices = np.random.permutation(len(ids))
-    images_2, labels_2 = images_1[indices], labels_1[indices]
-
-    lam = dist.sample().to(DEVICE)
-    lam = torch.max(lam, 1 - lam)
-
-    images = lam * images_1.to(DEVICE) + (1 - lam) * images_2.to(DEVICE)
-    labels = lam * labels_1.to(DEVICE) + (1 - lam) * labels_2.to(DEVICE)
-
-    return images, labels, ids
 
 
 def compute_loss(input, target):
@@ -443,7 +402,7 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
         temp = 1.  # use default temp
-        fold_preds = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
+        fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
         metric = compute_metric(input=fold_preds, target=fold_labels)
 
@@ -560,7 +519,7 @@ def build_submission(folds, test_data, temp):
 
         for fold in folds:
             fold_logits, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
-            fold_probs = (fold_logits * temp).softmax(2).mean(1)
+            fold_probs = to_prob(fold_logits, temp)
 
             probs = probs + fold_probs
             exps = fold_exps
@@ -570,10 +529,6 @@ def build_submission(folds, test_data, temp):
         probs = probs.data.cpu().numpy()
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
-
-        tmp = test_data.copy()
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
@@ -627,7 +582,6 @@ def refine_logits(logits, classes, exps, plates):
 
         for plate in np.unique(plates):
             plate_subset = plates == plate
-
             subset = exp_subset & plate_subset
 
             c = classes[subset]
@@ -636,11 +590,11 @@ def refine_logits(logits, classes, exps, plates):
             d = np.array([editdistance.eval(c, g) for g in groups])
             g = groups[np.argmin(d)]
 
-            ignored = set(range(logits.size(1))) - set(g)
-            # ignored = list(ignored)
-            # print(logits.shape, subset.shape, len(ignored))
+            ignored = set(range(NUM_CLASSES)) - set(g)
+            print(len(ignored) / NUM_CLASSES)
+
             for i in ignored:
-                logits[subset, i] = float('-inf')
+                logits[subset, :, i] = float('-inf')
 
     return logits
 
@@ -667,7 +621,12 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         for images, feats, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+
+            b, n, c, h, w = images.size()
+            images = images.view(b * n, c, h, w)
+            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
+            logits = logits.view(b, n, NUM_CLASSES)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -680,12 +639,12 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         tmp = train_eval_data.iloc[eval_indices].copy()
 
         temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
+        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
 
         fold_logits = refine_logits(fold_logits, classes, exps=fold_exps, plates=tmp['plate'].values)
 
         temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=(fold_logits * temp).softmax(1).data.cpu().numpy(), exps=fold_exps)
+        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
 
         print('{:.4f}'.format((tmp['sirna'] == classes).mean()))
         tmp['sirna'] = classes
@@ -713,17 +672,8 @@ def find_temp_for_folds(folds, train_eval_data):
         labels = torch.cat(labels, 0)
         logits = torch.cat(logits, 0)
 
-        tmp_data = train_eval_data.iloc[indices_for_fold(fold, train_eval_data)[1]]
-        tmp_ids = tmp_data['id_code']
-        assert all(fold_ids == tmp_ids)
-
         temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
         print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
-
-        classes = assign_classes(probs=(logits * temp).softmax(1).data.cpu().numpy(), exps=exps)
-        print(classes.shape)
-        print('recheck: {:.4f}'.format((classes == labels.data.cpu().numpy()).mean().item()))
-
         torch.save((labels, logits, exps, ids), './oof.pth')
 
         return temp
@@ -739,6 +689,8 @@ def main():
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
     test_data['root'] = os.path.join(args.dataset_path, 'test')
 
+    infer_image_transform.reset(tta=False)
+
     if args.lr_search:
         lr = lr_search(train_eval_data)
         print('lr_search: {}'.format(lr))
@@ -753,6 +705,8 @@ def main():
     if not args.infer:
         for fold in folds:
             train_fold(fold, train_eval_data)
+
+    infer_image_transform.reset(tta=True)
 
     update_transforms(1.)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
