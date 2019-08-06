@@ -32,8 +32,8 @@ FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 SHARPEN_TEMP = 0.5
-LAM_U = 100
 MIX_ALPHA = 0.75
+LAM_U = 250
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -99,7 +99,7 @@ def cut_mix(images_1, labels_1):
 random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
-eval_site_select = Resetable(lambda random: RandomSite() if random else SplitInSites())
+infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
 to_tensor = ToTensor()
 
 if config.normalize is None:
@@ -112,6 +112,20 @@ elif config.normalize == 'plate':
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalide normalization {}'.format(config.normalize))
+
+eval_image_transform = T.Compose([
+    RandomSite(),
+    Resize(config.resize_size),
+    center_crop,
+    to_tensor,
+])
+
+test_image_transform = T.Compose([
+    Resize(config.resize_size),
+    center_crop,
+    SplitInSites(),
+    T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
+])
 
 train_transform = T.Compose([
     ApplyTo(
@@ -131,12 +145,7 @@ train_transform = T.Compose([
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            eval_site_select,
-            Resize(config.resize_size),
-            center_crop,
-            to_tensor,
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'exp', 'label', 'id']),
 ])
@@ -160,12 +169,7 @@ unsup_transform = T.Compose([
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            Resize(config.resize_size),
-            center_crop,
-            SplitInSites(),
-            T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'exp', 'id']),
 ])
@@ -175,12 +179,7 @@ def update_transforms(p):
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
-    delta = config.resize_size - crop_size
-    resize_size = config.resize_size - delta, config.resize_size + delta
-    assert sum(resize_size) / 2 == config.resize_size
-    print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
-
-    random_resize.reset(*resize_size)
+    print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
 
@@ -355,8 +354,8 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+    for i, (images, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
         labels = utils.one_hot(labels, NUM_CLASSES)
         images, labels = cut_mix(images, labels)
         logits = model(images, None, True)
@@ -666,13 +665,12 @@ def predict_on_test_using_fold(fold, test_data):
         fold_exps = []
         fold_ids = []
 
-        for images, feats, exps, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            images, feats = images.to(DEVICE), feats.to(DEVICE)
+        for images, exps, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images = images.to(DEVICE)
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
-            logits = model(images, feats)
+            logits = model(images, None)
             logits = logits.view(b, n, NUM_CLASSES)
 
             fold_logits.append(logits)
@@ -706,9 +704,13 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_exps = []
         fold_ids = []
 
-        for images, feats, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+        for images, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
+
+            b, n, c, h, w = images.size()
+            images = images.view(b * n, c, h, w)
+            logits = model(images, None)
+            logits = logits.view(b, n, NUM_CLASSES)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -756,7 +758,7 @@ def main():
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
     test_data['root'] = os.path.join(args.dataset_path, 'test')
 
-    eval_site_select.reset(random=True)
+    infer_image_transform.reset(tta=False)
 
     if args.lr_search:
         lr = lr_search(train_eval_data)
@@ -773,7 +775,7 @@ def main():
         for fold in folds:
             train_fold(fold, train_eval_data, test_data)
 
-    eval_site_select.reset(random=False)
+    infer_image_transform.reset(tta=True)
 
     update_transforms(1.)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)

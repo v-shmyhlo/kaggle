@@ -23,11 +23,8 @@
 
 # 1589, 3525
 
-# std = torch.exp(0.5*logvar)
-# eps = torch.randn_like(std)
-# return mu + eps*std
 
-
+# TODO: freeze BN
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening
 # TODO: iteratively  optimize single batch on pseudo-labels
