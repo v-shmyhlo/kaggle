@@ -23,7 +23,7 @@
 
 # 1589, 3525
 
-
+# TODO: check all boolean indexing
 # TODO: predict group
 # TODO: penalize errors not in group
 # TODO: lsep within plate

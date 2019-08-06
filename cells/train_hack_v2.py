@@ -113,21 +113,21 @@ train_transform = T.Compose([
             NormalizedColorJitter(config.aug.channel_weight),
         ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'feat', 'exp', 'plate', 'label', 'id']),
 ])
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
         infer_image_transform),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'feat', 'exp', 'plate', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
         infer_image_transform),
     normalize,
-    Extract(['image', 'feat', 'exp', 'id']),
+    Extract(['image', 'feat', 'exp', 'plate', 'id']),
 ])
 
 
@@ -154,11 +154,11 @@ def to_prob(input, temp):
 
 
 # TODO: use pool
-def find_temp_global(input, target, exps):
+def find_temp_global(input, target, exps, plates):
     temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps, plates=plates)
         fold_preds = torch.tensor(fold_preds).to(input.device)
         metric = compute_metric(input=fold_preds, target=target)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
@@ -193,16 +193,25 @@ def compute_metric(input, target):
     return metric
 
 
-def assign_classes(probs, exps):
+def assign_classes(probs, exps, plates):
     # TODO: refactor numpy/torch usage
 
+    def assign():
+        classes = np.zeros(probs.shape[0], dtype=np.int64)
+        for exp in np.unique(exps):
+            subset = exps == exp
+            preds = probs[subset]
+            _, c, _ = lap.lapjv(1 - preds, extend_cost=True)
+            classes[subset] = c
+
+        return classes
+
     exps = np.array(exps)
-    classes = np.zeros(probs.shape[0], dtype=np.int64)
-    for exp in np.unique(exps):
-        subset = exps == exp
-        preds = probs[subset]
-        _, c, _ = lap.lapjv(1 - preds, extend_cost=True)
-        classes[subset] = c
+    plates = np.array(plates)
+
+    classes = assign()
+    probs = refine_scores(probs, classes, exps=exps, plates=plates, value=0.)
+    classes = assign()
 
     return classes
 
@@ -381,8 +390,9 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_labels = []
         fold_logits = []
         fold_exps = []
+        fold_plates = []
 
-        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+        for images, feats, exps, plates, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
             logits = model(images, feats)
 
@@ -392,17 +402,20 @@ def eval_epoch(model, data_loader, fold, epoch):
             fold_labels.append(labels)
             fold_logits.append(logits)
             fold_exps.extend(exps)
+            fold_plates.extend(plates)
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
 
         if epoch % 10 == 0:
-            temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
+            temp, metric, fig = find_temp_global(
+                input=fold_logits, target=fold_labels, exps=fold_exps, plates=fold_plates)
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
         temp = 1.  # use default temp
-        fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
+        fold_preds = assign_classes(
+            probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps, plates=fold_plates)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
         metric = compute_metric(input=fold_preds, target=fold_labels)
 
@@ -518,17 +531,18 @@ def build_submission(folds, test_data, temp):
         probs = 0.
 
         for fold in folds:
-            fold_logits, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
+            fold_logits, fold_exps, fold_plates, fold_ids = predict_on_test_using_fold(fold, test_data)
             fold_probs = to_prob(fold_logits, temp)
 
             probs = probs + fold_probs
             exps = fold_exps
+            plates = fold_plates
             ids = fold_ids
 
         probs = probs / len(folds)
         probs = probs.data.cpu().numpy()
         assert len(probs) == len(exps) == len(ids)
-        classes = assign_classes(probs=probs, exps=exps)
+        classes = assign_classes(probs=probs, exps=exps, plates=plates)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
@@ -551,9 +565,10 @@ def predict_on_test_using_fold(fold, test_data):
     with torch.no_grad():
         fold_logits = []
         fold_exps = []
+        fold_plates = []
         fold_ids = []
 
-        for images, feats, exps, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+        for images, feats, exps, plates, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
             images, feats = images.to(DEVICE), feats.to(DEVICE)
 
             b, n, c, h, w = images.size()
@@ -564,16 +579,17 @@ def predict_on_test_using_fold(fold, test_data):
 
             fold_logits.append(logits)
             fold_exps.extend(exps)
+            fold_plates.extend(plates)
             fold_ids.extend(ids)
 
         fold_logits = torch.cat(fold_logits, 0)
 
     torch.save((fold_logits, fold_exps, fold_ids), './test_{}.pth'.format(fold))
 
-    return fold_logits, fold_exps, fold_ids
+    return fold_logits, fold_exps, fold_plates, fold_ids
 
 
-def refine_logits(logits, classes, exps, plates):
+def refine_scores(logits, classes, exps, plates, value):
     exps = np.array(exps)
     plates = np.array(plates)
 
@@ -593,7 +609,7 @@ def refine_logits(logits, classes, exps, plates):
             ignored = set(range(NUM_CLASSES)) - set(g)
             subset = torch.tensor(subset)
             for i in ignored:
-                logits[subset, :, i] = float('-inf')
+                logits[subset, ..., i] = value
 
     return logits
 
@@ -616,9 +632,10 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_labels = []
         fold_logits = []
         fold_exps = []
+        fold_plates = []
         fold_ids = []
 
-        for images, feats, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
+        for images, feats, exps, plates, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
 
             b, n, c, h, w = images.size()
@@ -630,6 +647,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
             fold_labels.append(labels)
             fold_logits.append(logits)
             fold_exps.extend(exps)
+            fold_plates.extend(plates)
             fold_ids.extend(ids)
 
         fold_labels = torch.cat(fold_labels, 0)
@@ -637,20 +655,15 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         tmp = train_eval_data.iloc[eval_indices].copy()
 
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
-
-        fold_logits = refine_logits(fold_logits, classes, exps=fold_exps, plates=tmp['plate'].values)
-
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
+        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps, plates=fold_plates)
+        classes = assign_classes(
+            probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps, plates=fold_plates)
 
         print('{:.4f}'.format((tmp['sirna'] == classes).mean()))
         tmp['sirna'] = classes
         tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
-        fail
 
-        return fold_labels, fold_logits, fold_exps, fold_ids
+        return fold_labels, fold_logits, fold_exps, fold_plates, fold_ids
 
 
 def find_temp_for_folds(folds, train_eval_data):
@@ -658,20 +671,23 @@ def find_temp_for_folds(folds, train_eval_data):
         labels = []
         logits = []
         exps = []
+        plates = []
         ids = []
 
         for fold in folds:
-            fold_labels, fold_logits, fold_exps, fold_ids = predict_on_eval_using_fold(fold, train_eval_data)
+            fold_labels, fold_logits, fold_exps, fold_plates, fold_ids = \
+                predict_on_eval_using_fold(fold, train_eval_data)
 
             labels.append(fold_labels)
             logits.append(fold_logits)
             exps.extend(fold_exps)
+            plates.extend(fold_plates)
             ids.extend(fold_ids)
 
         labels = torch.cat(labels, 0)
         logits = torch.cat(logits, 0)
 
-        temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
+        temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps, plates=plates)
         print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
         torch.save((labels, logits, exps, ids), './oof.pth')
 
@@ -700,6 +716,7 @@ def main():
         folds = FOLDS
     else:
         folds = [args.fold]
+    folds = [2, 3]
 
     if not args.infer:
         for fold in folds:
