@@ -155,7 +155,7 @@ def to_prob(input, temp):
 
 # TODO: use pool
 def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
@@ -529,6 +529,9 @@ def build_submission(folds, test_data, temp):
         probs = probs.data.cpu().numpy()
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
+        probs = refine_scores(
+            probs, classes, exps=exps, plates=test_data['plate'].values, value=0.)
+        classes = assign_classes(probs=probs, exps=exps)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
@@ -573,7 +576,7 @@ def predict_on_test_using_fold(fold, test_data):
     return fold_logits, fold_exps, fold_ids
 
 
-def refine_logits(logits, classes, exps, plates):
+def refine_scores(logits, classes, exps, plates, value):
     exps = np.array(exps)
     plates = np.array(plates)
 
@@ -593,7 +596,8 @@ def refine_logits(logits, classes, exps, plates):
             ignored = set(range(NUM_CLASSES)) - set(g)
             subset = torch.tensor(subset)
             for i in ignored:
-                logits[subset, :, i] = float('-inf')
+                # FIXME:
+                logits[subset, ..., i] = value
 
     return logits
 
@@ -640,7 +644,8 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
         classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
 
-        fold_logits = refine_logits(fold_logits, classes, exps=fold_exps, plates=tmp['plate'].values)
+        fold_logits = refine_scores(
+            fold_logits, classes, exps=fold_exps, plates=tmp['plate'].values, value=float('-inf'))
 
         temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
         classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
@@ -648,7 +653,6 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         print('{:.4f}'.format((tmp['sirna'] == classes).mean()))
         tmp['sirna'] = classes
         tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
-        fail
 
         return fold_labels, fold_logits, fold_exps, fold_ids
 

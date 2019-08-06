@@ -23,6 +23,10 @@
 
 # 1589, 3525
 
+
+# TODO: pick temp search range
+# TODO: mixmatch over predicted labels
+# TODO: ohem on samples outside of group
 # TODO: check all boolean indexing
 # TODO: predict group
 # TODO: penalize errors not in group

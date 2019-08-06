@@ -155,7 +155,7 @@ def to_prob(input, temp):
 
 # TODO: use pool
 def find_temp_global(input, target, exps, plates):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps, plates=plates)
@@ -589,7 +589,7 @@ def predict_on_test_using_fold(fold, test_data):
     return fold_logits, fold_exps, fold_plates, fold_ids
 
 
-def refine_scores(logits, classes, exps, plates, value):
+def refine_scores(scores, classes, exps, plates, value):
     exps = np.array(exps)
     plates = np.array(plates)
 
@@ -609,9 +609,10 @@ def refine_scores(logits, classes, exps, plates, value):
             ignored = set(range(NUM_CLASSES)) - set(g)
             subset = torch.tensor(subset)
             for i in ignored:
-                logits[subset, ..., i] = value
+                # FIXME:
+                scores[subset, ..., i] = value
 
-    return logits
+    return scores
 
 
 def predict_on_eval_using_fold(fold, train_eval_data):
@@ -652,16 +653,6 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-
-        tmp = train_eval_data.iloc[eval_indices].copy()
-
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps, plates=fold_plates)
-        classes = assign_classes(
-            probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps, plates=fold_plates)
-
-        print('{:.4f}'.format((tmp['sirna'] == classes).mean()))
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
 
         return fold_labels, fold_logits, fold_exps, fold_plates, fold_ids
 
@@ -716,7 +707,6 @@ def main():
         folds = FOLDS
     else:
         folds = [args.fold]
-    folds = [2, 3]
 
     if not args.infer:
         for fold in folds:
