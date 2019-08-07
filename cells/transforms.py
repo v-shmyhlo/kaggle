@@ -190,6 +190,15 @@ class SplitInSites(object):
         return [image[:6], image[6:]]
 
 
+class ChannelShuffle(object):
+    def __call__(self, input):
+        assert len(input) == 6
+        permutation = np.random.permutation(6)
+        input = [input[i] for i in permutation]
+       
+        return input
+
+
 class NormalizedColorJitter(object):
     def __init__(self, weight):
         self.weight = weight

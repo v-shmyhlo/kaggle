@@ -7,6 +7,24 @@ from torch.nn import functional as F
 import utils
 
 
+class AdaptiveGeneralizedAvgPool2d(nn.Module):
+    def __init__(self, output_size, p=3, eps=1e-6):
+        super().__init__()
+
+        self.output_size = output_size
+        self.p = nn.Parameter(torch.tensor(p, dtype=torch.float))
+        self.eps = eps
+
+    def forward(self, input):
+        input = input.clamp(min=self.eps)
+
+        input = input.pow(self.p)
+        input = F.adaptive_avg_pool2d(input, self.output_size)
+        input = input.pow(1. / self.p)
+
+        return input
+
+
 class NormalizedLinear(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
