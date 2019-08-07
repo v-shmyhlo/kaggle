@@ -24,6 +24,7 @@
 # 1589, 3525
 
 
+# TODO: disable channel reweight
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
 # TODO: ohem on samples outside of group

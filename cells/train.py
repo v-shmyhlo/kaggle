@@ -121,6 +121,9 @@ test_transform = T.Compose([
 
 
 def update_transforms(p):
+    if not config.progressive_resize:
+        p = 1.
+
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
@@ -144,7 +147,7 @@ def to_prob(input, temp):
 
 # TODO: use pool
 def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
@@ -444,6 +447,12 @@ def train_fold(fold, train_eval_data):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'step':
+        scheduler = lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down

@@ -80,10 +80,9 @@ def cut_mix(images_1, labels_1):
     return images, labels
 
 
-random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
-eval_site_select = Resetable(lambda random: RandomSite() if random else SplitInSites())
+infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
 to_tensor = ToTensor()
 
 if config.normalize is None:
@@ -96,6 +95,20 @@ elif config.normalize == 'plate':
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalide normalization {}'.format(config.normalize))
+
+eval_image_transform = T.Compose([
+    RandomSite(),
+    Resize(config.resize_size),
+    center_crop,
+    to_tensor,
+])
+
+test_image_transform = T.Compose([
+    Resize(config.resize_size),
+    center_crop,
+    SplitInSites(),
+    T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
+])
 
 train_transform = T.Compose([
     ApplyTo(
@@ -115,24 +128,14 @@ train_transform = T.Compose([
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            eval_site_select,
-            Resize(config.resize_size),
-            center_crop,
-            to_tensor,
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Compose([
-            Resize(config.resize_size),
-            center_crop,
-            SplitInSites(),
-            T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
-        ])),
+        infer_image_transform),
     normalize,
     Extract(['image', 'feat', 'exp', 'id']),
 ])
@@ -142,12 +145,7 @@ def update_transforms(p):
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
-    delta = config.resize_size - crop_size
-    resize_size = config.resize_size - delta, config.resize_size + delta
-    assert sum(resize_size) / 2 == config.resize_size
-    print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
-
-    random_resize.reset(*resize_size)
+    print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
 
@@ -438,15 +436,6 @@ def eval_epoch(model, data_loader, fold, epoch):
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
-        # writer.add_histogram('logits', fold_logits, global_step=epoch)
-        # writer.add_histogram('probs', to_prob(fold_logits, 1.), global_step=epoch)
-        #
-        # fold_exps = np.array(fold_exps)
-        # fold_probs = to_prob(fold_logits, 1.).data.cpu().numpy()
-        # for exp in np.unique(fold_exps):
-        #     image = fold_probs[fold_exps == exp]
-        #     writer.add_image('experiment_probs/{}'.format(exp.item()), image, dataformats='hw', global_step=epoch)
-
         return metrics
 
 
@@ -560,10 +549,6 @@ def build_submission(folds, test_data, temp):
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
 
-        tmp = test_data.copy()
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
-
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
         submission.to_csv('./submission.csv', index=False)
@@ -629,7 +614,12 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         for images, feats, exps, labels, ids in tqdm(eval_data_loader, desc='fold {} evaluation'.format(fold)):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+
+            b, n, c, h, w = images.size()
+            images = images.view(b * n, c, h, w)
+            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
+            logits = logits.view(b, n, NUM_CLASSES)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -638,13 +628,6 @@ def predict_on_eval_using_fold(fold, train_eval_data):
 
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
-
-        tmp = train_eval_data.iloc[eval_indices].copy()
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
-        print('{:.2f}'.format((tmp['sirna'] == classes).mean()))
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
 
         return fold_labels, fold_logits, fold_exps, fold_ids
 
@@ -684,7 +667,7 @@ def main():
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'test.csv'))
     test_data['root'] = os.path.join(args.dataset_path, 'test')
 
-    eval_site_select.reset(random=True)
+    infer_image_transform.reset(tta=False)
 
     if args.lr_search:
         lr = lr_search(train_eval_data)
@@ -701,7 +684,7 @@ def main():
         for fold in folds:
             train_fold(fold, train_eval_data)
 
-    eval_site_select.reset(random=False)
+    infer_image_transform.reset(tta=True)
 
     update_transforms(1.)  # FIXME:
     temp = find_temp_for_folds(folds, train_eval_data)
