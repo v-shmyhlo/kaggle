@@ -467,7 +467,7 @@ def train_fold(fold, train_eval_data):
                 mode='exp_range',
                 gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
-                base_momentum=0.75,
+                base_momentum=0.85,
                 max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
