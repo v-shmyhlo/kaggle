@@ -464,8 +464,8 @@ def train_fold(fold, train_eval_data):
                 config.opt.lr,
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
-                mode='exp_range',
-                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
+                mode='triangular2',
+                # gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
                 base_momentum=0.85,
                 max_momentum=0.95))
@@ -527,6 +527,10 @@ def build_submission(folds, test_data, temp):
         probs = probs.data.cpu().numpy()
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
+
+        tmp = test_data.copy()
+        tmp['sirna'] = classes
+        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)

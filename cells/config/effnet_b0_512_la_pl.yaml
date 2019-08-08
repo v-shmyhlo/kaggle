@@ -4,6 +4,7 @@ batch_size: 16
 resize_size: 512
 crop_size: 512
 normalize: experiment
+progressive_resize: True
 
 model:
   type: efficientnet-b0

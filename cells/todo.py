@@ -1,4 +1,4 @@
-# TODO: cyclic cycle10
+# TODO: lsep with BN
 # TODO: disable channel reweight
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
@@ -7,6 +7,7 @@
 # TODO: predict group
 # TODO: penalize errors not in group
 # TODO: freeze BN
+# TODO: iteratively unfreeze layers
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening
 # TODO: iteratively optimize single batch on pseudo-labels
@@ -18,9 +19,10 @@
 # TODO: better visualizations
 # TODO: check train_emb.py Sampler corner cases
 # TODO: check train_lsep.py Sampler corner cases
+# TODO: pl + label smoothing
 # TODO: normalize last layer (embeddings) by experiment
 # TODO: use tta for oof thresh search, especially for PL generation
-# TODO: pl+mixup
+# TODO: pl + mixup
 # TODO: train longer
 # TODO: use LAP to compute error/loss for update
 # TODO: use LAP for OHEM

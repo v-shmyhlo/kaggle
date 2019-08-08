@@ -38,5 +38,5 @@ class Model(nn.Module):
         input = self.model._fc(input)
         input = input.view(input.size(0), 4, input.size(1) // 4)
         input = input[torch.arange(input.size(0)), feats[:, 0]]
-
+       
         return input

@@ -1,9 +1,11 @@
 seed: 42
 epochs: 50
 batch_size: 16
+samples_in_a_row: 4
 resize_size: 512
 crop_size: 512
 normalize: experiment
+progressive_resize: True
 
 model:
   type: efficientnet-b0
