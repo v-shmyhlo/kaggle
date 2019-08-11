@@ -31,10 +31,10 @@ class RandomFlip(object):
 
     def __call__(self, image):
         if random.random() < self.p:
-            return hflip(image)
+            image = hflip(image)
 
         if random.random() < self.p:
-            return vflip(image)
+            image = vflip(image)
 
         return image
 
@@ -195,7 +195,7 @@ class ChannelShuffle(object):
         assert len(input) == 6
         permutation = np.random.permutation(6)
         input = [input[i] for i in permutation]
-       
+
         return input
 
 
