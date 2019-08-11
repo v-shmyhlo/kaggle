@@ -528,10 +528,6 @@ def build_submission(folds, test_data, temp):
         assert len(probs) == len(exps) == len(ids)
         classes = assign_classes(probs=probs, exps=exps)
 
-        tmp = test_data.copy()
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
-
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
         submission.to_csv('./submission.csv', index=False)

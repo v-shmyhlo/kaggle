@@ -1,4 +1,4 @@
-# TODO: lsep with BN
+# TODO: pl + mixup
 # TODO: disable channel reweight
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
@@ -22,7 +22,6 @@
 # TODO: pl + label smoothing
 # TODO: normalize last layer (embeddings) by experiment
 # TODO: use tta for oof thresh search, especially for PL generation
-# TODO: pl + mixup
 # TODO: train longer
 # TODO: use LAP to compute error/loss for update
 # TODO: use LAP for OHEM

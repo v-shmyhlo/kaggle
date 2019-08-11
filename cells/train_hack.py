@@ -132,6 +132,9 @@ test_transform = T.Compose([
 
 
 def update_transforms(p):
+    if not config.progressive_resize:
+        p = 1.
+
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
@@ -455,6 +458,12 @@ def train_fold(fold, train_eval_data):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'step':
+        scheduler = lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
@@ -466,10 +475,10 @@ def train_fold(fold, train_eval_data):
                 config.opt.lr,
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
-                mode='exp_range',
-                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
+                mode='triangular2',
+                # gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
-                base_momentum=0.75,
+                base_momentum=0.85,
                 max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
@@ -532,6 +541,10 @@ def build_submission(folds, test_data, temp):
         probs = refine_scores(
             probs, classes, exps=exps, plates=test_data['plate'].values, value=0.)
         classes = assign_classes(probs=probs, exps=exps)
+
+        tmp = test_data.copy()
+        tmp['sirna'] = classes
+        tmp.to_csv(os.path.join(args.experiment_path, 'test.csv'), index=False)
 
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
@@ -639,21 +652,12 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         fold_labels = torch.cat(fold_labels, 0)
         fold_logits = torch.cat(fold_logits, 0)
 
-        tmp = train_eval_data.iloc[eval_indices].copy()
-
+        fold_plates = train_eval_data.iloc[eval_indices]['plate'].values
         temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
         classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
-
         fold_logits = refine_scores(
-            fold_logits, classes, exps=fold_exps, plates=tmp['plate'].values, value=float('-inf'))
-
-        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
-        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
-
-        print('{:.4f}'.format((tmp['sirna'] == classes).mean()))
-        tmp['sirna'] = classes
-        tmp.to_csv(os.path.join(args.experiment_path, 'eval_{}.csv'.format(fold)), index=False)
-
+            fold_logits, classes, exps=fold_exps, plates=fold_plates, value=float('-inf'))
+       
         return fold_labels, fold_logits, fold_exps, fold_ids
 
 
