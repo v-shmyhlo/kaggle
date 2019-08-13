@@ -150,9 +150,9 @@ def find_temp_global(input, target, exps):
     temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
-        fold_preds = torch.tensor(fold_preds).to(input.device)
-        metric = compute_metric(input=fold_preds, target=target)
+        preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        preds = torch.tensor(preds).to(input.device)
+        metric = compute_metric(input=preds, target=target, exps=exps)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
@@ -177,10 +177,15 @@ def compute_loss(input, target):
     return loss
 
 
-def compute_metric(input, target):
+def compute_metric(input, target, exps):
+    exps = np.array(exps)
     metric = {
         'accuracy@1': (input == target).float(),
     }
+
+    for exp in np.unique(exps):
+        mask = torch.tensor(exp == exps)
+        metric['{}/accuracy@1'.format(exp)] = (input[mask] == target[mask]).float()
 
     return metric
 
@@ -393,10 +398,11 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
+
         temp = 1.  # use default temp
         fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
-        metric = compute_metric(input=fold_preds, target=fold_labels)
+        metric = compute_metric(input=fold_preds, target=fold_labels, exps=fold_exps)
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
