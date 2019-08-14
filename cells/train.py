@@ -81,14 +81,12 @@ eval_image_transform = T.Compose([
     center_crop,
     to_tensor,
 ])
-
 test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
-
 train_transform = T.Compose([
     ApplyTo(
         ['image'],

@@ -64,31 +64,30 @@ class Layer(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
-            self.layer1 = LinNormRelu(node_features[0] + edge_features[0] + global_features[0], edge_features[1])
+            self.layer1 = LinNormRelu(node_features[0] * 2 + edge_features[0] + global_features[0], edge_features[1])
 
         def forward(self, src, dst, edge_attr, u, batch):
-            edge_attr = torch.cat([(src + dst) / 2, edge_attr, u[batch]], 1)
-            edge_attr = self.layer1(edge_attr)
+            input = torch.cat([src, dst, edge_attr, u[batch]], 1)
+            input = self.layer1(input)
 
-            return edge_attr
+            return input
 
     class NodeModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
             super().__init__()
 
             self.layer1 = LinNormRelu(node_features[0] + edge_features[1], node_features[1])
-            self.layer2 = LinNormRelu(node_features[1] + global_features[0], node_features[1])
+            self.layer2 = LinNormRelu(node_features[0] + node_features[1] + global_features[0], node_features[1])
 
         def forward(self, x, edge_index, edge_attr, u, batch):
             row, col = edge_index
-            dim_size, _ = x.size()
-            x = torch.cat([x[col], edge_attr], dim=1)
-            x = self.layer1(x)
-            x = scatter_mean(x, row, dim=0, dim_size=dim_size)
-            x = torch.cat([x, u[batch]], dim=1)
-            x = self.layer2(x)
+            input = torch.cat([x[col], edge_attr], dim=1)
+            input = self.layer1(input)
+            input = scatter_mean(input, row, dim=0, dim_size=x.size(0))
+            input = torch.cat([x, input, u[batch]], dim=1)
+            input = self.layer2(input)
 
-            return x
+            return input
 
     class GlobalModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
@@ -97,10 +96,10 @@ class Layer(nn.Module):
             self.layer1 = LinNormRelu(global_features[0] + node_features[1], global_features[1])
 
         def forward(self, x, edge_index, edge_attr, u, batch):
-            u = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
-            u = self.layer1(u)
+            input = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
+            input = self.global_mlp(input)
 
-            return u
+            return input
 
     def __init__(self, node_features, edge_features, global_features):
         super().__init__()

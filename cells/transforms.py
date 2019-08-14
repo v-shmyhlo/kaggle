@@ -202,10 +202,10 @@ class ChannelShuffle(object):
 class NormalizedColorJitter(object):
     def __init__(self, weight):
         self.weight = weight
-
+       
     def __call__(self, image):
         weight = torch.FloatTensor(image.size(0), 1, 1).uniform_(1 - self.weight, 1 + self.weight)
-        weight = weight / weight.sum() * image.size(0)
+        weight = weight / weight.sum() * image.size(0)  # TODO: replace with mean
         image = image * weight
 
         return image
