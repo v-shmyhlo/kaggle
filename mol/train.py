@@ -1,26 +1,28 @@
-from torch_scatter import scatter_mean
-from torch_geometric.data import DataLoader
+import gc
+import os
+
 import click
+import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
+import torch.utils.data
+from sklearn.model_selection import KFold
+from tensorboardX import SummaryWriter
+from torch_geometric.data import DataLoader
+from torch_geometric.nn import MetaLayer
+from torch_scatter import scatter_mean
+from tqdm import tqdm
+
+import lr_scheduler_wrapper
+import utils
+from config import Config
+from lr_scheduler import OneCycleScheduler
 
 # TODO: bidirectional edges
 # TODO: ohem
+# TODO: fix graph layer (copy from doc)
 
-
-import os
-import gc
-from tensorboardX import SummaryWriter
-from tqdm import tqdm
-import lr_scheduler_wrapper
-from config import Config
-from sklearn.model_selection import KFold
-import numpy as np
-import torch.nn as nn
-from lr_scheduler import OneCycleScheduler
-import torch.utils.data
-import utils
-import torch
-from torch_geometric.nn import GCNConv, MetaLayer
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -56,6 +58,7 @@ class LinNormRelu(nn.Sequential):
             ReLU(inplace=True))
 
 
+# TODO: fix
 class Layer(nn.Module):
     class EdgeModel(nn.Module):
         def __init__(self, node_features, edge_features, global_features):
@@ -192,7 +195,7 @@ class Model(nn.Module):
         edge_attr2 = self.output2(edge_attr1)
 
         edge_attr = torch.cat([edge_attr2, edge_attr1], 1)
-       
+
         return edge_attr
 
 
