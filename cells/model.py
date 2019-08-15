@@ -1,10 +1,13 @@
 import efficientnet_pytorch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Model(nn.Module):
-    def __init__(self, model, num_classes):
+    def __init__(self, model, num_classes, return_features=False):
         super().__init__()
+
+        self.return_features = return_features
 
         self.norm = nn.BatchNorm2d(6)
 
@@ -24,6 +27,14 @@ class Model(nn.Module):
             assert target is None
 
         input = self.norm(input)
-        input = self.model(input)
+        input = self.model.extract_features(input)
+        input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
+        features = input
+        if self.model._dropout:
+            input = F.dropout(input, p=self.model._dropout, training=self.training)
+        input = self.model._fc(input)
 
-        return input
+        if self.return_features:
+            return input, features
+        else:
+            return input
