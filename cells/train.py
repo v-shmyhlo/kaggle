@@ -24,10 +24,11 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -97,7 +98,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            NormalizedColorJitter(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_weight),
         ])),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
@@ -215,6 +216,11 @@ def build_optimizer(optimizer_config, parameters):
             parameters,
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
+            weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'radam':
+        optimizer = RAdam(
+            parameters,
+            optimizer_config.lr,
             weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
@@ -469,7 +475,7 @@ def train_fold(fold, train_eval_data):
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
                 mode='triangular2',
-                # gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
+                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
                 base_momentum=0.85,
                 max_momentum=0.95))

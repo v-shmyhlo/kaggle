@@ -1,6 +1,7 @@
 import os
 import random
 import tempfile
+import time
 import warnings
 
 import matplotlib.pyplot as plt
@@ -54,6 +55,19 @@ class Mean(object):
         self.reset()
 
         return value
+
+
+class UpdatesPerSecond(Mean):
+    def __init__(self):
+        super().__init__()
+
+        self.current = time.time()
+
+    def update(self, value):
+        current = time.time()
+        delta = current - self.current
+        super().update(value / delta)
+        self.current = current
 
 
 def smooth(x, ksize=None):

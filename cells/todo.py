@@ -1,8 +1,13 @@
+# TODO: recompute graph on each layer
+# TODO: heads model without norm
+# TODO: radam with warmup
+# TODO: another padding mode
 # TODO: brightness, contrast
 # TODO: pl + mixup
 # TODO: disable channel reweight
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
+# TODO: start resize from 128
 # TODO: contrast
 # TODO: reweight experiment loss by metric
 # TODO: ohem on samples outside of group
@@ -11,13 +16,12 @@
 # TODO: predict group
 # TODO: penalize errors not in group
 # TODO: freeze BN
+# TODO: harder jit
 # TODO: iteratively unfreeze layers
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening for temp search
-# TODO: learn normalization
 # TODO: learn image to extract from experiment images to normalize
 # TODO: learn features to extract from experiment features to normalize
-# TODO: train longer
 # TODO: plot outliers/error analysis
 # TODO: check train_emb.py Sampler corner cases
 # TODO: check train_lsep.py Sampler corner cases
@@ -40,10 +44,7 @@
 # TODO: even wider temp search space
 # TODO: hints from cells telegram channel
 # TODO: deterministic eval
-# TODO: label smoothing
-# TODO: make ref and image close in space and ref and other image - far in space
 # TODO: knn classifier
-# TODO: autoaugment
 # TODO: Population Based Training
 # TODO: model diverse split
 # TODO: well coding
@@ -70,3 +71,4 @@
 # TODO: batch effects
 # TODO: context modelling notes in rxrx
 # TODO: generalization notes in rxrx
+# TODO: mixmatch in train mode

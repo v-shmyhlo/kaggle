@@ -27,6 +27,7 @@ from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resi
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -119,14 +120,12 @@ eval_image_transform = T.Compose([
     center_crop,
     to_tensor,
 ])
-
 test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
-
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -176,6 +175,9 @@ test_transform = T.Compose([
 
 
 def update_transforms(p):
+    if not config.progressive_resize:
+        p = 1.
+
     assert 0. <= p <= 1.
 
     crop_size = round(224 + (config.crop_size - 224) * p)
@@ -199,12 +201,12 @@ def to_prob(input, temp):
 
 # TODO: use pool
 def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
-        fold_preds = torch.tensor(fold_preds).to(input.device)
-        metric = compute_metric(input=fold_preds, target=target)
+        preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        preds = torch.tensor(preds).to(input.device)
+        metric = compute_metric(input=preds, target=target, exps=exps)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
@@ -255,10 +257,15 @@ def compute_loss(input, target, unsup):
     return loss
 
 
-def compute_metric(input, target):
+def compute_metric(input, target, exps):
+    exps = np.array(exps)
     metric = {
         'accuracy@1': (input == target).float(),
     }
+
+    for exp in np.unique(exps):
+        mask = torch.tensor(exp == exps)
+        metric['experiment/{}/accuracy@1'.format(exp)] = (input[mask] == target[mask]).float()
 
     return metric
 
@@ -290,6 +297,11 @@ def build_optimizer(optimizer_config, parameters):
             parameters,
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
+            weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'radam':
+        optimizer = RAdam(
+            parameters,
+            optimizer_config.lr,
             weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
@@ -501,10 +513,11 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
+
         temp = 1.  # use default temp
         fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
-        metric = compute_metric(input=fold_preds, target=fold_labels)
+        metric = compute_metric(input=fold_preds, target=fold_labels, exps=fold_exps)
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
@@ -566,6 +579,12 @@ def train_fold(fold, train_eval_data, unsup_data):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'step':
+        scheduler = lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
@@ -577,10 +596,10 @@ def train_fold(fold, train_eval_data, unsup_data):
                 config.opt.lr,
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
-                mode='exp_range',
+                mode='triangular2',
                 gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
-                base_momentum=0.75,
+                base_momentum=0.85,
                 max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(

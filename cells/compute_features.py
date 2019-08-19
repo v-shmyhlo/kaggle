@@ -105,16 +105,16 @@ def compute_features(folds, data):
             fold_embds, _, fold_ids = compute_features_using_fold(fold, data)
             print(fold_embds.shape)
             fold_embds = fold_embds.data.cpu().numpy()
-            data = {id: emb for id, emb in zip(fold_ids, fold_embds)}
+            fold_embds = {id: emb for id, emb in zip(fold_ids, fold_embds)}
 
             with open('embeddings_{}.pkl'.format(fold), 'wb') as f:
-                pickle.dump(data, f)
+                pickle.dump(fold_embds, f)
 
 
 def compute_features_using_fold(fold, data):
-    test_dataset = TestDataset(data, transform=test_transform)
-    test_data_loader = torch.utils.data.DataLoader(
-        test_dataset,
+    dataset = TestDataset(data, transform=test_transform)
+    data_loader = torch.utils.data.DataLoader(
+        dataset,
         batch_size=config.batch_size // 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
@@ -129,15 +129,14 @@ def compute_features_using_fold(fold, data):
         fold_exps = []
         fold_ids = []
 
-        for images, feats, exps, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+        for images, feats, exps, ids in tqdm(data_loader, desc='fold {} inference'.format(fold)):
             images, feats = images.to(DEVICE), feats.to(DEVICE)
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
             feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             _, embds = model(images, feats)
-
-            embds = embds.view(b, n, NUM_CLASSES)
+            embds = embds.view(b, n, embds.size(1))
 
             fold_embs.append(embds)
             fold_exps.extend(exps)

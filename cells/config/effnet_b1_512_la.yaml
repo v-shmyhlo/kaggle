@@ -1,12 +1,13 @@
 seed: 42
-epochs: 40
+epochs: 50
 batch_size: 12
 resize_size: 512
 crop_size: 512
 normalize: experiment
+progressive_resize: True
 
 model:
-  type: b1
+  type: efficientnet-b1
 
 aug:
   channel_weight: 0.5

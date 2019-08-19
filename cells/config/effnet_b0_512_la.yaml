@@ -32,8 +32,8 @@ sched:
   type: onecycle
 
   step:
-    decay: 0.99
-    step_size: 100
+    decay: 0.5
+    step_size: 5
 
   plateau:
     decay: 0.5

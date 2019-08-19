@@ -5,11 +5,12 @@ import torch.nn.functional as F
 
 
 class Model(nn.Module):
-    def __init__(self, model, num_classes):
+    def __init__(self, model, num_classes, return_features=False):
         super().__init__()
 
+        self.return_features = return_features
+
         self.norm = nn.BatchNorm2d(6)
-        self.features_norm = nn.BatchNorm1d(1280)
 
         if model.type.startswith('efficientnet'):
             self.model = efficientnet_pytorch.EfficientNet.from_pretrained(model.type)
@@ -27,16 +28,16 @@ class Model(nn.Module):
             assert target is None
 
         input = self.norm(input)
-
         input = self.model.extract_features(input)
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
-        input = self.features_norm(input)
-
+        features = input
         if self.model._dropout:
             input = F.dropout(input, p=self.model._dropout, training=self.training)
-
         input = self.model._fc(input)
         input = input.view(input.size(0), 4, input.size(1) // 4)
         input = input[torch.arange(input.size(0)), feats[:, 0]]
-       
-        return input
+
+        if self.return_features:
+            return input, features
+        else:
+            return input

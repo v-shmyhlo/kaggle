@@ -7,6 +7,40 @@ from torch.nn import functional as F
 import utils
 
 
+class SoftDropout(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+
+        self.p = p
+
+    def forward(self, input):
+        return soft_dropout(input, self.p, input.size(), training=self.training)
+
+
+class SoftDropout2d(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+
+        self.p = p
+
+    def forward(self, input):
+        return soft_dropout(input, self.p, (input.size(0), input.size(1), 1, 1), training=self.training)
+
+
+def soft_dropout(input, p, noise_shape, training=True):
+    if p < 0. or p > 1.:
+        raise ValueError("soft_dropout probability has to be between 0 and 1, but got {}".format(p))
+
+    if not training:
+        return input
+
+    weight = torch.empty(noise_shape, dtype=input.dtype, layout=input.layout, device=input.device) \
+        .uniform_(1 - p, 1 + p)
+    input = input * weight
+
+    return input
+
+
 class AdaptiveGeneralizedAvgPool2d(nn.Module):
     def __init__(self, output_size, p=3, eps=1e-6):
         super().__init__()

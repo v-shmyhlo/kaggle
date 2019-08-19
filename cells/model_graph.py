@@ -37,8 +37,8 @@ class Model(nn.Module):
         # x = x.view(x.size(0) * x.size(1), x.size(2))
 
         edge_index = gnn.knn_graph(x, 10, batch, loop=False, flow='source_to_target')
-        edge_attr = torch.zeros(edge_index.size(1), 0)
-        u = torch.zeros(u.size(0), 0)
+        edge_attr = torch.zeros(edge_index.size(1), 0, device=x.device)
+        u = torch.zeros(u.size(0), 0, device=x.device)
 
         x, edge_attr, u = self.layer_1(x, edge_index, edge_attr, u, batch)
         x, edge_attr, u = self.layer_2(x, edge_index, edge_attr, u, batch)
