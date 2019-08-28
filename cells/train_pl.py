@@ -423,7 +423,7 @@ def train_fold(fold, train_eval_data):
 
     # pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la'
     # pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la-restart'
-    pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la-fix-2'
+    pl_path = './tf_log/cells/b0-512-progres-crop-norm-la-jit03-nonorm-reweight-2'
     test_pl = pd.read_csv(os.path.join(pl_path, 'test.csv'))
     test_pl['root'] = os.path.join(args.dataset_path, 'test')
 

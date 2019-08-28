@@ -1,3 +1,9 @@
+# TODO: Oleg's transform
+# TODO: apply bright,contrast,gamma with prob
+# TODO: gamma correction
+# TODO: per image/per experiment correction
+# TODO: CAM
+# TODO: show adapted images (after norm, reweight)
 # TODO: recompute graph on each layer
 # TODO: heads model without norm
 # TODO: radam with warmup
@@ -8,7 +14,6 @@
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
 # TODO: start resize from 128
-# TODO: contrast
 # TODO: reweight experiment loss by metric
 # TODO: ohem on samples outside of group
 # TODO: check all boolean indexing
@@ -16,7 +21,6 @@
 # TODO: predict group
 # TODO: penalize errors not in group
 # TODO: freeze BN
-# TODO: harder jit
 # TODO: iteratively unfreeze layers
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening for temp search
@@ -37,7 +41,6 @@
 # TODO: train on all data (with controls)
 # TODO: compute stats/fold splits using train.csv + train_controls.csv
 # TODO: better kfold split (mean image of each experiment OR more representative images)
-# TODO: normalize by plate stats
 # TODO: pretrain on huge dataset
 # TODO: try to learn diverse model
 # TODO: use all controll files (train_controls.csv)

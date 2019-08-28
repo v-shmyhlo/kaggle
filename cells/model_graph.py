@@ -4,6 +4,13 @@ import torch_geometric.nn as gnn
 from torch_scatter import scatter_mean
 
 
+class LinearNorm(nn.Sequential):
+    def __init__(self, in_features, out_features):
+        super().__init__(
+            nn.Linear(in_features, out_features, bias=False),
+            nn.BatchNorm1d(out_features))
+
+
 class ReLU(nn.ReLU):
     def __init__(self):
         super().__init__(inplace=True)
@@ -14,35 +21,44 @@ class Model(nn.Module):
         super().__init__()
 
         features = 256
-        self.project = nn.Linear(1280, features)
+        self.project = LinearNorm(1280, features)
         self.layer_1 = gnn.MetaLayer(
             EdgeModel((features, 0, 0), features),
             NodeModel((features, features, 0), features),
             GlobalModel((features, features, 0), features))
         self.layer_2 = gnn.MetaLayer(
-            EdgeModel((features,) * 3, features),
-            NodeModel((features,) * 3, features),
-            GlobalModel((features,) * 3, features))
+            EdgeModel((features, 0, 0), features),
+            NodeModel((features, features, 0), features),
+            GlobalModel((features, features, 0), features))
         self.layer_3 = gnn.MetaLayer(
-            EdgeModel((features,) * 3, features),
-            NodeModel((features,) * 3, features),
-            GlobalModel((features,) * 3, features))
+            EdgeModel((features, 0, 0), features),
+            NodeModel((features, features, 0), features),
+            GlobalModel((features, features, 0), features))
         self.output = nn.Linear(features, num_classes)
 
     def forward(self, batch):
         x, u, batch = batch.x, batch.u, batch.batch
-        x = self.project(x.mean(1))
+
+        # x = x.mean(1)
+        x = self.project(x)
 
         # batch = batch.view(batch.size(0), 1).repeat(1, 2).view(batch.size(0) * 2)
         # x = x.view(x.size(0) * x.size(1), x.size(2))
 
-        edge_index = gnn.knn_graph(x, 10, batch, loop=False, flow='source_to_target')
+        k = 10
+
+        edge_index = gnn.knn_graph(x, k, batch, loop=False, flow='source_to_target')
         edge_attr = torch.zeros(edge_index.size(1), 0, device=x.device)
         u = torch.zeros(u.size(0), 0, device=x.device)
-
-        x, edge_attr, u = self.layer_1(x, edge_index, edge_attr, u, batch)
-        x, edge_attr, u = self.layer_2(x, edge_index, edge_attr, u, batch)
-        x, edge_attr, u = self.layer_3(x, edge_index, edge_attr, u, batch)
+        x, _, _ = self.layer_1(x, edge_index, edge_attr, u, batch)
+        edge_index = gnn.knn_graph(x, k, batch, loop=False, flow='source_to_target')
+        edge_attr = torch.zeros(edge_index.size(1), 0, device=x.device)
+        u = torch.zeros(u.size(0), 0, device=x.device)
+        x, _, _ = self.layer_2(x, edge_index, edge_attr, u, batch)
+        edge_index = gnn.knn_graph(x, k, batch, loop=False, flow='source_to_target')
+        edge_attr = torch.zeros(edge_index.size(1), 0, device=x.device)
+        u = torch.zeros(u.size(0), 0, device=x.device)
+        x, _, _ = self.layer_3(x, edge_index, edge_attr, u, batch)
 
         logits = self.output(x)
 
@@ -54,9 +70,9 @@ class EdgeModel(torch.nn.Module):
         super().__init__()
 
         self.edge_layer = nn.Sequential(
-            nn.Linear(in_features[0] * 2 + in_features[1] + in_features[2], out_features),
+            LinearNorm(in_features[0] * 2 + in_features[1] + in_features[2], out_features),
             ReLU(),
-            nn.Linear(out_features, out_features))
+            LinearNorm(out_features, out_features))
 
     def forward(self, src, dest, edge_attr, u, batch):
         # source, target: [E, F_x], where E is the number of edges.
@@ -73,13 +89,13 @@ class NodeModel(nn.Module):
         super().__init__()
 
         self.node_layer_1 = nn.Sequential(
-            nn.Linear(in_features[0] + in_features[1], out_features),
+            LinearNorm(in_features[0] + in_features[1], out_features),
             ReLU(),
-            nn.Linear(out_features, out_features))
+            LinearNorm(out_features, out_features))
         self.node_layer_2 = nn.Sequential(
-            nn.Linear(in_features[0] + out_features + in_features[2], out_features),
+            LinearNorm(in_features[0] + out_features + in_features[2], out_features),
             ReLU(),
-            nn.Linear(out_features, out_features))
+            LinearNorm(out_features, out_features))
 
     def forward(self, x, edge_index, edge_attr, u, batch):
         # x: [N, F_x], where N is the number of nodes.
@@ -101,9 +117,9 @@ class GlobalModel(torch.nn.Module):
         super().__init__()
 
         self.global_layer = nn.Sequential(
-            nn.Linear(in_features[2] + in_features[0], out_features),
+            LinearNorm(in_features[2] + in_features[0], out_features),
             ReLU(),
-            nn.Linear(out_features, out_features))
+            LinearNorm(out_features, out_features))
 
     def forward(self, x, edge_index, edge_attr, u, batch):
         # x: [N, F_x], where N is the number of nodes.
@@ -112,5 +128,7 @@ class GlobalModel(torch.nn.Module):
         # u: [B, F_u]
         # batch: [N] with max entry B - 1.
 
-        out = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
-        return self.global_layer(out)
+        # out = torch.cat([u, scatter_mean(x, batch, dim=0)], dim=1)
+        # return self.global_layer(out)
+
+        return u

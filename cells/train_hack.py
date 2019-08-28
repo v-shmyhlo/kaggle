@@ -110,7 +110,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            ChannelReweight(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
@@ -657,7 +657,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_logits = refine_scores(
             fold_logits, classes, exps=fold_exps, plates=fold_plates, value=float('-inf'))
-       
+
         return fold_labels, fold_logits, fold_exps, fold_ids
 
 

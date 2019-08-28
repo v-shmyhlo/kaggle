@@ -23,7 +23,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    NormalizedColorJitter, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
+    ChannelReweight, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -34,7 +34,7 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 SHARPEN_TEMP = 0.5
 MIX_ALPHA = 0.75
-LAM_U = 250
+LAM_U = 100
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -136,7 +136,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            NormalizedColorJitter(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_weight),
         ])),
     normalize,
     Extract(['image', 'exp', 'label', 'id']),
@@ -159,7 +159,7 @@ unsup_transform = T.Compose([
             SplitInSites(),
             T.Lambda(
                 lambda xs: torch.stack(
-                    [NormalizedColorJitter(config.aug.channel_weight)(to_tensor(x)) for x in xs],
+                    [ChannelReweight(config.aug.channel_weight)(to_tensor(x)) for x in xs],
                     0)),
         ])),
     normalize,
@@ -437,21 +437,25 @@ def train_epoch(model, optimizer, scheduler, data_loader, unsup_data_loader, fol
 
         with torch.no_grad():
             # TODO: model.eval() ?
-            model.eval()
+            # model.eval()
 
             b, n, c, h, w = images_u.size()
             images_u = images_u.view(b * n, c, h, w)
-            logits_u = model(images_u, None)
+            logits_u = model(images_u, None, True)
             logits_u = logits_u.view(b, n, NUM_CLASSES)
             labels_u = logits_u.softmax(2).mean(1, keepdim=True)
             labels_u = labels_u.repeat(1, n, 1).view(b * n, NUM_CLASSES)
             labels_u = dist_sharpen(labels_u, temp=SHARPEN_TEMP)
 
             # TODO: model.train() ?
-            model.train()
+            # model.train()
+
+        assert images_s.size() == images_u.size()
+        assert labels_s.size() == labels_u.size()
 
         images, labels = torch.cat([images_s, images_u], 0), torch.cat([labels_s, labels_u], 0)
         images, labels = cut_mix(images, labels)
+        assert images.size(0) == config.batch_size * 2
         logits = model(images, None, True)
 
         loss = compute_loss(input=logits, target=labels, unsup=True)

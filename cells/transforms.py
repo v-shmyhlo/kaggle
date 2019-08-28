@@ -199,14 +199,46 @@ class ChannelShuffle(object):
         return input
 
 
-class NormalizedColorJitter(object):
+class ChannelReweight(object):
+    def __init__(self, weight, normalize=False):
+        self.weight = weight
+        self.normalize = normalize
+
+    def __call__(self, image):
+        weight = torch.empty(image.size(0), 1, 1) \
+            .uniform_(1 - self.weight, 1 + self.weight)
+
+        if self.normalize:
+            weight = weight / weight.mean()
+
+        image = image * weight
+
+        return image
+
+
+class ChannelShift(object):
     def __init__(self, weight):
         self.weight = weight
-       
+
     def __call__(self, image):
-        weight = torch.FloatTensor(image.size(0), 1, 1).uniform_(1 - self.weight, 1 + self.weight)
-        weight = weight / weight.sum() * image.size(0)  # TODO: replace with mean
-        image = image * weight
+        weight = torch.empty(image.size(0), 1, 1) \
+            .uniform_(-self.weight, self.weight)
+
+        mean = image.mean((1, 2), keepdim=True)
+        image = image + weight * mean
+
+        return image
+
+
+class Gamma(object):
+    def __init__(self, weight):
+        self.weight = weight
+
+    def __call__(self, image):
+        weight = torch.empty(image.size(0), 1, 1) \
+            .uniform_(1 - self.weight, 1 + self.weight)
+
+        image = image**(1 / weight)
 
         return image
 

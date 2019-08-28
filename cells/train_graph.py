@@ -1,30 +1,28 @@
 import argparse
 import gc
-import math
 import os
+import pickle
 import shutil
 
 import lap
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import tensorboardX
 import torch
 import torch.distributions
 import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torch_geometric
-import torchvision
 import torchvision.transforms as T
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
 import optim
 import utils
-from cells.dataset_graph import NUM_CLASSES, TrainEvalDataset, TestDataset
+from cells.dataset_graph import NUM_CLASSES, EXPS, TrainEvalDataset, TestDataset
 from cells.model_graph import Model
-from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 
@@ -44,12 +42,29 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
+
+class RandomEmb(object):
+    def __call__(self, input):
+        b, n, _ = input.x.size()
+        input.x = input.x[torch.arange(b), torch.randint(0, n, size=(b,))]
+
+        return input
+
+
 train_transform = T.Compose([
+    RandomEmb(),
 ])
 eval_transform = T.Compose([
+    RandomEmb(),
 ])
 test_transform = T.Compose([
+    RandomEmb(),
 ])
+
+
+class SummaryWriter(tensorboardX.SummaryWriter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, flush_secs=10, **kwargs)
 
 
 def update_transforms(p):
@@ -144,6 +159,11 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
             weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'adam':
+        optimizer = torch.optim.Adam(
+            parameters,
+            optimizer_config.lr,
+            weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
@@ -179,7 +199,10 @@ def indices_for_fold(fold, dataset):
 
 
 def lr_search(train_eval_data):
-    train_eval_dataset = TrainEvalDataset(train_eval_data, transform=train_transform)
+    with open('./embeddings_{}.pkl'.format(1), 'rb') as f:  # TODO: fold number
+        embs = pickle.load(f)
+    train_eval_dataset = TrainEvalDataset(train_eval_data, embs, transform=train_transform)
+    train_eval_dataset = torch.utils.data.Subset(train_eval_dataset, list(range(len(train_eval_dataset))) * 10)
     train_eval_data_loader = torch_geometric.data.DataLoader(
         train_eval_dataset,
         batch_size=config.batch_size,
@@ -264,11 +287,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, batch in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+        batch = batch.to(DEVICE)
+        logits = model(batch)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=batch.y)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -282,14 +305,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
-        images = images_to_rgb(images)[:16]
         print('[FOLD {}][EPOCH {}][TRAIN] {}'.format(
             fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
         writer.add_scalar('learning_rate', lr, global_step=epoch)
-        writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, fold, epoch):
@@ -305,14 +325,15 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_exps = []
 
-        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
-            logits = model(images, feats)
+        for batch in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            batch = batch.to(DEVICE)
+            exps = [EXPS[i] for i in batch.exps.data.cpu().numpy()]
+            logits = model(batch)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=batch.y)
             metrics['loss'].update(loss.data.cpu().numpy())
 
-            fold_labels.append(labels)
+            fold_labels.append(batch.y)
             fold_logits.append(logits)
             fold_exps.extend(exps)
 
@@ -333,30 +354,29 @@ def eval_epoch(model, data_loader, fold, epoch):
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
             metrics[k] = metric[k].mean().data.cpu().numpy()
-        images = images_to_rgb(images)[:16]
         print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
             fold, epoch, ', '.join('{}: {:.4f}'.format(k, metrics[k]) for k in metrics)))
         for k in metrics:
             writer.add_scalar(k, metrics[k], global_step=epoch)
-        writer.add_image('images', torchvision.utils.make_grid(
-            images, nrow=math.ceil(math.sqrt(images.size(0))), normalize=True), global_step=epoch)
 
         return metrics
 
 
 def train_fold(fold, train_eval_data):
+    with open('./embeddings_{}.pkl'.format(fold), 'rb') as f:
+        embs = pickle.load(f)
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
-    train_data_loader = torch.utils.data.DataLoader(
+    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], embs, transform=train_transform)
+    train_data_loader = torch_geometric.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
         drop_last=True,
         shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
-    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
-    eval_data_loader = torch.utils.data.DataLoader(
+    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], embs, transform=eval_transform)
+    eval_data_loader = torch_geometric.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,

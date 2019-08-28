@@ -123,3 +123,28 @@ class ArcFace(nn.Module):
         output *= self.s
 
         return output
+
+
+class ChannelReweight(nn.Module):
+    def __init__(self, features):
+        super().__init__()
+
+        self.weight = nn.Sequential(
+            nn.BatchNorm1d(features * 2),
+            nn.Linear(features * 2, 64),
+            nn.PReLU(),
+            nn.Linear(64, features),
+            nn.Softplus())
+
+    def forward(self, input):
+        stats = torch.cat([
+            input.mean((2, 3)),
+            input.std((2, 3)),
+        ], 1).detach()
+
+        weight = self.weight(stats)
+        weight = weight.view(weight.size(0), weight.size(1), 1, 1)
+
+        input = input * weight
+
+        return input

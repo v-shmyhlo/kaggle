@@ -2,14 +2,19 @@ import efficientnet_pytorch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from cells.modules import ChannelReweight
+
 
 class Model(nn.Module):
-    def __init__(self, model, num_classes, return_features=False):
+    def __init__(self, model, num_classes, return_images=False, return_features=False):
         super().__init__()
 
+        self.return_images = return_images
         self.return_features = return_features
 
-        self.norm = nn.BatchNorm2d(6)
+        self.norm = nn.Sequential(
+            nn.BatchNorm2d(6),
+            ChannelReweight(6))
 
         if model.type.startswith('efficientnet'):
             self.model = efficientnet_pytorch.EfficientNet.from_pretrained(model.type)
@@ -27,6 +32,7 @@ class Model(nn.Module):
             assert target is None
 
         input = self.norm(input)
+        images = input
         input = self.model.extract_features(input)
         input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
         features = input
@@ -34,7 +40,13 @@ class Model(nn.Module):
             input = F.dropout(input, p=self.model._dropout, training=self.training)
         input = self.model._fc(input)
 
+        return_values = (input,)
+        if self.return_images:
+            return_values = (*return_values, images)
         if self.return_features:
-            return input, features
-        else:
-            return input
+            return_values = (*return_values, features)
+
+        if len(return_values) == 1:
+            return return_values[0]
+
+        return return_values

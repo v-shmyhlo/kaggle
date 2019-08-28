@@ -10,7 +10,7 @@ model:
   type: efficientnet-b0
 
 aug:
-  channel_weight: 0.5
+  channel_reweight: 0.3
 
 opt:
   type: sgd

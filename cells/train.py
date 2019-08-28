@@ -74,7 +74,7 @@ elif config.normalize == 'plate':
     normalize = NormalizeByPlateStats(
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
-    raise AssertionError('invalide normalization {}'.format(config.normalize))
+    raise AssertionError('invalid normalization {}'.format(config.normalize))
 
 eval_image_transform = T.Compose([
     RandomSite(),
@@ -98,7 +98,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            ChannelReweight(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
