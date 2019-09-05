@@ -290,6 +290,7 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
+    optimizer.train()
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()

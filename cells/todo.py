@@ -1,32 +1,26 @@
+# TODO: https://arxiv.org/abs/1906.07282
+# TODO: ensemble different kfold split methods
+# TODO: https://www.embopress.org/doi/pdf/10.15252/msb.20177551
 # TODO: step 5 ewa and la
+# TODO: pow-style temp on logits
 # TODO: ewa mom 0.5
-# TODO: radam + la
 # TODO: https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
 # TODO: SWA
-# TODO: Polyak averaging
 # TODO: Oleg's transform
-# TODO: apply bright,contrast,gamma with prob
-# TODO: gamma correction
 # TODO: per image/per experiment correction
 # TODO: CAM
-# TODO: show adapted images (after norm, reweight)
-# TODO: recompute graph on each layer
-# TODO: heads model without norm
-# TODO: radam with warmup
 # TODO: another padding mode
 # TODO: brightness, contrast
 # TODO: pl + mixup
 # TODO: disable channel reweight
 # TODO: pick temp search range
 # TODO: mixmatch over predicted labels
-# TODO: start resize from 128
 # TODO: reweight experiment loss by metric
 # TODO: ohem on samples outside of group
 # TODO: check all boolean indexing
 # TODO: ohem experiments with bad accuracy
 # TODO: predict group
 # TODO: penalize errors not in group
-# TODO: freeze BN
 # TODO: iteratively unfreeze layers
 # TODO: exponential moving average of their parameters with a decay rate of 0.999
 # TODO: use mixmatch-like distribution sharpening for temp search
@@ -56,23 +50,19 @@
 # TODO: knn classifier
 # TODO: Population Based Training
 # TODO: model diverse split
-# TODO: well coding
 # TODO: TVN (Typical Variation Normalization)
 # TODO: normalize by ref (?)
 # TODO: your network will need to evaluate your current image compared to each control or maybe a selection of it.
 # TODO: speedup eval
 # TODO: mix features for same class (multiple layers)
 # TODO: relevant literature
-# TODO: initialize the kernel properly in order to keep approximately the same variance that the original model had.
 # TODO: batch/plate effects
 # TODO: k shot learning
 # TODO: https://github.com/recursionpharma/rxrx1-utils
-# TODO: 2 images as control
 # TODO: https://data.broadinstitute.org/bbbc/image_sets.html
 # TODO: https://github.com/awesomedata/awesome-public-datasets#biology
 # TODO: smarter split: https://www.kaggle.com/mariakesa/pcaforvisualizingbatcheffects
 # TODO: parallel temp search
-# TODO: eval site selection
 # TODO: check predictions/targets name
 # TODO: greedy assignment
 # TODO: user other images stats
