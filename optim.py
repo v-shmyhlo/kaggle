@@ -3,6 +3,89 @@ import math
 import torch
 
 
+class DummySwitchable(torch.optim.Optimizer):
+    def __init__(self, optimizer):
+        self.optimizer = optimizer
+        self.param_groups = self.optimizer.param_groups
+        self.training = False
+
+    def step(self, closure=None):
+        assert self.training
+
+        loss = self.optimizer.step(closure)
+
+        return loss
+
+    def train(self):
+        assert not self.training
+        self.training = True
+
+    def eval(self):
+        assert self.training
+        self.training = False
+
+
+class EWA(torch.optim.Optimizer):
+    def __init__(self, optimizer, momentum, num_steps):
+        self.optimizer = optimizer
+        self.num_steps = num_steps
+        self.param_groups = self.optimizer.param_groups
+        self.training = False
+
+        for group in self.param_groups:
+            group['ewa_step_counter'] = 0
+            group['ewa_momentum'] = momentum
+            group['ewa_params'] = []
+            group['ewa_saved_params'] = []
+            for p in group['params']:
+                ewa_p = torch.empty_like(p.data)
+                ewa_p.copy_(p.data)
+                group['ewa_params'].append(ewa_p)
+
+                ewa_saved_p = torch.empty_like(p.data)
+                ewa_saved_p.copy_(p.data)
+                group['ewa_saved_params'].append(ewa_saved_p)
+
+    def update_ewa_group(self, group):
+        assert len(group['params']) == len(group['ewa_params']) == len(group['ewa_saved_params'])
+
+        for p, ewa_p in zip(group['params'], group['ewa_params']):
+            mom = group['ewa_momentum']
+            ewa_p.mul_(mom).add_(1 - mom, p.data)
+
+    def step(self, closure=None):
+        assert self.training
+
+        loss = self.optimizer.step(closure)
+
+        for group in self.param_groups:
+            group['ewa_step_counter'] += 1
+            step_counter = group['ewa_step_counter']
+
+            if step_counter % self.num_steps == 0:
+                self.update_ewa_group(group)
+
+        return loss
+
+    def train(self):
+        assert not self.training
+        self.training = True
+
+        for group in self.param_groups:
+            for p, ewa_p, ewa_saved_p in zip(group['params'], group['ewa_params'], group['ewa_saved_params']):
+                p.data.copy_(ewa_saved_p)
+
+    def eval(self):
+        assert self.training
+        self.training = False
+
+        for group in self.param_groups:
+            for p, ewa_p, ewa_saved_p in zip(group['params'], group['ewa_params'], group['ewa_saved_params']):
+                ewa_saved_p.copy_(p.data)
+                p.data.copy_(ewa_p)
+
+
+# TODO: https://github.com/alphadl/lookahead.pytorch/blob/master/lookahead.py
 class LA(torch.optim.Optimizer):
     def __init__(self, optimizer, lr, num_steps):
         self.optimizer = optimizer
@@ -25,6 +108,8 @@ class LA(torch.optim.Optimizer):
                 group['la_params'].append(la_p)
 
     def update_la_group(self, group):
+        assert len(group['params']) == len(group['la_params'])
+
         for p, la_p in zip(group['params'], group['la_params']):
             # if 'la_params' not in group:
             #     group['la_params'] = torch.zeros_like(p.data)

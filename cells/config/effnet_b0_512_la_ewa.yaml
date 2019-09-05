@@ -23,6 +23,8 @@ opt:
     steps: 10
 
   ewa:
+    momentum: 0.8
+    steps: 10
 
   sgd:
     momentum: 0.9

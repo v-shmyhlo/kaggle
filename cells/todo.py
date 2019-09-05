@@ -1,3 +1,9 @@
+# TODO: step 5 ewa and la
+# TODO: ewa mom 0.5
+# TODO: radam + la
+# TODO: https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
+# TODO: SWA
+# TODO: Polyak averaging
 # TODO: Oleg's transform
 # TODO: apply bright,contrast,gamma with prob
 # TODO: gamma correction
