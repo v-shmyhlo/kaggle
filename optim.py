@@ -6,6 +6,7 @@ import torch
 class DummySwitchable(torch.optim.Optimizer):
     def __init__(self, optimizer):
         self.optimizer = optimizer
+        self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
         self.training = False
 
@@ -29,6 +30,7 @@ class EWA(torch.optim.Optimizer):
     def __init__(self, optimizer, momentum, num_steps):
         self.optimizer = optimizer
         self.num_steps = num_steps
+        self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
         self.training = False
 
@@ -90,13 +92,8 @@ class LA(torch.optim.Optimizer):
     def __init__(self, optimizer, lr, num_steps):
         self.optimizer = optimizer
         self.num_steps = num_steps
-
-        # self.defaults = self.optimizer.defaults
-
+        self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
-
-        # self.state = defaultdict(dict)
-        # self.opt_state = self.optimizer.state
 
         for group in self.param_groups:
             group['la_step_counter'] = 0
@@ -111,16 +108,6 @@ class LA(torch.optim.Optimizer):
         assert len(group['params']) == len(group['la_params'])
 
         for p, la_p in zip(group['params'], group['la_params']):
-            # if 'la_params' not in group:
-            #     group['la_params'] = torch.zeros_like(p.data)
-            #     group['la_params'].copy_(p.data)
-            # la_p = group['la_params']
-
-            # la_d_p =
-
-            # la_p.add_(la_d_p)
-            # la_p.addcmul_(-group['lr'], p.data, mul)
-
             la_p.add_(group['la_lr'], p.data - la_p)
             p.data.copy_(la_p)
 

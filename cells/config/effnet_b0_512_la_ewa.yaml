@@ -20,11 +20,11 @@ opt:
 
   lookahead:
     lr: 0.5
-    steps: 10
+    steps: 5
 
   ewa:
-    momentum: 0.8
-    steps: 10
+    momentum: 0.9
+    steps: 5
 
   sgd:
     momentum: 0.9

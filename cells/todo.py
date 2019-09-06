@@ -1,4 +1,5 @@
 # TODO: https://arxiv.org/abs/1906.07282
+# TODO: find lr for la(k=0.5)
 # TODO: ensemble different kfold split methods
 # TODO: https://www.embopress.org/doi/pdf/10.15252/msb.20177551
 # TODO: step 5 ewa and la
