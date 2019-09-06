@@ -24,10 +24,11 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    ChannelReweight, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -73,7 +74,7 @@ elif config.normalize == 'plate':
     normalize = NormalizeByPlateStats(
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
-    raise AssertionError('invalide normalization {}'.format(config.normalize))
+    raise AssertionError('invalid normalization {}'.format(config.normalize))
 
 eval_image_transform = T.Compose([
     RandomSite(),
@@ -81,14 +82,12 @@ eval_image_transform = T.Compose([
     center_crop,
     to_tensor,
 ])
-
 test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
-
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -99,7 +98,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            ChannelReweight(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
@@ -218,6 +217,11 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
             weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'radam':
+        optimizer = RAdam(
+            parameters,
+            optimizer_config.lr,
+            weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
@@ -226,6 +230,14 @@ def build_optimizer(optimizer_config, parameters):
             optimizer,
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
+
+    if optimizer_config.ewa is not None:
+        optimizer = optim.EWA(
+            optimizer,
+            optimizer_config.ewa.momentum,
+            num_steps=optimizer_config.ewa.steps)
+    else:
+        optimizer = optim.DummySwitchable(optimizer)
 
     return optimizer
 
@@ -278,6 +290,7 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
+    optimizer.train()
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
@@ -478,7 +491,7 @@ def train_fold(fold, train_eval_data):
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
                 mode='triangular2',
-                # gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
+                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
                 base_momentum=0.85,
                 max_momentum=0.95))
@@ -499,6 +512,7 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(1, config.epochs + 1):
+        optimizer.train()
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -507,6 +521,7 @@ def train_fold(fold, train_eval_data):
             fold=fold,
             epoch=epoch)
         gc.collect()
+        optimizer.eval()
         metric = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
