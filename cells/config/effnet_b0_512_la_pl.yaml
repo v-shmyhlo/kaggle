@@ -10,7 +10,7 @@ model:
   type: efficientnet-b0
 
 aug:
-  channel_weight: 0.5
+  channel_reweight: 0.3
 
 opt:
   type: sgd
@@ -22,6 +22,8 @@ opt:
     lr: 0.5
     steps: 10
 
+  ewa:
+
   sgd:
     momentum: 0.9
 
@@ -32,8 +34,8 @@ sched:
   type: onecycle
 
   step:
-    decay: 0.99
-    step_size: 100
+    decay: 0.5
+    step_size: 5
 
   plateau:
     decay: 0.5

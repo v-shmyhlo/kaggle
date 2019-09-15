@@ -31,6 +31,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             'exp': row['experiment'],
             'plate': row['plate'],
             'label': row['sirna'],
+            # 'real': torch.tensor(row['real']),  # TODO:
             'id': row['id_code'],
         }
 

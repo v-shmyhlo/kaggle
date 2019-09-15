@@ -1,26 +1,32 @@
 seed: 42
-epochs: 10
+epochs: 30
 batch_size: 16
 resize_size: 512
-crop_size: 512
+crop_size:
+  min: 224
+  max: 512
 normalize: experiment
-progressive_resize: False
+progressive_resize: True
 
 model:
   type: efficientnet-b0
 
 aug:
-  channel_weight: 0.5
+  channel_reweight: 0.3
 
 opt:
   type: sgd
-  lr: 0.01
+  lr: 0.3
   weight_decay: 1e-4
   acc_steps: 4
 
   lookahead:
     lr: 0.5
-    steps: 10
+    steps: 5
+
+  ewa:
+    momentum: 0.9
+    steps: 5
 
   sgd:
     momentum: 0.9
@@ -29,11 +35,11 @@ opt:
     momentum: 0.9
 
 sched:
-  type: step
+  type: onecycle
 
   step:
     decay: 0.5
-    step_size: 2
+    step_size: 5
 
   plateau:
     decay: 0.5

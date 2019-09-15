@@ -148,3 +148,20 @@ class ChannelReweight(nn.Module):
         input = input * weight
 
         return input
+
+
+# TODO: check this
+class ColumnDrop(nn.Module):
+    def forward(self, input):
+        if self.training:
+            b, _, h, w = input.size()
+
+            b = torch.arange(0, b)
+            h = torch.randint(0, h, size=())
+            w = torch.randint(0, w, size=())
+
+            input = input[b, :, h, w]
+        else:
+            input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
+
+        return input

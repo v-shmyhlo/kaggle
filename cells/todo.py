@@ -1,4 +1,8 @@
+# TODO: use temp after averaging
+# TODO: smaller weight decay
 # TODO: label smoothing on PL
+# TODO: soft targets for PL
+# TODO: knowledge distillation
 # TODO: https://arxiv.org/abs/1906.07282
 # TODO: ensemble different kfold split methods
 # TODO: https://www.embopress.org/doi/pdf/10.15252/msb.20177551

@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -38,6 +37,7 @@ parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/cells')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--restore-path', type=str)
+parser.add_argument('--pl-path', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--infer', action='store_true')
@@ -45,7 +45,8 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert config.resize_size == config.crop_size
+assert args.restore_path == args.pl_path
+assert config.resize_size == config.crop_size.max
 
 
 class RandomResize(object):
@@ -101,14 +102,14 @@ train_transform = T.Compose([
             ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
 ])
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
         infer_image_transform),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
@@ -125,7 +126,7 @@ def update_transforms(p):
 
     assert 0. <= p <= 1.
 
-    crop_size = round(224 + (config.crop_size - 224) * p)
+    crop_size = round(config.crop_size.min + (config.crop_size.max - config.crop_size.min) * p)
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
@@ -170,8 +171,22 @@ def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
-def compute_loss(input, target):
-    loss = F.cross_entropy(input=input, target=target, reduction='none')
+def ce(input, target):
+    axis = 1
+
+    log_prob = input.log_softmax(axis)
+    loss = -(target * log_prob).sum(axis)
+
+    return loss
+
+
+def compute_loss(input, target, real):
+    real = real.unsqueeze(1)
+
+    target = utils.one_hot(target, NUM_CLASSES)
+    target = torch.where(real, target, utils.label_smoothing(target, 0.1))
+
+    loss = ce(input=input, target=target)
 
     return loss
 
@@ -252,7 +267,7 @@ def indices_for_fold(fold, dataset):
         ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
          'U2OS-03'],
     ]
-
+   
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
     eval_exps = fold_eval_exps[fold]
@@ -294,11 +309,11 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, real=real)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -351,11 +366,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels)
+        loss = compute_loss(input=logits, target=labels, real=real)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -392,11 +407,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_exps = []
 
-        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        for images, feats, exps, labels, real, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
             logits = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels)
+            loss = compute_loss(input=logits, target=labels, real=real)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)
@@ -434,14 +449,14 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    # pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la'
-    # pl_path = './tf_log/cells/tmp-512-progres-crop-norm-la-restart'
-    pl_path = './tf_log/cells/b0-512-progres-crop-norm-la-jit03-nonorm-reweight-2'
-    test_pl = pd.read_csv(os.path.join(pl_path, 'test.csv'))
-    test_pl['root'] = os.path.join(args.dataset_path, 'test')
+    test_pl_data = pd.read_csv(os.path.join(args.pl_path, 'test.csv'))
+    test_pl_data['root'] = os.path.join(args.dataset_path, 'test')
+
+    train_eval_data['real'] = True
+    test_pl_data['real'] = False
 
     train_dataset = TrainEvalDataset(
-        pd.concat([train_eval_data.iloc[train_indices], test_pl]), transform=train_transform)
+        pd.concat([train_eval_data.iloc[train_indices], test_pl_data]), transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
