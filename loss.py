@@ -104,6 +104,7 @@ def iou_loss(input, target, axis=None, eps=1e-7):
 
     return loss
 
+
 # def focal_loss(input, target, gamma=2.):
 #     prob = input.sigmoid()
 #     prob_true = prob * target + (1 - prob) * (1 - target)
@@ -113,3 +114,10 @@ def iou_loss(input, target, axis=None, eps=1e-7):
 #     loss = weight * loss
 #
 #     return loss
+
+
+def ce(input, target, axis=1):
+    log_prob = input.log_softmax(axis)
+    loss = -(target * log_prob).sum(axis)
+
+    return loss

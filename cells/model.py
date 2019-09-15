@@ -2,8 +2,6 @@ import efficientnet_pytorch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cells.modules import ChannelReweight
-
 
 class Model(nn.Module):
     def __init__(self, model, num_classes, return_images=False, return_features=False):
@@ -14,7 +12,8 @@ class Model(nn.Module):
 
         self.norm = nn.Sequential(
             nn.BatchNorm2d(6),
-            ChannelReweight(6))
+            # ChannelReweight(6),
+        )
 
         if model.type.startswith('efficientnet'):
             self.model = efficientnet_pytorch.EfficientNet.from_pretrained(model.type)

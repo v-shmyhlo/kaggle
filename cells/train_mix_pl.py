@@ -24,7 +24,7 @@ from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
-from cells.utils import images_to_rgb
+from cells.utils import images_to_rgb, cut_mix
 from config import Config
 from loss import ce
 from lr_scheduler import OneCycleScheduler
@@ -103,14 +103,14 @@ train_transform = T.Compose([
             ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
         infer_image_transform),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
@@ -172,12 +172,7 @@ def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
-def compute_loss(input, target, real):
-    real = real.unsqueeze(1)
-
-    target = utils.one_hot(target, NUM_CLASSES)
-    target = torch.where(real, target, utils.label_smoothing(target, 0.1))
-
+def compute_loss(input, target):
     loss = ce(input=input, target=target)
 
     return loss
@@ -301,11 +296,14 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
-        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        labels = utils.one_hot(labels, NUM_CLASSES)
+        images, labels = cut_mix(images, labels)
+        logits = model(images, object(), object())
 
-        loss = compute_loss(input=logits, target=labels, real=real)
+        loss = compute_loss(input=logits, target=labels)
+        labels = labels.argmax(1)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -358,12 +356,15 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
-        logits = model(images, feats, labels)
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+        labels = utils.one_hot(labels, NUM_CLASSES)
+        images, labels = cut_mix(images, labels)
+        logits = model(images, object(), object())
 
-        loss = compute_loss(input=logits, target=labels, real=real)
+        loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
+        labels = labels.argmax(1)
 
         lr = scheduler.get_lr()
         (loss.mean() / config.opt.acc_steps).backward()
@@ -399,12 +400,14 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_exps = []
 
-        for images, feats, exps, labels, real, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
-            logits = model(images, feats)
+        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
+            labels = utils.one_hot(labels, NUM_CLASSES)
+            logits = model(images, object())
 
-            loss = compute_loss(input=logits, target=labels, real=real)
+            loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
+            labels = labels.argmax(1)
 
             fold_labels.append(labels)
             fold_logits.append(logits)
@@ -443,9 +446,6 @@ def train_fold(fold, train_eval_data):
 
     test_pl_data = pd.read_csv(os.path.join(args.pl_path, 'test.csv'))
     test_pl_data['root'] = os.path.join(args.dataset_path, 'test')
-
-    train_eval_data['real'] = True
-    test_pl_data['real'] = False
 
     train_dataset = TrainEvalDataset(
         pd.concat([train_eval_data.iloc[train_indices], test_pl_data]), transform=train_transform)

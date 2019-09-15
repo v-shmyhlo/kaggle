@@ -23,10 +23,11 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    ChannelReweight, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
-from cells.utils import images_to_rgb
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
+from cells.utils import images_to_rgb, cut_mix
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -43,7 +44,7 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert config.resize_size == config.crop_size
+assert config.resize_size == config.crop_size.max
 
 
 class RandomResize(object):
@@ -56,28 +57,6 @@ class RandomResize(object):
         input = Resize(size)(input)
 
         return input
-
-
-def cut_mix(images_1, labels_1):
-    b, _, h, w = images_1.size()
-    perm = np.random.permutation(b)
-    images_2, labels_2 = images_1[perm], labels_1[perm]
-
-    lam = np.random.uniform(0, 1)
-    r_x = np.random.uniform(0, w)
-    r_y = np.random.uniform(0, h)
-    r_w = w * np.sqrt(1 - lam)
-    r_h = h * np.sqrt(1 - lam)
-    x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
-    x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
-    y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
-    y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
-
-    images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
-    images = images_1
-    labels = lam * labels_1 + (1 - lam) * labels_2
-
-    return images, labels
 
 
 random_crop = Resetable(RandomCrop)
@@ -94,7 +73,7 @@ elif config.normalize == 'plate':
     normalize = NormalizeByPlateStats(
         torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
-    raise AssertionError('invalide normalization {}'.format(config.normalize))
+    raise AssertionError('invalid normalization {}'.format(config.normalize))
 
 eval_image_transform = T.Compose([
     RandomSite(),
@@ -102,14 +81,12 @@ eval_image_transform = T.Compose([
     center_crop,
     to_tensor,
 ])
-
 test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
-
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -120,7 +97,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            ChannelReweight(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
     Extract(['image', 'feat', 'exp', 'label', 'id']),
@@ -142,9 +119,12 @@ test_transform = T.Compose([
 
 
 def update_transforms(p):
+    if not config.progressive_resize:
+        p = 1.
+
     assert 0. <= p <= 1.
 
-    crop_size = round(224 + (config.crop_size - 224) * p)
+    crop_size = round(config.crop_size.min + (config.crop_size.max - config.crop_size.min) * p)
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
@@ -165,12 +145,12 @@ def to_prob(input, temp):
 
 # TODO: use pool
 def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
+    temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
-        fold_preds = torch.tensor(fold_preds).to(input.device)
-        metric = compute_metric(input=fold_preds, target=target)
+        preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        preds = torch.tensor(preds).to(input.device)
+        metric = compute_metric(input=preds, target=target, exps=exps)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
@@ -196,10 +176,15 @@ def compute_loss(input, target):
     return loss
 
 
-def compute_metric(input, target):
+def compute_metric(input, target, exps):
+    exps = np.array(exps)
     metric = {
         'accuracy@1': (input == target).float(),
     }
+
+    for exp in np.unique(exps):
+        mask = torch.tensor(exp == exps)
+        metric['experiment/{}/accuracy@1'.format(exp)] = (input[mask] == target[mask]).float()
 
     return metric
 
@@ -232,6 +217,11 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
             weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'radam':
+        optimizer = RAdam(
+            parameters,
+            optimizer_config.lr,
+            weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
@@ -240,6 +230,14 @@ def build_optimizer(optimizer_config, parameters):
             optimizer,
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
+
+    if optimizer_config.ewa is not None:
+        optimizer = optim.EWA(
+            optimizer,
+            optimizer_config.ewa.momentum,
+            num_steps=optimizer_config.ewa.steps)
+    else:
+        optimizer = optim.DummySwitchable(optimizer)
 
     return optimizer
 
@@ -292,6 +290,7 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
+    optimizer.train()
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
@@ -420,10 +419,11 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
+
         temp = 1.  # use default temp
         fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
-        metric = compute_metric(input=fold_preds, target=fold_labels)
+        metric = compute_metric(input=fold_preds, target=fold_labels, exps=fold_exps)
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
@@ -474,6 +474,12 @@ def train_fold(fold, train_eval_data):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'step':
+        scheduler = lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
@@ -485,10 +491,10 @@ def train_fold(fold, train_eval_data):
                 config.opt.lr,
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
-                mode='exp_range',
+                mode='triangular2',
                 gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
-                base_momentum=0.75,
+                base_momentum=0.85,
                 max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
@@ -507,6 +513,7 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(1, config.epochs + 1):
+        optimizer.train()
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -515,6 +522,7 @@ def train_fold(fold, train_eval_data):
             fold=fold,
             epoch=epoch)
         gc.collect()
+        optimizer.eval()
         metric = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
