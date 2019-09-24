@@ -32,6 +32,7 @@ from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+LABEL_SMOOTHING = 0.1
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -46,7 +47,6 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert args.restore_path == args.pl_path
 assert config.resize_size == config.crop_size.max
 
 
@@ -70,11 +70,9 @@ to_tensor = ToTensor()
 if config.normalize is None:
     normalize = T.Compose([])
 elif config.normalize == 'experiment':
-    normalize = NormalizeByExperimentStats(
-        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
+    normalize = NormalizeByExperimentStats(torch.load('./experiment_stats.pth'))
 elif config.normalize == 'plate':
-    normalize = NormalizeByPlateStats(
-        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
+    normalize = NormalizeByPlateStats(torch.load('./plate_stats.pth'))
 else:
     raise AssertionError('invalid normalization {}'.format(config.normalize))
 
@@ -176,7 +174,7 @@ def compute_loss(input, target, real):
     real = real.unsqueeze(1)
 
     target = utils.one_hot(target, NUM_CLASSES)
-    target = torch.where(real, target, utils.label_smoothing(target, 0.1))
+    target = torch.where(real, target, utils.label_smoothing(target, LABEL_SMOOTHING))
 
     loss = ce(input=input, target=target)
 
@@ -250,15 +248,28 @@ def build_optimizer(optimizer_config, parameters):
 
 
 def indices_for_fold(fold, dataset):
-    fold_eval_exps = [
-        None,
-        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
-         'U2OS-01'],
-        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
-         'U2OS-02'],
-        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
-         'U2OS-03'],
-    ]
+    if config.split == 'idiom':
+        fold_eval_exps = [
+            None,
+            ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+             'U2OS-01'],
+            ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+             'U2OS-02'],
+            ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+             'U2OS-03'],
+        ]
+    elif config.split == 'stat':
+        fold_eval_exps = [
+            None,
+            ['HEPG2-04', 'HUVEC-01', 'HUVEC-03', 'HUVEC-05', 'HUVEC-07', 'HUVEC-09', 'HUVEC-12', 'HUVEC-14', 'RPE-01',
+             'RPE-04', 'RPE-07'],
+            ['HEPG2-03', 'HEPG2-05', 'HEPG2-06', 'HUVEC-04', 'HUVEC-06', 'HUVEC-08', 'HUVEC-15', 'RPE-02', 'RPE-05',
+             'U2OS-01', 'U2OS-02'],
+            ['HEPG2-01', 'HEPG2-02', 'HEPG2-07', 'HUVEC-02', 'HUVEC-10', 'HUVEC-11', 'HUVEC-13', 'HUVEC-16', 'RPE-03',
+             'RPE-06', 'U2OS-03'],
+        ]
+    else:
+        raise AssertionError('invalid split {}'.format(config.split))
 
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
@@ -266,7 +277,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
+    assert round(len(train_indices) / len(eval_indices), 1) == 2
 
     return train_indices, eval_indices
 

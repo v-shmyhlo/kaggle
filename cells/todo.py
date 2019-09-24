@@ -1,7 +1,8 @@
+# TODO: leslie smith remarks
+# TODO: resample
+# TODO: noise to grads
 # TODO: use temp after averaging
 # TODO: smaller weight decay
-# TODO: label smoothing on PL
-# TODO: soft targets for PL
 # TODO: knowledge distillation
 # TODO: https://arxiv.org/abs/1906.07282
 # TODO: ensemble different kfold split methods
@@ -11,7 +12,6 @@
 # TODO: https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
 # TODO: Oleg's transform
 # TODO: per image/per experiment correction
-# TODO: CAM
 # TODO: another padding mode
 # TODO: brightness, contrast
 # TODO: pl + mixup

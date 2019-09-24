@@ -23,9 +23,11 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    ChannelReweight, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
+from cells.utils import cut_mix
 from cells.utils import images_to_rgb
 from config import Config
+from loss import ce
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 
@@ -48,7 +50,7 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert config.resize_size == config.crop_size
+assert config.resize_size == config.crop_size.max
 
 
 class RandomResize(object):
@@ -72,32 +74,6 @@ def dist_sharpen(dist, temp):
     return dist
 
 
-def cut_mix(images_1, labels_1):
-    b, _, h, w = images_1.size()
-    perm = np.random.permutation(b)
-    images_2, labels_2 = images_1[perm], labels_1[perm]
-
-    # lam = np.random.uniform(0, 1)
-    lam = np.random.beta(MIX_ALPHA, MIX_ALPHA)
-    lam = max(lam, 1 - lam)
-
-    r_x = np.random.uniform(0, w)
-    r_y = np.random.uniform(0, h)
-    r_w = w * np.sqrt(1 - lam)
-    r_h = h * np.sqrt(1 - lam)
-    x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
-    x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
-    y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
-    y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
-
-    images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
-    images = images_1
-    labels = lam * labels_1 + (1 - lam) * labels_2
-
-    return images, labels
-
-
-random_resize = Resetable(RandomResize)
 random_crop = Resetable(RandomCrop)
 center_crop = Resetable(CenterCrop)
 infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
@@ -106,13 +82,11 @@ to_tensor = ToTensor()
 if config.normalize is None:
     normalize = T.Compose([])
 elif config.normalize == 'experiment':
-    normalize = NormalizeByExperimentStats(
-        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
+    normalize = NormalizeByExperimentStats(torch.load('./experiment_stats.pth'))
 elif config.normalize == 'plate':
-    normalize = NormalizeByPlateStats(
-        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
+    normalize = NormalizeByPlateStats(torch.load('./plate_stats.pth'))
 else:
-    raise AssertionError('invalide normalization {}'.format(config.normalize))
+    raise AssertionError('invalid normalization {}'.format(config.normalize))
 
 eval_image_transform = T.Compose([
     RandomSite(),
@@ -136,7 +110,7 @@ train_transform = T.Compose([
             RandomFlip(),
             RandomTranspose(),
             to_tensor,
-            ChannelReweight(config.aug.channel_weight),
+            ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
     Extract(['image', 'exp', 'label', 'id']),
@@ -159,7 +133,7 @@ unsup_transform = T.Compose([
             SplitInSites(),
             T.Lambda(
                 lambda xs: torch.stack(
-                    [ChannelReweight(config.aug.channel_weight)(to_tensor(x)) for x in xs],
+                    [ChannelReweight(config.aug.channel_reweight)(to_tensor(x)) for x in xs],
                     0)),
         ])),
     normalize,
@@ -180,7 +154,7 @@ def update_transforms(p):
 
     assert 0. <= p <= 1.
 
-    crop_size = round(224 + (config.crop_size - 224) * p)
+    crop_size = round(config.crop_size.min + (config.crop_size.max - config.crop_size.min) * p)
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
@@ -223,13 +197,6 @@ def find_temp_global(input, target, exps):
 
 def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
-
-
-def ce(input, target):
-    axis = 1
-    loss = -(target * input.log_softmax(axis)).sum(axis)
-
-    return loss
 
 
 def l2(input, target):
@@ -312,19 +279,40 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
 
+    if optimizer_config.ewa is not None:
+        optimizer = optim.EWA(
+            optimizer,
+            optimizer_config.ewa.momentum,
+            num_steps=optimizer_config.ewa.steps)
+    else:
+        optimizer = optim.DummySwitchable(optimizer)
+
     return optimizer
 
 
 def indices_for_fold(fold, dataset):
-    fold_eval_exps = [
-        None,
-        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
-         'U2OS-01'],
-        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
-         'U2OS-02'],
-        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
-         'U2OS-03'],
-    ]
+    if config.split == 'idiom':
+        fold_eval_exps = [
+            None,
+            ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+             'U2OS-01'],
+            ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+             'U2OS-02'],
+            ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+             'U2OS-03'],
+        ]
+    elif config.split == 'stat':
+        fold_eval_exps = [
+            None,
+            ['HEPG2-04', 'HUVEC-01', 'HUVEC-03', 'HUVEC-05', 'HUVEC-07', 'HUVEC-09', 'HUVEC-12', 'HUVEC-14', 'RPE-01',
+             'RPE-04', 'RPE-07'],
+            ['HEPG2-03', 'HEPG2-05', 'HEPG2-06', 'HUVEC-04', 'HUVEC-06', 'HUVEC-08', 'HUVEC-15', 'RPE-02', 'RPE-05',
+             'U2OS-01', 'U2OS-02'],
+            ['HEPG2-01', 'HEPG2-02', 'HEPG2-07', 'HUVEC-02', 'HUVEC-10', 'HUVEC-11', 'HUVEC-13', 'HUVEC-16', 'RPE-03',
+             'RPE-06', 'U2OS-03'],
+        ]
+    else:
+        raise AssertionError('invalid split {}'.format(config.split))
 
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
@@ -332,7 +320,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
+    assert round(len(train_indices) / len(eval_indices), 1) == 2
 
     return train_indices, eval_indices
 
@@ -363,6 +351,7 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
+    optimizer.train()
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
@@ -436,9 +425,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, unsup_data_loader, fol
         labels_s = utils.one_hot(labels_s, NUM_CLASSES)
 
         with torch.no_grad():
-            # TODO: model.eval() ?
-            # model.eval()
-
             b, n, c, h, w = images_u.size()
             images_u = images_u.view(b * n, c, h, w)
             logits_u = model(images_u, None, True)
@@ -446,9 +432,6 @@ def train_epoch(model, optimizer, scheduler, data_loader, unsup_data_loader, fol
             labels_u = logits_u.softmax(2).mean(1, keepdim=True)
             labels_u = labels_u.repeat(1, n, 1).view(b * n, NUM_CLASSES)
             labels_u = dist_sharpen(labels_u, temp=SHARPEN_TEMP)
-
-            # TODO: model.train() ?
-            # model.train()
 
         assert images_s.size() == images_u.size()
         assert labels_s.size() == labels_u.size()
@@ -540,11 +523,6 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data, unsup_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    # unsup_data = pd.concat([
-    #     train_eval_data.iloc[eval_indices],
-    #     unsup_data,
-    # ])
-
     train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -622,6 +600,7 @@ def train_fold(fold, train_eval_data, unsup_data):
 
     best_score = 0
     for epoch in range(1, config.epochs + 1):
+        optimizer.train()
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -631,6 +610,7 @@ def train_fold(fold, train_eval_data, unsup_data):
             fold=fold,
             epoch=epoch)
         gc.collect()
+        optimizer.eval()
         metric = eval_epoch(
             model=model,
             data_loader=eval_data_loader,

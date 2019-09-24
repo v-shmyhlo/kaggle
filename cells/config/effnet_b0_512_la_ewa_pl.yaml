@@ -17,15 +17,17 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.3
+  lr: 0.4
   weight_decay: 1e-4
   acc_steps: 4
 
   lookahead:
     lr: 0.5
-    steps: 10
+    steps: 5
 
   ewa:
+    momentum: 0.9
+    steps: 5
 
   sgd:
     momentum: 0.9
