@@ -10,8 +10,7 @@ class Model(nn.Module):
         self.return_images = return_images
         self.return_features = return_features
 
-        self.norm = nn.Sequential(
-            nn.BatchNorm2d(6))
+        self.norm = nn.BatchNorm2d(6)
 
         if model.type.startswith('efficientnet'):
             self.model = efficientnet_pytorch.EfficientNet.from_pretrained(model.type)
