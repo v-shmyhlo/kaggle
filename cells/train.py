@@ -31,7 +31,7 @@ from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
@@ -68,9 +68,11 @@ to_tensor = ToTensor()
 if config.normalize is None:
     normalize = T.Compose([])
 elif config.normalize == 'experiment':
-    normalize = NormalizeByExperimentStats(torch.load('./experiment_stats.pth'))
+    normalize = NormalizeByExperimentStats(
+        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
 elif config.normalize == 'plate':
-    normalize = NormalizeByPlateStats(torch.load('./plate_stats.pth'))
+    normalize = NormalizeByPlateStats(
+        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalid normalization {}'.format(config.normalize))
 
@@ -215,6 +217,13 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
             weight_decay=optimizer_config.weight_decay)
+    elif optimizer_config.type == 'adam':
+        optimizer = torch.optim.Adam(
+            parameters,
+            optimizer_config.lr,
+#            momentum=optimizer_config.rmsprop.momentum,
+            weight_decay=optimizer_config.weight_decay
+        )
     elif optimizer_config.type == 'radam':
         optimizer = RAdam(
             parameters,
@@ -241,28 +250,15 @@ def build_optimizer(optimizer_config, parameters):
 
 
 def indices_for_fold(fold, dataset):
-    if config.split == 'idiom':
-        fold_eval_exps = [
-            None,
-            ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
-             'U2OS-01'],
-            ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
-             'U2OS-02'],
-            ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
-             'U2OS-03'],
-        ]
-    elif config.split == 'stat':
-        fold_eval_exps = [
-            None,
-            ['HEPG2-04', 'HUVEC-01', 'HUVEC-03', 'HUVEC-05', 'HUVEC-07', 'HUVEC-09', 'HUVEC-12', 'HUVEC-14', 'RPE-01',
-             'RPE-04', 'RPE-07'],
-            ['HEPG2-03', 'HEPG2-05', 'HEPG2-06', 'HUVEC-04', 'HUVEC-06', 'HUVEC-08', 'HUVEC-15', 'RPE-02', 'RPE-05',
-             'U2OS-01', 'U2OS-02'],
-            ['HEPG2-01', 'HEPG2-02', 'HEPG2-07', 'HUVEC-02', 'HUVEC-10', 'HUVEC-11', 'HUVEC-13', 'HUVEC-16', 'RPE-03',
-             'RPE-06', 'U2OS-03'],
-        ]
-    else:
-        raise AssertionError('invalid split {}'.format(config.split))
+    fold_eval_exps = [
+        None,
+        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+         'U2OS-01'],
+        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+         'U2OS-02'],
+        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+         'U2OS-03'],
+    ]
 
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
@@ -270,7 +266,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2
+    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
 
     return train_indices, eval_indices
 
@@ -461,7 +457,7 @@ def train_fold(fold, train_eval_data):
         worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
-    model = model.to(DEVICE)
+    model = torch.nn.DataParallel(model).to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
 

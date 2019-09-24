@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
+import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -26,20 +27,17 @@ from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resi
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
-from loss import ce
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-LABEL_SMOOTHING = 0.1
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config-path', type=str, required=True)
 parser.add_argument('--experiment-path', type=str, default='./tf_log/cells')
 parser.add_argument('--dataset-path', type=str, required=True)
 parser.add_argument('--restore-path', type=str)
-parser.add_argument('--pl-path', type=str, required=True)
 parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--infer', action='store_true')
@@ -70,9 +68,11 @@ to_tensor = ToTensor()
 if config.normalize is None:
     normalize = T.Compose([])
 elif config.normalize == 'experiment':
-    normalize = NormalizeByExperimentStats(torch.load('./experiment_stats.pth'))
+    normalize = NormalizeByExperimentStats(
+        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
 elif config.normalize == 'plate':
-    normalize = NormalizeByPlateStats(torch.load('./plate_stats.pth'))
+    normalize = NormalizeByPlateStats(
+        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
     raise AssertionError('invalid normalization {}'.format(config.normalize))
 
@@ -101,14 +101,14 @@ train_transform = T.Compose([
             ChannelReweight(config.aug.channel_reweight),
         ])),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 eval_transform = T.Compose([
     ApplyTo(
         ['image'],
         infer_image_transform),
     normalize,
-    Extract(['image', 'feat', 'exp', 'label', 'real', 'id']),
+    Extract(['image', 'feat', 'exp', 'label', 'id']),
 ])
 test_transform = T.Compose([
     ApplyTo(
@@ -170,13 +170,8 @@ def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
-def compute_loss(input, target, real):
-    real = real.unsqueeze(1)
-
-    target = utils.one_hot(target, NUM_CLASSES)
-    target = torch.where(real, target, utils.label_smoothing(target, LABEL_SMOOTHING))
-
-    loss = ce(input=input, target=target)
+def compute_loss(input, target):
+    loss = F.cross_entropy(input=input, target=target, reduction='none')
 
     return loss
 
@@ -250,12 +245,12 @@ def build_optimizer(optimizer_config, parameters):
 def indices_for_fold(fold, dataset):
     fold_eval_exps = [
         None,
-        ['HEPG2-01', 'U2OS-01', 'RPE-01', 'HUVEC-12', 'HUVEC-01', ],
-        ['HEPG2-02', 'U2OS-02', 'RPE-02', 'HUVEC-13', 'HUVEC-02', ],
-        ['HEPG2-03', 'U2OS-03', 'RPE-03', 'HUVEC-14', 'HUVEC-03', ],
-        ['HEPG2-04', 'U2OS-01', 'RPE-04', 'HUVEC-15', 'HUVEC-04', ],
-        ['HEPG2-05', 'U2OS-02', 'RPE-05', 'HUVEC-16', 'HUVEC-06', ],
-        ['HEPG2-06', 'U2OS-03', 'RPE-06', 'HUVEC-05', 'HUVEC-07', ],
+        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+         'U2OS-01'],
+        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+         'U2OS-02'],
+        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+         'U2OS-03'],
     ]
 
     indices = np.arange(len(dataset))
@@ -264,7 +259,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    # assert round(len(train_indices) / len(eval_indices), 1) == 2.3
+    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
 
     return train_indices, eval_indices
 
@@ -299,11 +294,11 @@ def lr_search(train_eval_data):
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
-        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels, real=real)
+        loss = compute_loss(input=logits, target=labels)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -356,11 +351,11 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
-    for i, (images, feats, _, labels, real, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
-        images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
+    for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
+        images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         logits = model(images, feats, labels)
 
-        loss = compute_loss(input=logits, target=labels, real=real)
+        loss = compute_loss(input=logits, target=labels)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -397,11 +392,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = []
         fold_exps = []
 
-        for images, feats, exps, labels, real, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
-            images, feats, labels, real = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE), real.to(DEVICE)
+        for images, feats, exps, labels, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+            images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
             logits = model(images, feats)
 
-            loss = compute_loss(input=logits, target=labels, real=real)
+            loss = compute_loss(input=logits, target=labels)
             metrics['loss'].update(loss.data.cpu().numpy())
 
             fold_labels.append(labels)
@@ -439,14 +434,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 def train_fold(fold, train_eval_data):
     train_indices, eval_indices = indices_for_fold(fold, train_eval_data)
 
-    test_pl_data = pd.read_csv(os.path.join(args.pl_path, 'test.csv'))
-    test_pl_data['root'] = os.path.join(args.dataset_path, 'test')
-
-    train_eval_data['real'] = True
-    test_pl_data['real'] = False
-
-    train_dataset = TrainEvalDataset(
-        pd.concat([train_eval_data.iloc[train_indices], test_pl_data]), transform=train_transform)
+    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -464,7 +452,7 @@ def train_fold(fold, train_eval_data):
     model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     if args.restore_path is not None:
-        model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(math.ceil(fold / 2)))))
+        model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
 
     optimizer = build_optimizer(config.opt, model.parameters())
 

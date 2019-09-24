@@ -47,8 +47,9 @@ def main(dataset_path, workers):
         with torch.no_grad():
             images = [images for images, in data_loader]
             images = torch.cat(images, 0)
-            mean = images.mean((0, 1, 3, 4))
-            std = images.std((0, 1, 3, 4))
+#            print(images)
+            mean = torch.mean(images, dim=(0, 1, 3, 4))
+            std = torch.std(images, dim=(0, 1, 3, 4))
             stats[exp] = mean, std
 
             del images, mean, std

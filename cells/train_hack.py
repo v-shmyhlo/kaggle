@@ -25,11 +25,10 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
+    ChannelReweight, RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from radam import RAdam
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -46,7 +45,9 @@ parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-assert config.resize_size == config.crop_size.max
+config.crop_size = 512
+#print(config.resize_size, config.crop_size)
+assert config.resize_size == config.crop_size
 
 groups = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'))
 groups = groups.groupby(['experiment', 'plate'])['sirna'].apply(sorted).apply(tuple)
@@ -79,11 +80,13 @@ to_tensor = ToTensor()
 if config.normalize is None:
     normalize = T.Compose([])
 elif config.normalize == 'experiment':
-    normalize = NormalizeByExperimentStats(torch.load('./experiment_stats.pth'))
+    normalize = NormalizeByExperimentStats(
+        torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
 elif config.normalize == 'plate':
-    normalize = NormalizeByPlateStats(torch.load('./plate_stats.pth'))
+    normalize = NormalizeByPlateStats(
+        torch.load('./plate_stats.pth'))  # TODO: needs realtime computation on private
 else:
-    raise AssertionError('invalid normalization {}'.format(config.normalize))
+    raise AssertionError('invalide normalization {}'.format(config.normalize))
 
 eval_image_transform = T.Compose([
     RandomSite(),
@@ -91,12 +94,14 @@ eval_image_transform = T.Compose([
     center_crop,
     to_tensor,
 ])
+
 test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
+
 train_transform = T.Compose([
     ApplyTo(
         ['image'],
@@ -134,7 +139,7 @@ def update_transforms(p):
 
     assert 0. <= p <= 1.
 
-    crop_size = round(config.crop_size.min + (config.crop_size.max - config.crop_size.min) * p)
+    crop_size = round(224 + (config.crop_size - 224) * p)
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset(crop_size)
     center_crop.reset(crop_size)
@@ -158,9 +163,9 @@ def find_temp_global(input, target, exps):
     temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
-        preds = torch.tensor(preds).to(input.device)
-        metric = compute_metric(input=preds, target=target, exps=exps)
+        fold_preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        fold_preds = torch.tensor(fold_preds).to(input.device)
+        metric = compute_metric(input=fold_preds, target=target)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
@@ -185,15 +190,10 @@ def compute_loss(input, target):
     return loss
 
 
-def compute_metric(input, target, exps):
-    exps = np.array(exps)
+def compute_metric(input, target):
     metric = {
         'accuracy@1': (input == target).float(),
     }
-
-    for exp in np.unique(exps):
-        mask = torch.tensor(exp == exps)
-        metric['experiment/{}/accuracy@1'.format(exp)] = (input[mask] == target[mask]).float()
 
     return metric
 
@@ -226,11 +226,6 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lr,
             momentum=optimizer_config.rmsprop.momentum,
             weight_decay=optimizer_config.weight_decay)
-    elif optimizer_config.type == 'radam':
-        optimizer = RAdam(
-            parameters,
-            optimizer_config.lr,
-            weight_decay=optimizer_config.weight_decay)
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
@@ -240,40 +235,19 @@ def build_optimizer(optimizer_config, parameters):
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
 
-    if optimizer_config.ewa is not None:
-        optimizer = optim.EWA(
-            optimizer,
-            optimizer_config.ewa.momentum,
-            num_steps=optimizer_config.ewa.steps)
-    else:
-        optimizer = optim.DummySwitchable(optimizer)
-
     return optimizer
 
 
 def indices_for_fold(fold, dataset):
-    if config.split == 'idiom':
-        fold_eval_exps = [
-            None,
-            ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
-             'U2OS-01'],
-            ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
-             'U2OS-02'],
-            ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
-             'U2OS-03'],
-        ]
-    elif config.split == 'stat':
-        fold_eval_exps = [
-            None,
-            ['HEPG2-04', 'HUVEC-01', 'HUVEC-03', 'HUVEC-05', 'HUVEC-07', 'HUVEC-09', 'HUVEC-12', 'HUVEC-14', 'RPE-01',
-             'RPE-04', 'RPE-07'],
-            ['HEPG2-03', 'HEPG2-05', 'HEPG2-06', 'HUVEC-04', 'HUVEC-06', 'HUVEC-08', 'HUVEC-15', 'RPE-02', 'RPE-05',
-             'U2OS-01', 'U2OS-02'],
-            ['HEPG2-01', 'HEPG2-02', 'HEPG2-07', 'HUVEC-02', 'HUVEC-10', 'HUVEC-11', 'HUVEC-13', 'HUVEC-16', 'RPE-03',
-             'RPE-06', 'U2OS-03'],
-        ]
-    else:
-        raise AssertionError('invalid split {}'.format(config.split))
+    fold_eval_exps = [
+        None,
+        ['HEPG2-02', 'HEPG2-05', 'HUVEC-12', 'HUVEC-09', 'HUVEC-03', 'HUVEC-07', 'HUVEC-01', 'RPE-01', 'RPE-04',
+         'U2OS-01'],
+        ['HEPG2-03', 'HEPG2-06', 'HUVEC-13', 'HUVEC-10', 'HUVEC-06', 'HUVEC-11', 'HUVEC-02', 'RPE-02', 'RPE-06',
+         'U2OS-02'],
+        ['HEPG2-04', 'HEPG2-07', 'HUVEC-16', 'HUVEC-14', 'HUVEC-08', 'HUVEC-15', 'HUVEC-04', 'RPE-03', 'RPE-07',
+         'U2OS-03'],
+    ]
 
     indices = np.arange(len(dataset))
     exp = dataset['experiment']
@@ -281,7 +255,7 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2
+    assert round(len(train_indices) / len(eval_indices), 1) == 2.3
 
     return train_indices, eval_indices
 
@@ -312,7 +286,6 @@ def lr_search(train_eval_data):
         param_group['lr'] = min_lr
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
 
-    optimizer.train()
     update_transforms(1.)
     model.train()
     optimizer.zero_grad()
@@ -433,11 +406,10 @@ def eval_epoch(model, data_loader, fold, epoch):
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
-
         temp = 1.  # use default temp
         fold_preds = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
         fold_preds = torch.tensor(fold_preds).to(fold_logits.device)
-        metric = compute_metric(input=fold_preds, target=fold_labels, exps=fold_exps)
+        metric = compute_metric(input=fold_preds, target=fold_labels)
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         for k in metric:
@@ -506,7 +478,7 @@ def train_fold(fold, train_eval_data):
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
                 mode='triangular2',
-                gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
+                # gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
                 base_momentum=0.85,
                 max_momentum=0.95))
@@ -527,7 +499,6 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(1, config.epochs + 1):
-        optimizer.train()
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -536,7 +507,6 @@ def train_fold(fold, train_eval_data):
             fold=fold,
             epoch=epoch)
         gc.collect()
-        optimizer.eval()
         metric = eval_epoch(
             model=model,
             data_loader=eval_data_loader,
@@ -657,6 +627,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
         worker_init_fn=worker_init_fn)
 
     model = Model(config.model, NUM_CLASSES)
+#    print(model)
     model = model.to(DEVICE)
     model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
 
@@ -714,11 +685,6 @@ def find_temp_for_folds(folds, train_eval_data):
         temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
         print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
         torch.save((labels, logits, exps, ids), './oof.pth')
-
-        classes = assign_classes(probs=to_prob(logits, temp).data.cpu().numpy(), exps=exps)
-        submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
-        submission.to_csv(os.path.join(args.experiment_path, 'eval.csv'), index=False)
-        submission.to_csv('./eval.csv', index=False)
 
         return temp
 

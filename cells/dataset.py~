@@ -60,10 +60,10 @@ class TestDataset(torch.utils.data.Dataset):
         cell_type = row['experiment'].split('-')[0]
 #        print(self.cell_type_to_id)
 #        print(cell_type)
-#        print(type(self.cell_type_to_id[cell_type]))
-#        print(type(row['plate']))
-#        print(torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1]))
-        feat = torch.tensor([self.cell_type_to_id[cell_type], int(row['plate']) - 1])
+        print(self.cell_type_to_id[cell_type])
+        print(row['plate'])
+        print(torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1]))
+        feat = torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1])
 
         input = {
             'image': image,

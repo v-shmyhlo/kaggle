@@ -1,10 +1,9 @@
 seed: 42
-split: idiom
 epochs: 50
 batch_size: 16
 resize_size: 512
 crop_size:
-  min: 224
+  min: 512
   max: 512
 normalize: experiment
 progressive_resize: True
@@ -17,7 +16,7 @@ aug:
 
 opt:
   type: sgd
-  lr: 0.4
+  lr: 0.45
   weight_decay: 1e-4
   acc_steps: 4
 

@@ -10,13 +10,16 @@ class Model(nn.Module):
         self.return_images = return_images
         self.return_features = return_features
 
+#        self.norm = nn.Sequential(
+#            nn.BatchNorm2d(6))
         self.norm = nn.BatchNorm2d(6)
 
         if model.type.startswith('efficientnet'):
             self.model = efficientnet_pytorch.EfficientNet.from_pretrained(model.type)
+#            print(self.model)
             # self.model._conv_stem = efficientnet_pytorch.utils.Conv2dDynamicSamePadding(
             #     6, 32, kernel_size=3, stride=2, bias=False)
-            self.model._conv_stem = nn.Conv2d(6, 32, kernel_size=3, stride=2, padding=1, bias=False)
+            self.model._conv_stem = nn.Conv2d(6, 48, kernel_size=3, stride=2, padding=1, bias=False)
             self.model._fc = nn.Linear(self.model._fc.in_features, num_classes)
         else:
             raise AssertionError('invalid model {}'.format(model))
