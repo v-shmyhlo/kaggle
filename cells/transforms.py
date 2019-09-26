@@ -1,6 +1,7 @@
 import numbers
 import random
 from collections.abc import Iterable
+from itertools import product
 
 import numpy as np
 import torch
@@ -323,7 +324,14 @@ class NormalizeByPlateStats(object):
 
 class TTA(object):
     def __call__(self, input):
-        return [input, rotate(input, 90), rotate(input, 180), rotate(input, 270)]
+        result = []
+        for fs in product([noop, hflip], [noop, vflip], [noop, transpose]):
+            i = input
+            for f in fs:
+                i = f(i)
+            result.append(i)
+
+        return result
 
 
 class Resetable(object):
@@ -360,3 +368,7 @@ def transpose(image):
 
 def rotate(image, angle, resample=False, expand=False, center=None):
     return [F.rotate(c, angle, resample, expand, center) for c in image]
+
+
+def noop(input):
+    return input

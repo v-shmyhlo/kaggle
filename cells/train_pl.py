@@ -277,7 +277,6 @@ def indices_for_fold(fold, dataset):
     train_indices = indices[~exp.isin(eval_exps)]
     eval_indices = indices[exp.isin(eval_exps)]
     assert np.intersect1d(train_indices, eval_indices).size == 0
-    assert round(len(train_indices) / len(eval_indices), 1) == 2
 
     return train_indices, eval_indices
 
@@ -454,6 +453,17 @@ def train_fold(fold, train_eval_data):
 
     test_pl_data = pd.read_csv(os.path.join(args.pl_path, 'test.csv'))
     test_pl_data['root'] = os.path.join(args.dataset_path, 'test')
+
+    # fail
+    # test_exps = [
+    #     'HUVEC-20',
+    #     'HUVEC-19',
+    #     'HUVEC-17',
+    #     'HUVEC-21',
+    #     'HUVEC-22',
+    # ]
+    # test_pl_data = test_pl_data[test_pl_data['experiment'].isin(test_exps)]
+    # fail
 
     train_eval_data['real'] = True
     test_pl_data['real'] = False

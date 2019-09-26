@@ -1,4 +1,9 @@
+# TODO: check MM mixup lambda usage
+# TODO: check PLATES non intersection refinements
+# TODO: use mixup for MM
 # TODO: leslie smith remarks
+# TODO: use assign cost to find good test samples
+# TODO: stratify by assign cost
 # TODO: resample
 # TODO: noise to grads
 # TODO: use temp after averaging

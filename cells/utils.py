@@ -40,6 +40,7 @@ def cut_mix(images_1, labels_1):
     images_2, labels_2 = images_1[perm], labels_1[perm]
 
     lam = np.random.uniform(0, 1)
+    lam = np.maximum(lam, 1 - lam)
     r_x = np.random.uniform(0, w)
     r_y = np.random.uniform(0, h)
     r_w = w * np.sqrt(1 - lam)
@@ -51,6 +52,19 @@ def cut_mix(images_1, labels_1):
 
     images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
     images = images_1
+    labels = lam * labels_1 + (1 - lam) * labels_2
+
+    return images, labels
+
+
+def mixup(images_1, labels_1):
+    b = images_1.size(0)
+    perm = np.random.permutation(b)
+    images_2, labels_2 = images_1[perm], labels_1[perm]
+
+    lam = np.random.beta(0.75, 0.75)
+    lam = np.maximum(lam, 1 - lam)
+    images = lam * images_1 + (1 - lam) * images_2
     labels = lam * labels_1 + (1 - lam) * labels_2
 
     return images, labels

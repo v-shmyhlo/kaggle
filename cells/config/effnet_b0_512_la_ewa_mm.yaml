@@ -1,5 +1,5 @@
 seed: 42
-split: stat
+split: idiom
 epochs: 50
 batch_size: 8
 resize_size: 512

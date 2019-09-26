@@ -24,8 +24,8 @@ from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
-from cells.utils import cut_mix
 from cells.utils import images_to_rgb
+from cells.utils import mixup
 from config import Config
 from loss import ce
 from lr_scheduler import OneCycleScheduler
@@ -358,7 +358,7 @@ def lr_search(train_eval_data):
     for i, (images, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         labels = utils.one_hot(labels, NUM_CLASSES)
-        images, labels = cut_mix(images, labels)
+        images, labels = mixup(images, labels)
         logits = model(images, None, True)
 
         loss = compute_loss(input=logits, target=labels)
@@ -437,7 +437,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, unsup_data_loader, fol
         assert labels_s.size() == labels_u.size()
 
         images, labels = torch.cat([images_s, images_u], 0), torch.cat([labels_s, labels_u], 0)
-        images, labels = cut_mix(images, labels)
+        images, labels = mixup(images, labels)
         assert images.size(0) == config.batch_size * 2
         logits = model(images, None, True)
 
