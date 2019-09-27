@@ -25,7 +25,7 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight, TTA
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
@@ -43,7 +43,6 @@ parser.add_argument('--workers', type=int, default=os.cpu_count())
 parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--infer', action='store_true')
 parser.add_argument('--lr-search', action='store_true')
-parser.add_argument('--tta', action='store_true')
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
@@ -86,13 +85,6 @@ elif config.normalize == 'plate':
 else:
     raise AssertionError('invalid normalization {}'.format(config.normalize))
 
-if args.tta:
-    NUM_TTA = 8
-    tta = T.Lambda(lambda xs: TTA()(xs[0]) + TTA()(xs[1]))
-else:
-    NUM_TTA = 1
-    tta = T.Compose([])
-
 eval_image_transform = T.Compose([
     RandomSite(),
     Resize(config.resize_size),
@@ -103,7 +95,6 @@ test_image_transform = T.Compose([
     Resize(config.resize_size),
     center_crop,
     SplitInSites(),
-    tta,
     T.Lambda(lambda xs: torch.stack([to_tensor(x) for x in xs], 0)),
 ])
 train_transform = T.Compose([
@@ -149,35 +140,26 @@ def update_transforms(p):
     center_crop.reset(crop_size)
 
 
-def softmax(input):
+def to_prob(input, temp):
     if input.dim() == 2:
         # (B, C)
-        input = input.softmax(1)
+        input = (input * temp).softmax(1)
     elif input.dim() == 3:
         # (B, N, C)
-        input = input.softmax(2).mean(1)
+        input = (input * temp).softmax(2).mean(1)
     else:
         raise AssertionError('invalid input shape: {}'.format(input.size()))
 
     return input
 
 
-def sharpen(prob, temp):
-    assert prob.dim() == 2
-
-    prob = prob**temp
-    prob = prob / prob.sum(1, keepdim=True)
-
-    return prob
-
-
 # TODO: use pool
-def find_temp_global(probs, target, exps):
+def find_temp_global(input, target, exps):
     temps = np.logspace(np.log(1e-4), np.log(1.), 50, base=np.e)
     metrics = []
     for temp in tqdm(temps, desc='temp search'):
-        preds = assign_classes(probs=sharpen(probs, temp).data.cpu().numpy(), exps=exps)
-        preds = torch.tensor(preds).to(probs.device)
+        preds = assign_classes(probs=to_prob(input, temp).data.cpu().numpy(), exps=exps)
+        preds = torch.tensor(preds).to(input.device)
         metric = compute_metric(input=preds, target=target, exps=exps)
         metrics.append(metric['accuracy@1'].mean().data.cpu().numpy())
 
@@ -216,24 +198,18 @@ def compute_metric(input, target, exps):
     return metric
 
 
-def assign_classes(probs, exps, return_cost=False):
+def assign_classes(probs, exps):
     # TODO: refactor numpy/torch usage
 
     exps = np.array(exps)
-    costs = {}
     classes = np.zeros(probs.shape[0], dtype=np.int64)
     for exp in np.unique(exps):
         subset = exps == exp
         preds = probs[subset]
-        cost, c, _ = lap.lapjv(1 - preds, extend_cost=True)
-
-        costs[exp] = cost
+        _, c, _ = lap.lapjv(1 - preds, extend_cost=True)
         classes[subset] = c
 
-    if return_cost:
-        return classes, costs
-    else:
-        return classes
+    return classes
 
 
 def build_optimizer(optimizer_config, parameters):
@@ -452,7 +428,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         fold_logits = torch.cat(fold_logits, 0)
 
         if epoch % 10 == 0:
-            temp, metric, fig = find_temp_global(probs=fold_logits, target=fold_labels, exps=fold_exps)
+            temp, metric, fig = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
             writer.add_scalar('temp', temp, global_step=epoch)
             writer.add_scalar('metric_final', metric, global_step=epoch)
             writer.add_figure('temps', fig, global_step=epoch)
@@ -582,22 +558,20 @@ def build_submission(folds, test_data, temp):
         probs = 0.
 
         for fold in folds:
-            fold_probs, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
+            fold_logits, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
+            fold_probs = to_prob(fold_logits, temp)
 
             probs = probs + fold_probs
             exps = fold_exps
             ids = fold_ids
 
-        assert len(probs) == len(exps) == len(ids)
-
         probs = probs / len(folds)
-        plates = test_data['plate'].values
-
-        torch.save((probs, exps, plates, ids), os.path.join(args.experiment_path, 'test.pth'))
-
-        classes = assign_classes(probs=sharpen(probs, temp).data.cpu().numpy(), exps=exps)
-        probs = refine_probs(probs, classes, exps=exps, plates=plates)
-        classes, costs = assign_classes(probs=sharpen(probs, temp).data.cpu().numpy(), exps=exps, return_cost=True)
+        probs = probs.data.cpu().numpy()
+        assert len(probs) == len(exps) == len(ids)
+        classes = assign_classes(probs=probs, exps=exps)
+        probs = refine_scores(
+            probs, classes, exps=exps, plates=test_data['plate'].values, value=0.)
+        classes = assign_classes(probs=probs, exps=exps)
 
         tmp = test_data.copy()
         tmp['sirna'] = classes
@@ -607,16 +581,12 @@ def build_submission(folds, test_data, temp):
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
         submission.to_csv('./submission.csv', index=False)
 
-        submission = pd.DataFrame({'experiment': sorted(costs), 'cost': [costs[k] for k in sorted(costs)]})
-        submission.to_csv(os.path.join(args.experiment_path, 'cost.csv'), index=False)
-        submission.to_csv('./cost.csv', index=False)
-
 
 def predict_on_test_using_fold(fold, test_data):
     test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=config.batch_size // 4,
+        batch_size=config.batch_size // 2,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -626,7 +596,7 @@ def predict_on_test_using_fold(fold, test_data):
 
     model.eval()
     with torch.no_grad():
-        fold_probs = []
+        fold_logits = []
         fold_exps = []
         fold_ids = []
 
@@ -634,25 +604,23 @@ def predict_on_test_using_fold(fold, test_data):
             images, feats = images.to(DEVICE), feats.to(DEVICE)
 
             b, n, c, h, w = images.size()
-            assert n == 2 * NUM_TTA
             images = images.view(b * n, c, h, w)
             feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
-            probs = softmax(logits)
 
-            fold_probs.append(probs)
+            fold_logits.append(logits)
             fold_exps.extend(exps)
             fold_ids.extend(ids)
 
-        fold_probs = torch.cat(fold_probs, 0)
+        fold_logits = torch.cat(fold_logits, 0)
 
-    torch.save((fold_probs, fold_exps, fold_ids), './test_{}.pth'.format(fold))
+    torch.save((fold_logits, fold_exps, fold_ids), './test_{}.pth'.format(fold))
 
-    return fold_probs, fold_exps, fold_ids
+    return fold_logits, fold_exps, fold_ids
 
 
-def refine_probs(probs, classes, exps, plates):
+def refine_scores(logits, classes, exps, plates, value):
     exps = np.array(exps)
     plates = np.array(plates)
 
@@ -672,12 +640,10 @@ def refine_probs(probs, classes, exps, plates):
             ignored = set(range(NUM_CLASSES)) - set(g)
             subset = torch.tensor(subset)
             for i in ignored:
-                probs[subset, ..., i] = 0.
+                # FIXME:
+                logits[subset, ..., i] = value
 
-    probs /= probs.sum(-1, keepdim=True)
-    assert torch.allclose(probs.sum(-1, keepdim=True), torch.ones_like(probs))
-
-    return probs
+    return logits
 
 
 def predict_on_eval_using_fold(fold, train_eval_data):
@@ -685,7 +651,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
-        batch_size=config.batch_size // 4,
+        batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
@@ -696,7 +662,7 @@ def predict_on_eval_using_fold(fold, train_eval_data):
     model.eval()
     with torch.no_grad():
         fold_labels = []
-        fold_probs = []
+        fold_logits = []
         fold_exps = []
         fold_ids = []
 
@@ -704,56 +670,51 @@ def predict_on_eval_using_fold(fold, train_eval_data):
             images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
 
             b, n, c, h, w = images.size()
-            assert n == 2 * NUM_TTA
             images = images.view(b * n, c, h, w)
             feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
             logits = model(images, feats)
             logits = logits.view(b, n, NUM_CLASSES)
-            probs = softmax(logits)
 
             fold_labels.append(labels)
-            fold_probs.append(probs)
+            fold_logits.append(logits)
             fold_exps.extend(exps)
             fold_ids.extend(ids)
 
         fold_labels = torch.cat(fold_labels, 0)
-        fold_probs = torch.cat(fold_probs, 0)
-        fold_plates = train_eval_data.iloc[eval_indices]['plate'].values
+        fold_logits = torch.cat(fold_logits, 0)
 
-        return fold_labels, fold_probs, fold_exps, fold_plates, fold_ids
+        fold_plates = train_eval_data.iloc[eval_indices]['plate'].values
+        temp, _, _ = find_temp_global(input=fold_logits, target=fold_labels, exps=fold_exps)
+        classes = assign_classes(probs=to_prob(fold_logits, temp).data.cpu().numpy(), exps=fold_exps)
+        fold_logits = refine_scores(
+            fold_logits, classes, exps=fold_exps, plates=fold_plates, value=float('-inf'))
+
+        return fold_labels, fold_logits, fold_exps, fold_ids
 
 
 def find_temp_for_folds(folds, train_eval_data):
     with torch.no_grad():
         labels = []
-        probs = []
+        logits = []
         exps = []
-        plates = []
         ids = []
 
         for fold in folds:
-            fold_labels, fold_probs, fold_exps, fold_plates, fold_ids = \
-                predict_on_eval_using_fold(fold, train_eval_data)
+            fold_labels, fold_logits, fold_exps, fold_ids = predict_on_eval_using_fold(fold, train_eval_data)
 
             labels.append(fold_labels)
-            probs.append(fold_probs)
+            logits.append(fold_logits)
             exps.extend(fold_exps)
-            plates.extend(fold_plates)
             ids.extend(fold_ids)
 
         labels = torch.cat(labels, 0)
-        probs = torch.cat(probs, 0)
+        logits = torch.cat(logits, 0)
 
-        torch.save((labels, probs, exps, plates, ids), os.path.join(args.experiment_path, 'oof.pth'))
+        temp, metric, _ = find_temp_global(input=logits, target=labels, exps=exps)
+        print('metric: {:.4f}, temp: {:.4f}'.format(metric, temp))
+        torch.save((labels, logits, exps, ids), './oof.pth')
 
-        temp, _, _ = find_temp_global(probs=probs, target=labels, exps=exps)
-        classes = assign_classes(probs=sharpen(probs, temp).data.cpu().numpy(), exps=exps)
-        probs = refine_probs(probs, classes, exps=exps, plates=plates)
-        classes = assign_classes(probs=sharpen(probs, temp).data.cpu().numpy(), exps=exps)
-
-        metric = compute_metric(input=torch.tensor(classes).to(probs.device), target=labels, exps=exps)
-        print('metric: {:.4f}, temp: {:.4f}'.format(metric['accuracy@1'].mean().data.cpu().numpy(), temp))
-
+        classes = assign_classes(probs=to_prob(logits, temp).data.cpu().numpy(), exps=exps)
         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
         submission.to_csv(os.path.join(args.experiment_path, 'eval.csv'), index=False)
         submission.to_csv('./eval.csv', index=False)

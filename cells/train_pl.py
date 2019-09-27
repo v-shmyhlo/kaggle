@@ -2,6 +2,7 @@ import argparse
 import gc
 import math
 import os
+import pickle
 import shutil
 
 import lap
@@ -453,6 +454,9 @@ def train_fold(fold, train_eval_data):
 
     test_pl_data = pd.read_csv(os.path.join(args.pl_path, 'test.csv'))
     test_pl_data['root'] = os.path.join(args.dataset_path, 'test')
+
+    pl_indices = pickle.load(open('./pl-data/ids.pkl', 'rb'))
+    test_pl_data = test_pl_data.iloc[pl_indices]
 
     # fail
     # test_exps = [
