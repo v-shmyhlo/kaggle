@@ -249,25 +249,25 @@ def eval_epoch(model, data_loader, class_names, epoch):
 
 
 def collate_cat_fn(batch):
-    class_ids, boxes, masks = zip(*batch)
+    class_ids, boxes = zip(*batch)
     image_ids = [torch.full_like(c, i) for i, c in enumerate(class_ids)]
 
     class_ids = torch.cat(class_ids, 0)
     boxes = torch.cat(boxes, 0)
-    masks = torch.cat(masks, 0)
+    # masks = torch.cat(masks, 0)
     image_ids = torch.cat(image_ids, 0)
 
-    return class_ids, boxes, masks, image_ids
+    return class_ids, boxes, image_ids
 
 
 def collate_fn(batch):
-    images, dets, maps = zip(*batch)
+    images, maps = zip(*batch)
 
     images = torch.utils.data.dataloader.default_collate(images)
-    dets = collate_cat_fn(dets)
+    # dets = collate_cat_fn(dets)
     maps = torch.utils.data.dataloader.default_collate(maps)
 
-    return images, dets, maps
+    return images, maps
 
 
 def train():
