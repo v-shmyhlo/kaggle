@@ -6,6 +6,7 @@ from torch import nn as nn
 from torch.nn import functional as F
 
 from detection.model import ConvNorm, ReLU, Backbone, FPN, HeadSubnet, FlattenDetectionMap
+from detection.utils import boxes_yxhw_to_tlbr
 
 
 class MaskHead(nn.Module):
@@ -244,3 +245,17 @@ def compute_level_ids(boxes):
 
 
 STRIDES = [2**l for l in range(8)]
+
+
+class MaskCropAndResize(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, input):
+        image, (class_ids, boxes, masks), maps = input
+
+        masks = [m.crop((l.item(), t.item(), r.item(), b.item()))
+                 for (t, l, b, r), m in zip(boxes_yxhw_to_tlbr(boxes), masks)]
+        masks = [m.resize((self.size, self.size)) for m in masks]
+
+        return image, (class_ids, boxes, masks), maps

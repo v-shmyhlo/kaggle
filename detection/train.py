@@ -194,6 +194,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
             optimizer.step()
             optimizer.zero_grad()
 
+        if i >= config.train_size:
+            break
+
         scheduler.step()
 
     with torch.no_grad():
@@ -273,7 +276,6 @@ def collate_fn(batch):
 def train():
     train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
     class_names = train_dataset.class_names
-    train_dataset = utils.RandomSubset(train_dataset, config.train_size)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,

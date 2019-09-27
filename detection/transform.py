@@ -30,20 +30,6 @@ class RandomCrop(object):
         return crop(input, (i, j), (self.size, self.size))
 
 
-class MaskCropAndResize(object):
-    def __init__(self, size):
-        self.size = size
-
-    def __call__(self, input):
-        image, (class_ids, boxes, masks), maps = input
-
-        masks = [m.crop((l.item(), t.item(), r.item(), b.item()))
-                 for (t, l, b, r), m in zip(boxes_yxhw_to_tlbr(boxes), masks)]
-        masks = [m.resize((self.size, self.size)) for m in masks]
-
-        return image, (class_ids, boxes, masks), maps
-
-
 class RandomFlipLeftRight(object):
     def __call__(self, input):
         if np.random.random() > 0.5:
