@@ -206,10 +206,10 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
             optimizer.step()
             optimizer.zero_grad()
 
+        scheduler.step()
+
         if i >= config.train_size:
             break
-
-        scheduler.step()
 
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
