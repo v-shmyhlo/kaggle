@@ -54,12 +54,12 @@ def decode_boxes(input, anchors):
     boxes = boxes[keep]
     class_ids = class_ids[keep]
     scores = scores[keep]
-   
+
     return class_ids, boxes, scores
 
 
 def encode_boxes(input, anchors, min_iou, max_iou):
-    class_ids, boxes, _ = input
+    class_ids, boxes = input
 
     if boxes.size(0) == 0:
         class_output = torch.zeros(anchors.size(0), dtype=torch.long)

@@ -24,11 +24,12 @@ import optim
 import utils
 from cells.dataset_ref import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model_ref import Model
-from cells.transforms import Extract, ApplyTo, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
+from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
+from transforms import ApplyTo
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

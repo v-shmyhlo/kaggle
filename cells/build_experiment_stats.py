@@ -10,7 +10,8 @@ import torchvision.transforms as T
 from tqdm import tqdm
 
 from cells.dataset import TestDataset
-from cells.transforms import ApplyTo, SplitInSites, Extract, ToTensor
+from cells.transforms import SplitInSites, Extract, ToTensor
+from transforms import ApplyTo
 
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))

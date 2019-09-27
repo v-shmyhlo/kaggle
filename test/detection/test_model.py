@@ -1,5 +1,7 @@
 import torch
-from detection.model import compute_level_ids, ROIAlign, STRIDES
+
+from detection.model import ROIAlign
+from detection.todo import compute_level_ids, STRIDES
 
 
 def test_copmute_level_ids():
@@ -40,5 +42,5 @@ def test_roi_align():
     expected[1, 0] = 5
     expected[0, 1] = 2
     expected[1, 1] = 0
-   
+
     assert torch.equal(actual, expected)

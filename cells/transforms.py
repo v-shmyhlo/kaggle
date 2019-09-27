@@ -12,20 +12,6 @@ from PIL import Image
 import transforms
 
 
-class ApplyTo(object):
-    def __init__(self, tos, transform):
-        self.tos = tos
-        self.transform = transform
-
-    def __call__(self, input):
-        input = {
-            **input,
-            **{to: self.transform(input[to]) for to in self.tos},
-        }
-
-        return input
-
-
 class RandomFlip(object):
     def __init__(self, p=0.5):
         self.p = p

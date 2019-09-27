@@ -5,10 +5,10 @@ image_size: 600
 train_size: 8000
 
 opt:
-  type: momentum
-  lr: 0.005
-  beta: 0.9
+  type: sgd
+  lr: 0.02
   weight_decay: 1e-4
+  acc_steps: 4
 
 sched:
   type: multistep

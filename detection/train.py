@@ -23,10 +23,9 @@ from config import Config
 from detection.anchors import build_anchors_maps
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
-from detection.transform import Resize, ToTensor, Normalize, BuildLabels, RandomCrop, RandomFlipLeftRight, \
-    denormalize
+from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
 from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
-from optim import AdamW
+from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid
 
@@ -71,15 +70,19 @@ train_transform = T.Compose([
     Resize(config.image_size),
     RandomCrop(config.image_size),
     RandomFlipLeftRight(),
-    ToTensor(),
-    Normalize(mean=MEAN, std=STD),
+    ApplyTo(['image'], T.Compose([
+        T.ToTensor(),
+        T.Normalize(mean=MEAN, std=STD),
+    ])),
     BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 eval_transform = T.Compose([
     Resize(config.image_size),
     RandomCrop(config.image_size),
-    ToTensor(),
-    Normalize(mean=MEAN, std=STD),
+    ApplyTo(['image'], T.Compose([
+        T.ToTensor(),
+        T.Normalize(mean=MEAN, std=STD),
+    ])),
     BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 
@@ -134,15 +137,13 @@ def compute_loss(input, target):
     return loss
 
 
-def build_optimizer(optimizer, parameters, lr, beta, weight_decay):
-    if optimizer == 'adam':
-        return torch.optim.Adam(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
-    elif optimizer == 'adamw':
-        return AdamW(parameters, lr, betas=(beta, 0.999), weight_decay=weight_decay)
-    elif optimizer == 'momentum':
-        return torch.optim.SGD(parameters, lr, momentum=beta, weight_decay=weight_decay, nesterov=True)
+def build_optimizer(optimizer, parameters, lr, weight_decay):
+    if optimizer == 'sgd':
+        return torch.optim.SGD(parameters, lr, momentum=0.9, weight_decay=weight_decay, nesterov=True)
+    elif optimizer == 'adam':
+        return torch.optim.Adam(parameters, lr, weight_decay=weight_decay)
     else:
-        raise AssertionError('invalid OPT {}'.format(optimizer))
+        raise AssertionError('invalid optimizer {}'.format(optimizer))
 
 
 def draw_boxes(image, detections, class_names, colors=COLORS):
@@ -178,17 +179,21 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     }
 
     model.train()
-    for images, _, maps in tqdm(data_loader, desc='epoch {} train'.format(epoch)):
+    optimizer.zero_grad()
+    for i, (images, maps) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch))):
         images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
         logits = model(images)
 
         loss = compute_loss(input=logits, target=maps)
         metrics['loss'].update(loss.data.cpu().numpy())
 
-        lr, _ = scheduler.get_lr()
-        optimizer.zero_grad()
-        loss.mean().backward()
-        optimizer.step()
+        lr = scheduler.get_lr()
+        (loss.mean() / config.opt.acc_steps).backward()
+
+        if i % config.opt.acc_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
         scheduler.step()
 
     with torch.no_grad():
@@ -217,7 +222,7 @@ def eval_epoch(model, data_loader, class_names, epoch):
 
     model.eval()
     with torch.no_grad():
-        for images, _, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
+        for images, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
             logits = model(images)
 
@@ -293,7 +298,7 @@ def train():
         model.load_state_dict(torch.load(args.restore_path))
 
     optimizer = build_optimizer(
-        config.opt.type, model.parameters(), config.opt.lr, config.opt.beta, weight_decay=config.opt.weight_decay)
+        config.opt.type, model.parameters(), config.opt.lr, weight_decay=config.opt.weight_decay)
 
     if config.sched.type == 'multistep':
         scheduler = lr_scheduler_wrapper.EpochWrapper(

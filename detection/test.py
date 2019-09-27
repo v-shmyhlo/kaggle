@@ -1,5 +1,7 @@
 import torch
-from detection.model import compute_level_ids, ROIAlign, STRIDES
+
+from detection.model import ROIAlign
+from detection.todo import compute_level_ids, STRIDES
 
 
 def test_copmute_level_ids():
