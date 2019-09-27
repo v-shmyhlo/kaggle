@@ -18,6 +18,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
+import optim
 import utils
 from config import Config
 from detection.anchors import build_anchors_maps
@@ -137,13 +138,24 @@ def compute_loss(input, target):
     return loss
 
 
-def build_optimizer(optimizer, parameters, lr, weight_decay):
-    if optimizer == 'sgd':
-        return torch.optim.SGD(parameters, lr, momentum=0.9, weight_decay=weight_decay, nesterov=True)
-    elif optimizer == 'adam':
-        return torch.optim.Adam(parameters, lr, weight_decay=weight_decay)
+def build_optimizer(optimizer_config, parameters):
+    if optimizer_config.type == 'sgd':
+        optimizer = torch.optim.SGD(
+            parameters,
+            optimizer_config.lr,
+            momentum=optimizer_config.sgd.momentum,
+            weight_decay=optimizer_config.weight_decay,
+            nesterov=True)
     else:
-        raise AssertionError('invalid optimizer {}'.format(optimizer))
+        raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
+
+    if optimizer_config.lookahead is not None:
+        optimizer = optim.LA(
+            optimizer,
+            optimizer_config.lookahead.lr,
+            num_steps=optimizer_config.lookahead.steps)
+
+    return optimizer
 
 
 def draw_boxes(image, detections, class_names, colors=COLORS):
@@ -299,8 +311,7 @@ def train():
     if args.restore_path is not None:
         model.load_state_dict(torch.load(args.restore_path))
 
-    optimizer = build_optimizer(
-        config.opt.type, model.parameters(), config.opt.lr, weight_decay=config.opt.weight_decay)
+    optimizer = build_optimizer(config.opt, model.parameters())
 
     if config.sched.type == 'multistep':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
