@@ -61,13 +61,12 @@ class BuildLabels(object):
         self.max_iou = max_iou
 
     def __call__(self, input):
-        image = input['image']
-        dets = input['class_ids'], input['boxes']
+        image, dets = input['image'], (input['class_ids'], input['boxes'])
 
         _, h, w = image.size()
         anchor_maps = build_anchors_maps((h, w), self.anchors, p2=self.p2, p7=self.p7)
         maps = encode_boxes(dets, anchor_maps, min_iou=self.min_iou, max_iou=self.max_iou)
-       
+
         return image, maps
 
 
@@ -99,6 +98,7 @@ def flip_left_right(input):
     # masks = [m.transpose(Image.FLIP_LEFT_RIGHT) for m in masks]
 
     return {
+        **input,
         'image': image,
     }
 
