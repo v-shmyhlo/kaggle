@@ -3,6 +3,7 @@ import gc
 import math
 import os
 import shutil
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,11 +21,12 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
+from loss import cross_entropy
 from loss import dice_loss
 from lr_scheduler import OneCycleScheduler
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from stal.model import Model
-from stal.transforms import RandomCrop, CenterCrop, ApplyTo, Extract
+from stal.transforms import ApplyTo, Extract
 from stal.utils import mask_to_image
 
 FOLDS = list(range(1, 5 + 1))
@@ -83,7 +85,7 @@ class RandomResize(object):
 
 
 train_transform = T.Compose([
-    RandomCrop((256, 1024)),
+    # RandomCrop((256, 1024)),
     ApplyTo(
         ['image', 'mask'],
         T.ToTensor()),
@@ -93,7 +95,7 @@ train_transform = T.Compose([
     Extract(['image', 'mask', 'id']),
 ])
 eval_transform = T.Compose([
-    CenterCrop((256, 1024)),
+    # CenterCrop((256, 1024)),
     ApplyTo(
         ['image', 'mask'],
         T.ToTensor()),
@@ -171,47 +173,53 @@ def compute_nrow(images):
     return nrow
 
 
-def focal_loss(input, target, gamma=2.):
-    axis = 1
-
-    prob = input.softmax(axis)
-    weight = (1 - prob)**gamma
-    loss = -(weight * target * input.log_softmax(axis)).sum(axis)
-
-    return loss
+def one_hot(input):
+    return utils.one_hot(input, num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
 
 
-def compute_loss(input, target):
-    target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
-    loss = focal_loss(input=input, target=target)
-    loss = loss.mean((1, 2))
-
-    return loss
-
-
-# def compute_loss(input, target):
-#     # TODO: check loss
+# def compute_loss(input, target, axis=(2, 3)):
+#     target = one_hot(target.squeeze(1))
+#     input, target = input[:, 1:], target[:, 1:]
 #
-#     input = input.softmax(1)
-#     target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+#     bce = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none').mean(axis)
+#     # focal = focal_loss(input=input, target=target).mean(axis)
+#     dice = dice_loss(input=input.sigmoid(), target=target, axis=axis)
 #
-#     # input, target = input[:, 1:], target[:, 1:]
-#
-#     loss = dice_loss(input=input, target=target, axis=(2, 3))
+#     loss = [
+#         bce,
+#         # focal,
+#         dice,
+#     ]
+#     assert all(l.size() == loss[0].size() for l in loss)
+#     loss = sum(loss) / len(loss)
 #
 #     return loss
 
+def compute_loss(input, target, axis=(2, 3)):
+    target = one_hot(target.squeeze(1))
 
-def compute_metric(input, target):
-    input = utils.one_hot(input.argmax(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
-    target = utils.one_hot(target.squeeze(1), num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
+    ce = cross_entropy(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
+    dice = dice_loss(input=input.softmax(1), target=target, axis=axis).mean(1)
 
+    loss = [
+        ce,
+        dice,
+    ]
+    assert all(l.size() == loss[0].size() for l in loss)
+    loss = sum(loss) / len(loss)
+
+    return loss
+
+
+def compute_metric(input, target, axis=(2, 3)):
+    input = one_hot(input.argmax(1))
+    target = one_hot(target.squeeze(1))
     input, target = input[:, 1:], target[:, 1:]
 
-    dice = dice_loss(input=input, target=target, axis=(2, 3), eps=0.)
-    dice = (-dice).exp()
-    dice[dice != dice] = 0.
-    # dice[(input.sum((2, 3)) == 0.) & (target.sum((2, 3)) == 0.)] = 1.
+    intersection = (input * target).sum(axis)
+    union = input.sum(axis) + target.sum(axis)
+    dice = (2. * intersection) / union
+    dice[union == 0.] = 1.
 
     metric = {
         'dice': dice
@@ -372,6 +380,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         lr = scheduler.get_lr()
         (loss.mean() / config.opt.acc_steps).backward()
 
+        # with amp.scale_loss((loss.mean() / config.opt.acc_steps), optimizer) as scaled_loss:
+        #     scaled_loss.backward()
+
         if i % config.opt.acc_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
@@ -404,10 +415,12 @@ def eval_epoch(model, data_loader, fold, epoch):
     metrics = {
         'loss': utils.Mean(),
         'dice': utils.Mean(),
+        'fps': utils.Mean(),
     }
 
     model.eval()
     with torch.no_grad():
+        t1 = time.time()
         for images, masks, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, masks = images.to(DEVICE), masks.to(DEVICE)
             logits = model(images)
@@ -418,6 +431,10 @@ def eval_epoch(model, data_loader, fold, epoch):
             metric = compute_metric(input=logits, target=masks)
             for k in metric:
                 metrics[k].update(metric[k].data.cpu().numpy())
+
+            t2 = time.time()
+            metrics['fps'].update(1 / ((t2 - t1) / images.size(0)))
+            t1 = t2
 
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
         print('[FOLD {}][EPOCH {}][EVAL] {}'.format(
@@ -463,6 +480,8 @@ def train_fold(fold, train_eval_data):
         model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
 
     optimizer = build_optimizer(config.opt, model.parameters())
+
+    # model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
 
     if config.sched.type == 'onecycle':
         scheduler = lr_scheduler_wrapper.StepWrapper(

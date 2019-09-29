@@ -26,7 +26,7 @@ from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTen
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
-from loss import ce
+from loss import cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from transforms import ApplyTo
@@ -177,7 +177,7 @@ def compute_loss(input, target, real):
     target = utils.one_hot(target, NUM_CLASSES)
     target = torch.where(real, target, utils.label_smoothing(target, LABEL_SMOOTHING))
 
-    loss = ce(input=input, target=target)
+    loss = cross_entropy(input=input, target=target)
 
     return loss
 

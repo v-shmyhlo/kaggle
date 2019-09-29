@@ -1,4 +1,5 @@
 import math
+from collections import defaultdict
 
 import torch
 
@@ -33,6 +34,8 @@ class EWA(torch.optim.Optimizer):
         self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
         self.training = False
+
+        fail
 
         for group in self.param_groups:
             group['ewa_step_counter'] = 0
@@ -90,24 +93,28 @@ class EWA(torch.optim.Optimizer):
 # TODO: https://github.com/alphadl/lookahead.pytorch/blob/master/lookahead.py
 class LA(torch.optim.Optimizer):
     def __init__(self, optimizer, lr, num_steps):
-        self.optimizer = optimizer
         self.num_steps = num_steps
+        self.optimizer = optimizer
         self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
+        self.state = defaultdict(dict)
+        self.opt_state = self.optimizer.state
 
         for group in self.param_groups:
             group['la_step_counter'] = 0
             group['la_lr'] = lr
-            group['la_params'] = []
-            for p in group['params']:
-                la_p = torch.empty_like(p.data)
-                la_p.copy_(p.data)
-                group['la_params'].append(la_p)
 
     def update_la_group(self, group):
         assert len(group['params']) == len(group['la_params'])
 
-        for p, la_p in zip(group['params'], group['la_params']):
+        for p in zip(group['params'], group['la_params']):
+            param_state = self.state[p]
+
+            if 'la_params' not in param_state:
+                param_state['la_params'] = torch.empty_like(p.data)
+                param_state['la_params'].copy_(p.data)
+
+            la_p = param_state['la_params']
             la_p.add_(group['la_lr'], p.data - la_p)
             p.data.copy_(la_p)
 

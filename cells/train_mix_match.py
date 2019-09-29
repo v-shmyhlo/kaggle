@@ -27,7 +27,7 @@ from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTen
 from cells.utils import images_to_rgb
 from cells.utils import mixup
 from config import Config
-from loss import ce
+from loss import cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from transforms import ApplyTo
@@ -215,12 +215,12 @@ def compute_loss(input, target, unsup):
         input_s, input_u = input.split(input.size(0) // 2, 0)
         target_s, target_u = target.split(target.size(0) // 2, 0)
 
-        loss_s = ce(input_s, target_s)
+        loss_s = cross_entropy(input_s, target_s)
         loss_u = l2(input_u, target_u)
 
         loss = loss_s + LAM_U * loss_u
     else:
-        loss = ce(input, target)
+        loss = cross_entropy(input, target)
 
     return loss
 

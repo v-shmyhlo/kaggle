@@ -101,6 +101,26 @@ class UpsampleMerge(nn.Module):
         return input
 
 
+# class UpsampleMerge(nn.Module):
+#     def __init__(self, in_channels, out_channels):
+#         super().__init__()
+#
+#         self.upsample = nn.Sequential(
+#             ConvTransposeNorm(in_channels, out_channels, 2, stride=2),
+#             ReLU(inplace=True))
+#
+#         self.refine = nn.Sequential(
+#             ConvNorm(out_channels, out_channels, 3),
+#             ReLU(inplace=True))
+#
+#     # TODO: check order
+#     def forward(self, bottom, left):
+#         bottom = self.upsample(bottom)
+#         input = self.refine(bottom + left)
+#
+#         return input
+
+
 class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -136,6 +156,13 @@ class Decoder(nn.Module):
         self.merge3 = UpsampleMerge(256 * k, 128 * k)
         self.merge4 = UpsampleMerge(512 * k, 256 * k)
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, fmaps):
         input = fmaps[5]
 
@@ -155,13 +182,6 @@ class Model(nn.Module):
         self.encoder = Encoder()
         self.decoder = Decoder()
         self.output = Conv(64, num_classes, 1)
-
-        for m in self.decoder.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, input):
         input = self.norm(input)

@@ -26,7 +26,7 @@ from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTen
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
 from cells.utils import images_to_rgb, cut_mix
 from config import Config
-from loss import ce
+from loss import cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from transforms import ApplyTo
@@ -174,7 +174,7 @@ def worker_init_fn(_):
 
 
 def compute_loss(input, target):
-    loss = ce(input=input, target=target)
+    loss = cross_entropy(input=input, target=target)
 
     return loss
 
