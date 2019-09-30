@@ -105,9 +105,7 @@ class LA(torch.optim.Optimizer):
             group['la_lr'] = lr
 
     def update_la_group(self, group):
-        assert len(group['params']) == len(group['la_params'])
-
-        for p in zip(group['params'], group['la_params']):
+        for p in group['params']:
             param_state = self.state[p]
 
             if 'la_params' not in param_state:

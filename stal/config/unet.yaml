@@ -6,13 +6,15 @@ model:
 
 opt:
   type: adam
-  lr: 1e-4
+  lr: 1e-3
   weight_decay: 1e-4
   acc_steps: 4
 
   lookahead:
     lr: 0.5
     steps: 5
+
+  ewa:
 
   sgd:
     momentum: 0.9
@@ -21,11 +23,11 @@ opt:
     momentum: 0.9
 
 sched:
-  type: plateau
+  type: step
 
   step:
-    decay: 0.99
-    step_size: 100
+    decay: 0.1
+    step_size: 10
 
   plateau:
     decay: 0.5

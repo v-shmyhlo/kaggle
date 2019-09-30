@@ -14,6 +14,7 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
+from apex import amp
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -365,11 +366,13 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
     metrics = {
         'loss': utils.Mean(),
+        'fps': utils.Mean(),
     }
 
     update_transforms(np.linspace(0, 1, config.epochs)[epoch - 1].item())
     model.train()
     optimizer.zero_grad()
+    t1 = time.time()
     for i, (images, masks, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, masks = images.to(DEVICE), masks.to(DEVICE)
         logits = model(images)
@@ -378,16 +381,20 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
-        (loss.mean() / config.opt.acc_steps).backward()
+        # (loss.mean() / config.opt.acc_steps).backward()
 
-        # with amp.scale_loss((loss.mean() / config.opt.acc_steps), optimizer) as scaled_loss:
-        #     scaled_loss.backward()
+        with amp.scale_loss((loss.mean() / config.opt.acc_steps), optimizer) as scaled_loss:
+            scaled_loss.backward()
 
         if i % config.opt.acc_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
         scheduler.step()
+
+        t2 = time.time()
+        metrics['fps'].update(1 / ((t2 - t1) / images.size(0)))
+        t1 = t2
 
     with torch.no_grad():
         metrics = {k: metrics[k].compute_and_reset() for k in metrics}
@@ -419,8 +426,8 @@ def eval_epoch(model, data_loader, fold, epoch):
     }
 
     model.eval()
+    t1 = time.time()
     with torch.no_grad():
-        t1 = time.time()
         for images, masks, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, masks = images.to(DEVICE), masks.to(DEVICE)
             logits = model(images)
@@ -481,7 +488,7 @@ def train_fold(fold, train_eval_data):
 
     optimizer = build_optimizer(config.opt, model.parameters())
 
-    # model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
+    model, optimizer = amp.initialize(model, optimizer, opt_level='O0')
 
     if config.sched.type == 'onecycle':
         scheduler = lr_scheduler_wrapper.StepWrapper(
@@ -493,6 +500,12 @@ def train_fold(fold, train_eval_data):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'step':
+        scheduler = lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=config.sched.step.step_size,
+                gamma=config.sched.step.decay))
     elif config.sched.type == 'cyclic':
         step_size_up = len(train_data_loader) * config.sched.cyclic.step_size_up
         step_size_down = len(train_data_loader) * config.sched.cyclic.step_size_down
@@ -504,10 +517,10 @@ def train_fold(fold, train_eval_data):
                 config.opt.lr,
                 step_size_up=step_size_up,
                 step_size_down=step_size_down,
-                mode='exp_range',
+                mode='triangular2',
                 gamma=config.sched.cyclic.decay**(1 / (step_size_up + step_size_down)),
                 cycle_momentum=True,
-                base_momentum=0.75,
+                base_momentum=0.85,
                 max_momentum=0.95))
     elif config.sched.type == 'cawr':
         scheduler = lr_scheduler_wrapper.StepWrapper(
