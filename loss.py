@@ -110,7 +110,14 @@ def iou_loss(input, target, axis=None, eps=1e-7):
     return loss
 
 
-def focal_loss(input, target, gamma=2.):
+def cross_entropy(input, target, axis=1, keepdim=False):
+    log_prob = input.log_softmax(axis)
+    loss = -(target * log_prob).sum(axis, keepdim=keepdim)
+
+    return loss
+
+
+def sigmoid_focal_loss(input, target, gamma=2.):
     prob = input.sigmoid()
     prob_true = prob * target + (1 - prob) * (1 - target)
     weight = (1 - prob_true)**gamma
@@ -121,8 +128,13 @@ def focal_loss(input, target, gamma=2.):
     return loss
 
 
-def cross_entropy(input, target, axis=1, keepdim=False):
-    log_prob = input.log_softmax(axis)
-    loss = -(target * log_prob).sum(axis, keepdim=keepdim)
+# TODO: not sure if this is correct
+def softmax_focal_loss(input, target, gamma=2., axis=1, keepdim=False):
+    prob = input.softmax(axis)
+    prob_true = (prob * target).sum(axis, keepdim=keepdim)
+    weight = (1 - prob_true)**gamma
 
+    loss = cross_entropy(input=input, target=target, axis=axis, keepdim=keepdim)
+    loss = weight * loss
+   
     return loss

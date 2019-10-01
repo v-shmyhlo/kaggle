@@ -5,7 +5,10 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
+# TODO: just upsample everything and add
 # TODO: mosaic
+# TODO: last smoothing kernel
+# TODO: dilation/erosion
 # TODO: check all losses params
 # TODO: check upsample-merge order
 # TODO: viz probs

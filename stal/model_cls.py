@@ -2,11 +2,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
-INTERPOLATION = 'bilinear'
-
 
 # TODO: init
-
 
 class ReLU(nn.ReLU):
     pass
@@ -43,7 +40,7 @@ class UpsampleMerge(nn.Module):
 
     def forward(self, bottom, left):
         bottom = self.bottom(bottom)
-        bottom = F.interpolate(bottom, scale_factor=2, mode=INTERPOLATION)
+        bottom = F.interpolate(bottom, scale_factor=2, mode='bilinear')
         input = bottom + left
         # input = self.refine(input)
 
@@ -103,37 +100,6 @@ class Decoder(nn.Module):
         return input
 
 
-# class Decoder(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#
-#         k = 1
-#
-#         self.c1 = ConvNorm(64 * k, 32, 1)
-#         self.c2 = ConvNorm(128 * k, 32, 1)
-#         self.c3 = ConvNorm(128 * k, 32, 1)
-#         self.c4 = ConvNorm(256 * k, 32, 1)
-#         self.c5 = ConvNorm(512 * k, 32, 1)
-#
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv2d):
-#                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-#             elif isinstance(m, nn.BatchNorm2d):
-#                 nn.init.constant_(m.weight, 1)
-#                 nn.init.constant_(m.bias, 0)
-#
-#     def forward(self, fmaps):
-#         input = sum([
-#             F.interpolate(self.c5(fmaps[5]), scale_factor=16, mode=INTERPOLATION),
-#             F.interpolate(self.c4(fmaps[4]), scale_factor=8, mode=INTERPOLATION),
-#             F.interpolate(self.c3(fmaps[3]), scale_factor=4, mode=INTERPOLATION),
-#             F.interpolate(self.c2(fmaps[2]), scale_factor=2, mode=INTERPOLATION),
-#             self.c1(fmaps[1]),
-#         ])
-#
-#         return input
-
-
 class Model(nn.Module):
     def __init__(self, model, num_classes):
         super().__init__()
@@ -143,11 +109,20 @@ class Model(nn.Module):
         self.decoder = Decoder()
         self.output = Conv(64, num_classes, 1)
 
+        self.pool = nn.AdaptiveMaxPool2d(1)
+        self.classifier = nn.Linear(512, num_classes)
+
     def forward(self, input):
         input = self.norm(input)
         input = self.encoder(input)
+
+        classifier = input[5]
+        classifier = self.pool(classifier)
+        classifier = classifier.view(classifier.size(0), classifier.size(1))
+        classifier = self.classifier(classifier)
+
         input = self.decoder(input)
         input = self.output(input)
-        input = F.interpolate(input, scale_factor=2, mode=INTERPOLATION)
+        input = F.interpolate(input, scale_factor=2, mode='bilinear')
 
-        return input
+        return classifier, input

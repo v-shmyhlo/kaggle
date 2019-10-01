@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
+import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
@@ -26,7 +27,7 @@ from loss import dice_loss
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
-from stal.model import Model
+from stal.model_cls import Model
 from stal.transforms import ApplyTo, Extract
 from stal.utils import mask_to_image
 
@@ -136,7 +137,7 @@ def find_temp_global(input, target, exps):
     for temp in tqdm(temps, desc='temp search'):
         fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), exps=exps)
         fold_preds = torch.tensor(fold_preds).to(input.device)
-        metric = compute_metric(input=fold_preds, target=target)
+        metric = compute_metric(mask_input=fold_preds, target=target)
         metrics.append(metric['dice'].mean().data.cpu().numpy())
 
     temp = temps[np.argmax(metrics)]
@@ -180,25 +181,27 @@ def one_hot(input):
     return utils.one_hot(input, num_classes=NUM_CLASSES).permute((0, 3, 1, 2))
 
 
-# def compute_loss(input, target, axis=(2, 3)):
-#     target = one_hot(target.squeeze(1))
-#     input, target = input[:, 1:], target[:, 1:]
-#
-#     bce = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none').mean(axis)
-#     # focal = focal_loss(input=input, target=target).mean(axis)
-#     dice = dice_loss(input=input.sigmoid(), target=target, axis=axis)
-#
-#     loss = [
-#         bce,
-#         # focal,
-#         dice,
-#     ]
-#     assert all(l.size() == loss[0].size() for l in loss)
-#     loss = sum(loss) / len(loss)
-#
-#     return loss
+def compute_loss(class_input, mask_input, target):
+    class_loss = compute_class_loss(input=class_input, target=target)
+    mask_loss = compute_mask_loss(input=mask_input, target=target)
 
-def compute_loss(input, target, axis=(2, 3)):
+    loss = class_loss + mask_loss
+
+    return loss
+
+
+def compute_class_loss(input, target, axis=(2, 3)):
+    input = input[:, 1:]
+    target = one_hot(target.squeeze(1)).sum(axis)[:, 1:]
+    target = (target > 0).float()
+
+    loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
+    loss = loss.mean(1)
+
+    return loss
+
+
+def compute_mask_loss(input, target, axis=(2, 3)):
     target = one_hot(target.squeeze(1))
 
     ce = cross_entropy(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
@@ -216,13 +219,16 @@ def compute_loss(input, target, axis=(2, 3)):
     return loss
 
 
-def compute_metric(input, target, axis=(2, 3)):
-    input = one_hot(input.argmax(1))
-    target = one_hot(target.squeeze(1))
-    input, target = input[:, 1:], target[:, 1:]
+def compute_metric(class_input, mask_input, target, axis=(2, 3)):
+    class_input = class_input[:, 1:]
+    mask_input = one_hot(mask_input.argmax(1))[:, 1:]
+    target = one_hot(target.squeeze(1))[:, 1:]
 
-    intersection = (input * target).sum(axis)
-    union = input.sum(axis) + target.sum(axis)
+    class_input = (class_input > 0.).float().view(class_input.size(0), class_input.size(1), 1, 1)
+    mask_input = mask_input * class_input
+
+    intersection = (mask_input * target).sum(axis)
+    union = mask_input.sum(axis) + target.sum(axis)
     dice = (2. * intersection) / union
     dice[union == 0.] = 1.
 
@@ -325,9 +331,9 @@ def lr_search(train_eval_data):
     optimizer.zero_grad()
     for i, (images, masks, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, masks = images.to(DEVICE), masks.to(DEVICE)
-        logits = model(images)
+        class_logits, mask_logits = model(images)
 
-        loss = compute_loss(input=logits, target=masks)
+        loss = compute_loss(class_input=class_logits, mask_input=mask_logits, target=masks)
 
         lrs.append(np.squeeze(scheduler.get_lr()))
         losses.append(loss.data.cpu().numpy().mean())
@@ -384,9 +390,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     t1 = time.time()
     for i, (images, masks, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, masks = images.to(DEVICE), masks.to(DEVICE)
-        logits = model(images)
+        class_logits, mask_logits = model(images)
 
-        loss = compute_loss(input=logits, target=masks)
+        loss = compute_loss(class_input=class_logits, mask_input=mask_logits, target=masks)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -415,7 +421,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
 
         images = images[:32]
         masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
-        preds = mask_to_image(logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+        preds = mask_to_image(mask_logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
 
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
@@ -439,12 +445,12 @@ def eval_epoch(model, data_loader, fold, epoch):
     with torch.no_grad():
         for images, masks, _ in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, masks = images.to(DEVICE), masks.to(DEVICE)
-            logits = model(images)
+            class_logits, mask_logits = model(images)
 
-            loss = compute_loss(input=logits, target=masks)
+            loss = compute_loss(class_input=class_logits, mask_input=mask_logits, target=masks)
             metrics['loss'].update(loss.data.cpu().numpy())
 
-            metric = compute_metric(input=logits, target=masks)
+            metric = compute_metric(class_input=class_logits, mask_input=mask_logits, target=masks)
             for k in metric:
                 metrics[k].update(metric[k].data.cpu().numpy())
 
@@ -460,7 +466,7 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         images = images[:32]
         masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
-        preds = mask_to_image(logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+        preds = mask_to_image(mask_logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
 
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
