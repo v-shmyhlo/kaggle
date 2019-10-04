@@ -2,6 +2,7 @@ import os
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 import torch
 from PIL import Image
 from tqdm import tqdm
@@ -13,18 +14,18 @@ NUM_CLASSES = 5
 
 class TrainEvalDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
-        self.data = build_data(data)
+        self.data = data
         self.transform = transform
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, item):
-        id, rles, root = self.data[item]
+        sample = self.data.iloc[item]
 
-        image = Image.open(os.path.join(root, id))
+        image = Image.open(os.path.join(sample['root'], sample['id']))
         mask = np.zeros((image.size[1], image.size[0]), dtype=np.int32)
-        for i, rle in enumerate(rles, 1):
+        for i, rle in enumerate(sample['rles'], 1):
             m = rle_decode(rle, image.size)
             assert m.dtype == np.bool
             assert np.all(mask[m] == 0)
@@ -35,7 +36,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         input = {
             'image': image,
             'mask': mask,
-            'id': id,
+            'id': sample['id'],
         }
 
         if self.transform is not None:
@@ -48,29 +49,18 @@ class TestDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
         self.transform = transform
-        self.plate_to_stats = torch.load('./cells/plate_stats.pth')
-        self.cell_type_to_id = {cell_type: i for i, cell_type in enumerate(['HEPG2', 'HUVEC', 'RPE', 'U2OS'])}
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, item):
-        id, rles = self.data.iloc[item]
+        sample = self.data.iloc[item]
 
-        image = []
-        for s in [1, 2]:
-            image.extend(load_image(row['root'], row['experiment'], row['plate'], row['well'], s))
-
-        ref_stats = self.plate_to_stats['{}_{}'.format(row['experiment'], row['plate'])]
-        cell_type = row['experiment'].split('-')[0]
-        feat = torch.tensor([self.cell_type_to_id[cell_type], row['plate'] - 1])
+        image = Image.open(os.path.join(sample['root'], sample['id']))
 
         input = {
             'image': image,
-            'feat': feat,
-            'exp': row['experiment'],
-            'ref_stats': ref_stats,
-            'id': row['id_code']
+            'id': sample['id'],
         }
 
         if self.transform is not None:
@@ -80,11 +70,21 @@ class TestDataset(torch.utils.data.Dataset):
 
 
 def build_data(data):
-    result = defaultdict(lambda: [[]] * 4)
+    id_root_to_sample = defaultdict(lambda: [[]] * 4)
     for _, row in tqdm(data.iterrows(), desc='building data'):
         image_id, class_id = row['ImageId_ClassId'].split('_')
-        result[(image_id, row['root'])][int(class_id) - 1] = [int(x) for x in row['EncodedPixels'].split()]
+        id_root_to_sample[(image_id, row['root'])][int(class_id) - 1] = [int(x) for x in row['EncodedPixels'].split()]
 
-    result = [(id, result[(id, root)], root) for id, root in result]
+    data = {
+        'id': [],
+        'rles': [],
+        'root': [],
+    }
+    for id, root in sorted(id_root_to_sample):
+        data['id'].append(id)
+        data['rles'].append(id_root_to_sample[(id, root)])
+        data['root'].append(root)
 
-    return result
+    data = pd.DataFrame(data)
+
+    return data

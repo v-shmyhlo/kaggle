@@ -5,10 +5,21 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
-# TODO: just upsample everything and add
+# TODO: iterative stratification
+# TODO: strat zeros separately
+# TODO: augmentations
+# TODO: mosaic
+# TODO: sampling
+# TODO: stratification
+# TODO: use class_probs to mask mask_probs
 # TODO: mosaic
 # TODO: last smoothing kernel
 # TODO: dilation/erosion
+# TODO: strat by error
+# TODO: augmentations
+# TODO: postprocess: aproximate with polygon
+# TODO: larger stride
+# TODO: normalize images (-1, 1)
 # TODO: check all losses params
 # TODO: check upsample-merge order
 # TODO: viz probs

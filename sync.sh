@@ -14,7 +14,8 @@ rsync -avhHPx "${HOST}:.kaggle/kaggle.json" ~/.kaggle/kaggle.json
 # rsync -avhHPx "${HOST}:code/kaggle/tf_log/cells/tmp-512-progres-crop-norm-la-pl-restore-2/" ./solution-tta/
 # rsync -avhHPx "${HOST}:code/kaggle/tf_log/cells/tmp-512-progres-crop-norm-la/" ./solution-nopl-tho/
 
-for path in detection cells stal imet frees mol classification segmentation test
+for path in stal cells 
 do
     rsync -avhHPx ./${path}/ ${HOST}:code/kaggle/${path}/
+    rsync -avhHPx "${HOST}:code/kaggle/${path}/*.npy" ./${path}/ 
 done

@@ -21,8 +21,8 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
-from loss import cross_entropy
 from loss import dice_loss
+from loss import sigmoid_cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
@@ -201,9 +201,11 @@ def one_hot(input):
 def compute_loss(input, target, axis=(2, 3)):
     target = one_hot(target.squeeze(1))
 
-    ce = cross_entropy(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
+    input, target = input[:, 1:], target[:, 1:]
+
+    ce = sigmoid_cross_entropy(input=input, target=target).mean(axis).mean(1)
     # focal = softmax_focal_loss(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
-    dice = dice_loss(input=input.softmax(1), target=target, axis=axis).mean(1)
+    dice = dice_loss(input=input.sigmoid(), target=target, axis=axis).mean(1)
 
     loss = [
         ce,

@@ -48,10 +48,10 @@ class UpsampleMerge(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self):
+    def __init__(self, pretrained):
         super().__init__()
 
-        self.model = torchvision.models.resnet18(pretrained=True)
+        self.model = torchvision.models.resnet18(pretrained=pretrained)
 
     def forward(self, input):
         input = self.model.conv1(input)
@@ -101,11 +101,11 @@ class Decoder(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, model, num_classes):
+    def __init__(self, model, num_classes, pretrained=True):
         super().__init__()
 
         self.norm = nn.BatchNorm2d(3)
-        self.encoder = Encoder()
+        self.encoder = Encoder(pretrained=pretrained)
         self.decoder = Decoder()
         self.output = Conv(64, num_classes, 1)
 

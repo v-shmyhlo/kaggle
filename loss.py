@@ -21,7 +21,7 @@ from lovasz_losses import lovasz_hinge
 #     return loss
 
 
-def f2_loss(input, target, eps=1e-7):
+def f2_loss(input, target, beta=1., eps=1e-7):
     input = input.sigmoid()
 
     tp = (target * input).sum(-1)
@@ -32,7 +32,7 @@ def f2_loss(input, target, eps=1e-7):
     p = tp / (tp + fp + eps)
     r = tp / (tp + fn + eps)
 
-    beta_sq = 2**2
+    beta_sq = beta**2
     f2 = (1 + beta_sq) * p * r / (beta_sq * p + r + eps)
     loss = -(f2 + eps).log()
 
@@ -110,7 +110,13 @@ def iou_loss(input, target, axis=None, eps=1e-7):
     return loss
 
 
-def cross_entropy(input, target, axis=1, keepdim=False):
+def sigmoid_cross_entropy(input, target):
+    loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
+
+    return loss
+
+
+def softmax_cross_entropy(input, target, axis=1, keepdim=False):
     log_prob = input.log_softmax(axis)
     loss = -(target * log_prob).sum(axis, keepdim=keepdim)
 
@@ -134,7 +140,7 @@ def softmax_focal_loss(input, target, gamma=2., axis=1, keepdim=False):
     prob_true = (prob * target).sum(axis, keepdim=keepdim)
     weight = (1 - prob_true)**gamma
 
-    loss = cross_entropy(input=input, target=target, axis=axis, keepdim=keepdim)
+    loss = softmax_cross_entropy(input=input, target=target, axis=axis, keepdim=keepdim)
     loss = weight * loss
-   
+
     return loss

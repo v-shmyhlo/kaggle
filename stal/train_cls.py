@@ -10,11 +10,11 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributions
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
+from sklearn.model_selection import StratifiedKFold
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -22,16 +22,14 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
-from loss import cross_entropy
-from loss import dice_loss
+from loss import dice_loss, sigmoid_focal_loss, sigmoid_cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
-from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
+from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset, build_data
 from stal.model_cls import Model
 from stal.transforms import ApplyTo, Extract
 from stal.utils import mask_to_image
-
-# torch.backends.cudnn.benchmark = True
+from stal.utils import rle_encode
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -46,88 +44,55 @@ parser.add_argument('--fold', type=int, choices=FOLDS)
 parser.add_argument('--infer', action='store_true')
 parser.add_argument('--lr-search', action='store_true')
 args = parser.parse_args()
-config = Config.from_yaml(args.config_path)
-shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+config = Config.from_json(args.config_path)
+shutil.copy(args.config_path, os.path.join(utils.mkdir(args.experiment_path), 'config.yaml'))
 
-
-# assert config.resize_size == config.crop_size
-
-
-class Resetable(object):
-    def __init__(self, build_transform):
-        self.build_transform = build_transform
-
-    def __call__(self, input):
-        return self.transform(input)
-
-    def reset(self, *args, **kwargs):
-        self.transform = self.build_transform(*args, **kwargs)
-
-
-class RandomResize(object):
-    def __init__(self, min_size, max_size):
-        self.min_size = min_size
-        self.max_size = max_size
-
-    def __call__(self, input):
-        size = round(np.random.uniform(self.min_size, self.max_size))
-        input = Resize(size)(input)
-
-        return input
-
-
-# random_resize = Resetable(RandomResize)
-# random_crop = Resetable(RandomCrop)
-# center_crop = Resetable(CenterCrop)
-# to_tensor = ToTensor()
-
-# if config.normalize:
-#     normalize = NormalizeByExperimentStats(
-#         torch.load('./experiment_stats.pth'))  # TODO: needs realtime computation on private
-# else:
-#     normalize = T.Compose([])
-
+# normalize = T.Normalize(mean=[0.5] * 3, std=[0.5] * 3)
+normalize = T.Compose([])
 
 train_transform = T.Compose([
-    # RandomCrop((256, 1024)),
     ApplyTo(
-        ['image', 'mask'],
-        T.ToTensor()),
+        ['image'],
+        T.Compose([
+            T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            T.ToTensor(),
+            normalize,
+        ])),
     ApplyTo(
         ['mask'],
-        T.Lambda(lambda x: x.long())),
+        T.Compose([
+            T.ToTensor(),
+            T.Lambda(lambda x: x.long()),
+        ])),
     Extract(['image', 'mask', 'id']),
 ])
 eval_transform = T.Compose([
-    # CenterCrop((256, 1024)),
-    ApplyTo(
-        ['image', 'mask'],
-        T.ToTensor()),
-    ApplyTo(
-        ['mask'],
-        T.Lambda(lambda x: x.long())),
-    Extract(['image', 'mask', 'id']),
-])
-test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.ToTensor()),
-    Extract(['image', 'id']),
+        T.Compose([
+            T.ToTensor(),
+            normalize,
+        ])),
+    ApplyTo(
+        ['mask'],
+        T.Compose([
+            T.ToTensor(),
+            T.Lambda(lambda x: x.long()),
+        ])),
+    Extract(['image', 'mask', 'id']),
 ])
+
+
+# test_transform = T.Compose([
+#     ApplyTo(
+#         ['image'],
+#         T.Lambda(lambda x: torch.stack([T.ToTensor()(x)], 0))),
+#     Extract(['image', 'id']),
+# ])
 
 
 def update_transforms(p):
     assert 0. <= p <= 1.
-
-    # crop_size = round(224 + (config.crop_size - 224) * p)
-    # delta = config.resize_size - crop_size
-    # resize_size = config.resize_size - delta, config.resize_size + delta
-    # assert sum(resize_size) / 2 == config.resize_size
-    # print('update transforms p: {:.2f}, resize_size: {}, crop_size: {}'.format(p, resize_size, crop_size))
-    #
-    # random_resize.reset(*resize_size)
-    # random_crop.reset(crop_size)
-    # center_crop.reset(crop_size)
 
 
 # TODO: use pool
@@ -185,6 +150,7 @@ def compute_loss(class_input, mask_input, target):
     class_loss = compute_class_loss(input=class_input, target=target)
     mask_loss = compute_mask_loss(input=mask_input, target=target)
 
+    assert class_loss.size() == mask_loss.size()
     loss = class_loss + mask_loss
 
     return loss
@@ -195,7 +161,7 @@ def compute_class_loss(input, target, axis=(2, 3)):
     target = one_hot(target.squeeze(1)).sum(axis)[:, 1:]
     target = (target > 0).float()
 
-    loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
+    loss = sigmoid_focal_loss(input=input, target=target)
     loss = loss.mean(1)
 
     return loss
@@ -204,13 +170,13 @@ def compute_class_loss(input, target, axis=(2, 3)):
 def compute_mask_loss(input, target, axis=(2, 3)):
     target = one_hot(target.squeeze(1))
 
-    ce = cross_entropy(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
-    # focal = softmax_focal_loss(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
-    dice = dice_loss(input=input.softmax(1), target=target, axis=axis).mean(1)
+    input, target = input[:, 1:], target[:, 1:]
+
+    ce = sigmoid_cross_entropy(input=input, target=target).mean(axis).mean(1)
+    dice = dice_loss(input=input.sigmoid(), target=target, axis=axis).mean(1)
 
     loss = [
         ce,
-        # focal,
         dice,
     ]
     assert all(l.size() == loss[0].size() for l in loss)
@@ -219,6 +185,24 @@ def compute_mask_loss(input, target, axis=(2, 3)):
     return loss
 
 
+def fbeta_score(input, target, beta=1., eps=1e-7):
+    input = input.sigmoid()
+
+    tp = (target * input).sum(-1)
+    # tn = ((1 - target) * (1 - input)).sum(-1)
+    fp = ((1 - target) * input).sum(-1)
+    fn = (target * (1 - input)).sum(-1)
+
+    p = tp / (tp + fp + eps)
+    r = tp / (tp + fn + eps)
+
+    beta_sq = beta**2
+    fbeta = (1 + beta_sq) * p * r / (beta_sq * p + r + eps)
+
+    return fbeta
+
+
+# TODO: use argmax after masking
 def compute_metric(class_input, mask_input, target, axis=(2, 3)):
     class_input = class_input[:, 1:]
     mask_input = one_hot(mask_input.argmax(1))[:, 1:]
@@ -233,7 +217,7 @@ def compute_metric(class_input, mask_input, target, axis=(2, 3)):
     dice[union == 0.] = 1.
 
     metric = {
-        'dice': dice
+        'dice': dice,
     }
 
     return metric
@@ -275,27 +259,34 @@ def build_optimizer(optimizer_config, parameters):
     return optimizer
 
 
-# def indices_for_fold(fold, dataset):
-#     kfold = KFold(len(FOLDS), shuffle=True, random_state=config.seed)
-#     splits = list(kfold.split(list(range(len(dataset)))))
-#     train_indices, eval_indices = splits[fold - 1]
-#     print(len(train_indices), len(eval_indices))
-#     assert len(train_indices) + len(eval_indices) == len(dataset)
-#
-#     return train_indices, eval_indices
+def indices_for_fold(fold, data):
+    areas = np.load('./stal/stats.npy')
+    buckets = np.zeros(areas.shape, dtype=np.int)
 
+    indices = np.argsort(areas)
+    indices = indices[areas[indices] > 0.]
 
-def indices_for_fold(fold, dataset):
-    ids = dataset['ImageId_ClassId'].apply(lambda x: x.split('_')[0])
+    num_buckets = len(indices) // 300
+    print('num_buckets: {}'.format(num_buckets))
+    for i in range(num_buckets):
+        chunk_size = np.ceil(len(indices) / num_buckets).astype(np.int)
+        s = indices[chunk_size * i:chunk_size * (i + 1)]
+        buckets[s] = i + 1
 
-    unique_ids = ids.unique()
-    unique_ids = unique_ids[np.random.RandomState(42).permutation(len(unique_ids))]
-    train_ids, eval_ids = unique_ids[len(unique_ids) // 5:], unique_ids[:len(unique_ids) // 5]
+    print(np.bincount(buckets))
+    for i in range(num_buckets + 1):
+        print(i, areas[buckets == i].min(), areas[buckets == i].max())
 
-    indices = np.arange(len(dataset))
-    train_indices, eval_indices = indices[ids.isin(train_ids)], indices[ids.isin(eval_ids)]
+    kfold = StratifiedKFold(len(FOLDS), shuffle=True, random_state=config.seed)
+    splits = list(kfold.split(np.zeros(len(data)), buckets))
+    train_indices, eval_indices = splits[fold - 1]
+    assert len(train_indices) + len(eval_indices) == len(data)
 
-    print(len(train_indices), len(eval_indices))
+    for i in [train_indices, eval_indices]:
+        print('mean: {:.2f}, std: {:.2f}, min: {:.2f}, max: {:.2f}'.format(
+            areas[i].mean(), areas[i].std(), areas[i].min(), areas[i].max()))
+
+    print(len(train_indices) / len(eval_indices))
 
     return train_indices, eval_indices
 
@@ -579,26 +570,66 @@ def train_fold(fold, train_eval_data):
             torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)))
 
 
+# def build_submission(folds, test_data, temp):
+#     with torch.no_grad():
+#         probs = 0.
+#
+#         for fold in folds:
+#             fold_logits, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
+#             fold_probs = (fold_logits * temp).softmax(2).mean(1)
+#
+#             probs = probs + fold_probs
+#             exps = fold_exps
+#             ids = fold_ids
+#
+#         probs = probs / len(folds)
+#         probs = probs.data.cpu().numpy()
+#         assert len(probs) == len(exps) == len(ids)
+#         classes = assign_classes(probs=probs, exps=exps)
+#
+#         submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
+#         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
+#         submission.to_csv('./submission.csv', index=False)
+
+
 def build_submission(folds, test_data, temp):
     with torch.no_grad():
-        probs = 0.
-
         for fold in folds:
-            fold_logits, fold_exps, fold_ids = predict_on_test_using_fold(fold, test_data)
-            fold_probs = (fold_logits * temp).softmax(2).mean(1)
+            fold_rles, fold_ids = predict_on_test_using_fold(fold, test_data)
 
-            probs = probs + fold_probs
-            exps = fold_exps
+            rles = fold_rles
             ids = fold_ids
 
-        probs = probs / len(folds)
-        probs = probs.data.cpu().numpy()
-        assert len(probs) == len(exps) == len(ids)
-        classes = assign_classes(probs=probs, exps=exps)
+        submission_rles = []
+        submission_ids = []
+        for rle4, id in zip(rles, ids):
+            submission_rles.extend([' '.join(map(str, rle)) for rle in rle4])
+            submission_ids.extend(['{}_{}'.format(id, n) for n in range(1, 5)])
+        assert len(submission_rles) == len(submission_ids)
 
-        submission = pd.DataFrame({'id_code': ids, 'sirna': classes})
+        submission = pd.DataFrame({'ImageId_ClassId': submission_ids, 'EncodedPixels': submission_rles})
         submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
-        submission.to_csv('./submission.csv', index=False)
+        submission.to_csv('./subs/submission.csv', index=False)
+
+        paths = [
+            ('utils.py', 'utils.py'),
+            ('config.py', 'config.py'),
+            ('stal/infer.py', 'stal/infer.py'),
+            ('stal/model.py', 'stal/model.py'),
+            ('stal/model_cls.py', 'stal/model_cls.py'),
+            ('stal/transforms.py', 'stal/transforms.py'),
+            ('stal/dataset.py', 'stal/dataset.py'),
+            ('stal/utils.py', 'stal/utils.py'),
+            (os.path.join(args.experiment_path, 'config.yaml'), 'experiment/config.yaml')
+        ]
+        for fold in folds:
+            paths.append((
+                os.path.join(args.experiment_path, 'model_{}.pth'.format(fold)),
+                'experiment/model_{}.pth'.format(fold)))
+        utils.mkdir('subs/stal')
+        utils.mkdir('subs/experiment')
+        for src, dst in paths:
+            shutil.copy(src, os.path.join('subs', dst))
 
 
 def predict_on_test_using_fold(fold, test_data):
@@ -615,28 +646,37 @@ def predict_on_test_using_fold(fold, test_data):
 
     model.eval()
     with torch.no_grad():
-        fold_logits = []
-        fold_exps = []
+        fold_rles = []
         fold_ids = []
 
-        for images, feats, exps, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
-            images, feats = images.to(DEVICE), feats.to(DEVICE)
+        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+            images = images.to(DEVICE)
 
             b, n, c, h, w = images.size()
             images = images.view(b * n, c, h, w)
-            feats = feats.view(b, 1, 2).repeat(1, n, 1).view(b * n, 2)
-            logits = model(images, feats)
-            logits = logits.view(b, n, NUM_CLASSES)
+            class_logits, mask_logits = model(images)
+            class_logits = class_logits.view(b, n, NUM_CLASSES)
+            mask_logits = mask_logits.view(b, n, NUM_CLASSES, h, w)
 
-            fold_logits.append(logits)
-            fold_exps.extend(exps)
+            n_dim, c_dim = 1, 2
+            class_probs = class_logits.sigmoid().mean(n_dim)
+            mask_probs = mask_logits.softmax(c_dim).mean(n_dim)
+
+            class_probs = class_probs[:, 1:]
+            mask_probs = one_hot(mask_probs.argmax(1))[:, 1:]
+
+            class_probs = (class_probs > 0.5).float().view(class_probs.size(0), class_probs.size(1), 1, 1)
+            mask_probs = mask_probs * class_probs
+
+            rles = [
+                [rle_encode(c) for c in mask]
+                for mask in mask_probs.data.cpu().numpy()
+            ]
+
+            fold_rles.extend(rles)
             fold_ids.extend(ids)
 
-        fold_logits = torch.cat(fold_logits, 0)
-
-    torch.save((fold_logits, fold_exps, fold_ids), './test_{}.pth'.format(fold))
-
-    return fold_logits, fold_exps, fold_ids
+    return fold_rles, fold_ids
 
 
 def predict_on_eval_using_fold(fold, train_eval_data):
@@ -706,9 +746,11 @@ def main():
 
     train_eval_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'), converters={'EncodedPixels': str})
     train_eval_data['root'] = os.path.join(args.dataset_path, 'train_images')
+    train_eval_data = build_data(train_eval_data)
 
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv'), converters={'EncodedPixels': str})
     test_data['root'] = os.path.join(args.dataset_path, 'test_images')
+    test_data = build_data(test_data)
 
     if args.lr_search:
         lr = lr_search(train_eval_data)
@@ -726,7 +768,8 @@ def main():
             train_fold(fold, train_eval_data)
 
     update_transforms(1.)  # FIXME:
-    temp = find_temp_for_folds(folds, train_eval_data)
+    # temp = find_temp_for_folds(folds, train_eval_data)
+    temp = None
     gc.collect()
     build_submission(folds, test_data, temp)
 

@@ -1,6 +1,3 @@
-from ruamel.yaml import YAML
-
-
 class Config(object):
     def __init__(self, config):
         if not isinstance(config, dict):
@@ -21,5 +18,14 @@ class Config(object):
 
     @classmethod
     def from_yaml(cls, path):
+        from ruamel.yaml import YAML
+
         with open(path) as f:
             return cls(YAML().load(f))
+
+    @classmethod
+    def from_json(cls, path):
+        import json
+
+        with open(path) as f:
+            return cls(json.load(f))
