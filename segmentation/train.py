@@ -131,7 +131,7 @@ def worker_init_fn(_):
     utils.seed_python(torch.initial_seed() % 2**32)
 
 
-from loss import iou_loss
+from losses import iou_loss
 
 
 def compute_loss(input, target):

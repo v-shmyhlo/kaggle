@@ -1,3 +1,6 @@
+import itertools
+
+import efficientnet_pytorch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
@@ -47,7 +50,9 @@ class UpsampleMerge(nn.Module):
         return input
 
 
-class Encoder(nn.Module):
+class ResNetEncoder(nn.Module):
+    sizes = [None, 64, 64, 128, 256, 512]
+
     def __init__(self, pretrained):
         super().__init__()
 
@@ -71,16 +76,64 @@ class Encoder(nn.Module):
         return [None, c1, c2, c3, c4, c5]
 
 
-class Decoder(nn.Module):
-    def __init__(self):
+class EffNetEncoder(nn.Module):
+    sizes = [None, 16, 24, 40, 112, 320]
+
+    def __init__(self, pretrained):
         super().__init__()
 
-        k = 1
+        self.model = efficientnet_pytorch.EfficientNet.from_pretrained('efficientnet-b0')
 
-        self.merge1 = UpsampleMerge(64 * k, 64)
-        self.merge2 = UpsampleMerge(128 * k, 64 * k)
-        self.merge3 = UpsampleMerge(256 * k, 128 * k)
-        self.merge4 = UpsampleMerge(512 * k, 256 * k)
+    def extract_features(self, inputs):
+        """ Returns output of the final convolution layer """
+
+        # Stem
+        x = efficientnet_pytorch.model.relu_fn(self.model._bn0(self.model._conv_stem(inputs)))
+
+        # Blocks
+        blocks = []
+        for idx, block in enumerate(self.model._blocks):
+            drop_connect_rate = self.model._global_params.drop_connect_rate
+            if drop_connect_rate:
+                drop_connect_rate *= float(idx) / len(self.model._blocks)
+            x = block(x, drop_connect_rate=drop_connect_rate)
+            blocks.append(x)
+
+        blocks = itertools.groupby(blocks, key=lambda x: x.size()[2:])
+        fmaps = [None]
+        for _, stage in blocks:
+            fmap = list(stage)[-1]
+            fmaps.append(fmap)
+        assert len(fmaps) == 6
+
+        # Head
+        # x = efficientnet_pytorch.model.relu_fn(self.model._bn1(self.model._conv_head(x)))
+
+        return fmaps
+
+    def forward(self, input):
+        """ Calls extract_features to extract features, applies final linear layer, and returns logits. """
+
+        # Convolution layers
+        input = self.extract_features(input)
+
+        # # Pooling and final linear layer
+        # input = F.adaptive_avg_pool2d(input, 1).squeeze(-1).squeeze(-1)
+        # if self._dropout:
+        #     input = F.dropout(input, p=self._dropout, training=self.training)
+        # input = self._fc(input)
+       
+        return input
+
+
+class Decoder(nn.Module):
+    def __init__(self, sizes):
+        super().__init__()
+
+        self.merge1 = UpsampleMerge(sizes[2], sizes[1])
+        self.merge2 = UpsampleMerge(sizes[3], sizes[2])
+        self.merge3 = UpsampleMerge(sizes[4], sizes[3])
+        self.merge4 = UpsampleMerge(sizes[5], sizes[4])
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -105,12 +158,17 @@ class Model(nn.Module):
         super().__init__()
 
         self.norm = nn.BatchNorm2d(3)
-        self.encoder = Encoder(pretrained=pretrained)
-        self.decoder = Decoder()
-        self.output = Conv(64, num_classes, 1)
+        if model.encoder == 'resnet':
+            self.encoder = ResNetEncoder(pretrained=pretrained)
+        elif model.encoder == 'effnet':
+            self.encoder = EffNetEncoder(pretrained=pretrained)
+        else:
+            raise AssertionError('invalid model.encoder {}'.format(model.encoder))
+        self.decoder = Decoder(self.encoder.sizes)
+        self.output = Conv(self.encoder.sizes[1], num_classes, 1)
 
         self.pool = nn.AdaptiveMaxPool2d(1)
-        self.classifier = nn.Linear(512, num_classes)
+        self.classifier = nn.Linear(self.encoder.sizes[5], num_classes)
 
     def forward(self, input):
         input = self.norm(input)

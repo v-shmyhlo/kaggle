@@ -15,18 +15,23 @@ import torchvision.transforms as T
 from tqdm import tqdm
 
 from config import Config
-from stal.dataset import NUM_CLASSES, TestDataset
+from stal.dataset import NUM_CLASSES, TestDataset, build_data
 from stal.model_cls import Model
-from stal.transforms import ApplyTo, Extract
 from stal.utils import rle_encode
+from transforms import ApplyTo, Extract
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
+normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Lambda(lambda x: torch.stack([T.ToTensor()(x)], 0))),
+        T.Lambda(lambda x: torch.stack([T.Compose([
+            T.ToTensor(),
+            normalize,
+        ])(x)], 0))),
     Extract(['image', 'id']),
 ])
 
@@ -141,6 +146,7 @@ def main(folds, experiment_path, dataset_path, workers):
         test_ids.extend(['{}_{}'.format(id, n) for n in range(1, 5)])
     test_data = pd.DataFrame({'ImageId_ClassId': test_ids, 'EncodedPixels': ['' for _ in test_ids]})
     test_data['root'] = os.path.join(dataset_path, 'test_images')
+    test_data = build_data(test_data)
 
     update_transforms(1.)  # FIXME:
     # temp = find_temp_for_folds(folds, train_eval_data)

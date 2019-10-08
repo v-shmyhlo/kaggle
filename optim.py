@@ -27,6 +27,7 @@ class DummySwitchable(torch.optim.Optimizer):
         self.training = False
 
 
+# TODO: refactor
 class EWA(torch.optim.Optimizer):
     def __init__(self, optimizer, momentum, num_steps):
         self.optimizer = optimizer
@@ -34,8 +35,6 @@ class EWA(torch.optim.Optimizer):
         self.defaults = self.optimizer.defaults
         self.param_groups = self.optimizer.param_groups
         self.training = False
-
-        fail
 
         for group in self.param_groups:
             group['ewa_step_counter'] = 0

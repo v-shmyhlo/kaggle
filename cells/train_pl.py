@@ -24,13 +24,13 @@ import utils
 from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
-    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable, ChannelReweight
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, ChannelReweight
 from cells.utils import images_to_rgb
 from config import Config
-from loss import softmax_cross_entropy
+from losses import softmax_cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
-from transforms import ApplyTo
+from transforms import ApplyTo, Resetable
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

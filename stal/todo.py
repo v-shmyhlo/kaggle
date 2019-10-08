@@ -5,33 +5,39 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
+# TODO: resnet34
+# TODO: plot crop distribution weights
+# TODO: postprocessing
+# TODO: transpose batch
+# TODO: pseudolabeling
+# TODO: crop sampling + image sampling
+# TODO: effnet + swish hack
+# TODO: kfold pseudolabeling
+# TODO: scale aug
+# TODO: dropcut
+# TODO: openinng/closing aug
+# TODO: label smoothing
+# TODO: postprocessing (dilation/erosion)
+# TODO: edges weighting/label smoothing
+# TODO: reweight loss
+# TODO: class-balanced sampler
+# TODO: mixup/cutmix
+# TODO: multi-layer class output
+
+
+# TODO: check augs from kernels
+# TODO: pseudolabeling
+# TODO: mixmatch
 # TODO: iterative stratification
 # TODO: strat zeros separately
-# TODO: augmentations
 # TODO: mosaic
-# TODO: sampling
-# TODO: stratification
-# TODO: use class_probs to mask mask_probs
-# TODO: mosaic
-# TODO: last smoothing kernel
-# TODO: dilation/erosion
 # TODO: strat by error
 # TODO: augmentations
 # TODO: postprocess: aproximate with polygon
 # TODO: larger stride
-# TODO: normalize images (-1, 1)
-# TODO: check all losses params
-# TODO: check upsample-merge order
 # TODO: viz probs
-# TODO: progressive crop
-# TODO: check if classes intersect
-# TODO: smart sampling
-# TODO: stratification
-# TODO: loss and metric only for positive classes (do not compute for BG)
 # TODO: move mask.long() to transform
 # TODO: lovasz
-# TODO: classifier
-# TODO: softmax vs sigmoid
 
 
 class SEBlock(nn.Module):

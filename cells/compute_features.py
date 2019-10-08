@@ -16,9 +16,9 @@ import utils
 from cells.dataset import NUM_CLASSES, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, Resize, ToTensor, RandomSite, SplitInSites, \
-    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, Resetable
+    RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats
 from config import Config
-from transforms import ApplyTo
+from transforms import ApplyTo, Resetable
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

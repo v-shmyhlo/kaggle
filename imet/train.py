@@ -1,29 +1,31 @@
-import numpy as np
-import shutil
+import argparse
 import gc
-import matplotlib.pyplot as plt
-import pandas as pd
 import os
-from tqdm import tqdm
+import shutil
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import torch
+import torch.distributions
 import torch.utils
 import torch.utils.data
-import torch.distributions
 import torchvision
 import torchvision.transforms as T
 from PIL import Image, ImageDraw, ImageFont
-import argparse
-from tensorboardX import SummaryWriter
 from sklearn.model_selection import KFold
+from tensorboardX import SummaryWriter
+from tqdm import tqdm
+
+import lr_scheduler_wrapper
+import utils
+from config import Config
+from losses import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
 # from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from lr_scheduler import OneCycleScheduler
-import lr_scheduler_wrapper
 from optim import AdamW
-import utils
 from transform import SquarePad, RatioPad, Cutout
 from .model import Model
-from loss import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
-from config import Config
 
 # TODO: try largest lr before diverging
 # TODO: check all plots rendered

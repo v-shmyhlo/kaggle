@@ -16,6 +16,6 @@ rsync -avhHPx "${HOST}:.kaggle/kaggle.json" ~/.kaggle/kaggle.json
 
 for path in stal cells 
 do
-    rsync -avhHPx ./${path}/ ${HOST}:code/kaggle/${path}/
     rsync -avhHPx "${HOST}:code/kaggle/${path}/*.npy" ./${path}/ 
+    rsync -avhHPx ./${path}/ ${HOST}:code/kaggle/${path}/
 done

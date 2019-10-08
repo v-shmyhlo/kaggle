@@ -21,8 +21,8 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
-from loss import dice_loss
-from loss import sigmoid_cross_entropy
+from losses import dice_loss
+from losses import sigmoid_cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
@@ -267,6 +267,14 @@ def build_optimizer(optimizer_config, parameters):
             optimizer,
             optimizer_config.lookahead.lr,
             num_steps=optimizer_config.lookahead.steps)
+
+    if optimizer_config.ewa is not None:
+        optimizer = optim.EWA(
+            optimizer,
+            optimizer_config.ewa.momentum,
+            num_steps=optimizer_config.ewa.steps)
+    else:
+        optimizer = optim.DummySwitchable(optimizer)
 
     return optimizer
 
@@ -550,6 +558,7 @@ def train_fold(fold, train_eval_data):
 
     best_score = 0
     for epoch in range(1, config.epochs + 1):
+        optimizer.train()
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -558,6 +567,7 @@ def train_fold(fold, train_eval_data):
             fold=fold,
             epoch=epoch)
         gc.collect()
+        optimizer.eval()
         metric = eval_epoch(
             model=model,
             data_loader=eval_data_loader,

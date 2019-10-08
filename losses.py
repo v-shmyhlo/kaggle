@@ -128,19 +128,34 @@ def sigmoid_focal_loss(input, target, gamma=2.):
     prob_true = prob * target + (1 - prob) * (1 - target)
     weight = (1 - prob_true)**gamma
 
-    loss = F.binary_cross_entropy_with_logits(input=input, target=target, reduction='none')
+    loss = sigmoid_cross_entropy(input=input, target=target)
     loss = weight * loss
 
     return loss
 
 
-# TODO: not sure if this is correct
 def softmax_focal_loss(input, target, gamma=2., axis=1, keepdim=False):
     prob = input.softmax(axis)
-    prob_true = (prob * target).sum(axis, keepdim=keepdim)
-    weight = (1 - prob_true)**gamma
+    weight = (1 - prob)**gamma
 
-    loss = softmax_cross_entropy(input=input, target=target, axis=axis, keepdim=keepdim)
-    loss = weight * loss
+    log_prob = input.log_softmax(axis)
+    loss = -(weight * target * log_prob).sum(axis, keepdim=keepdim)
 
     return loss
+
+
+def fbeta_score(input, target, beta=1., eps=1e-7):
+    input = input.sigmoid()
+
+    tp = (target * input).sum(-1)
+    # tn = ((1 - target) * (1 - input)).sum(-1)
+    fp = ((1 - target) * input).sum(-1)
+    fn = (target * (1 - input)).sum(-1)
+
+    p = tp / (tp + fp + eps)
+    r = tp / (tp + fn + eps)
+
+    beta_sq = beta**2
+    fbeta = (1 + beta_sq) * p * r / (beta_sq * p + r + eps)
+
+    return fbeta

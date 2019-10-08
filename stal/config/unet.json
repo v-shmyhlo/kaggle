@@ -2,7 +2,19 @@
     "seed": 42,
     "epochs": 30,
     "batch_size": 32,
-    "model": null,
+    "model": {
+        "encoder": "resnet"
+    },
+    "aug": {
+        "color_jitter": 0.5,
+        "crop": {
+            "type": "sampled",
+            "size": {
+                "min": 256,
+                "max": 1536
+            }
+        }
+    },
     "opt": {
         "type": "adam",
         "lr": 1e-3,

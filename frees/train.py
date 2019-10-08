@@ -1,30 +1,31 @@
-import shutil
-import numpy as np
-from config import Config
+import argparse
 import gc
-import matplotlib.pyplot as plt
-import pandas as pd
 import os
-from tqdm import tqdm
+import shutil
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import torch
 import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-import argparse
-from tensorboardX import SummaryWriter
-from sklearn.model_selection import KFold
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
-from lr_scheduler import OneCycleScheduler
+from tensorboardX import SummaryWriter
+from tqdm import tqdm
+
 import lr_scheduler_wrapper
-from optim import AdamW
 import utils
-from .model import Model
-from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
-from .utils import collate_fn
-from loss import lsep_loss
-from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, Cutout, AudioEffect, TTA
+from config import Config
 from frees.metric import calculate_per_class_lwlrap
+from frees.transform import ToTensor, LoadSignal, RandomCrop, RandomSplitConcat, AudioEffect, TTA
+from losses import lsep_loss
+from lr_scheduler import OneCycleScheduler
+from optim import AdamW
+from .dataset import NUM_CLASSES, ID_TO_CLASS, TrainEvalDataset, TestDataset, load_train_eval_data, load_test_data
+from .model import Model
+from .utils import collate_fn
 
 
 # TODO: resnext
