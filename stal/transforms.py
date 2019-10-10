@@ -1,10 +1,9 @@
 import numbers
 import random
 
+import cv2
 import numpy as np
 import torchvision.transforms.functional as F
-
-import transforms
 
 
 class RandomHorizontalFlip(object):
@@ -17,9 +16,6 @@ class RandomHorizontalFlip(object):
 
         return input
 
-    def __repr__(self):
-        return self.__class__.__name__ + '(p={})'.format(self.p)
-
 
 class RandomVerticalFlip(object):
     def __init__(self, p=0.5):
@@ -31,9 +27,6 @@ class RandomVerticalFlip(object):
 
         return input
 
-    def __repr__(self):
-        return self.__class__.__name__ + '(p={})'.format(self.p)
-
 
 class RandomTranspose(object):
     def __init__(self, p=0.5):
@@ -44,9 +37,6 @@ class RandomTranspose(object):
             return transpose(input)
 
         return input
-
-    def __repr__(self):
-        return self.__class__.__name__ + '(p={})'.format(self.p)
 
 
 class RandomCrop(object):
@@ -62,7 +52,7 @@ class RandomCrop(object):
 
     @staticmethod
     def get_params(image, output_size):
-        w, h = image.size
+        h, w, _ = image.shape
         th, tw = output_size
         if w == tw and h == th:
             return 0, 0, h, w
@@ -81,9 +71,6 @@ class RandomCrop(object):
         i, j, h, w = self.get_params(input['image'], self.size)
 
         return crop(input, i, j, h, w)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '(size={0}, padding={1})'.format(self.size, self.padding)
 
     def preprocess(self, image):
         if self.padding is not None:
@@ -112,13 +99,13 @@ class SampledRandomCrop(object):
 
     @staticmethod
     def get_params(image, mask, output_size):
-        w, h = image.size
+        h, w, _ = image.shape
         th, tw = output_size
         if w == tw and h == th:
             return 0, 0, h, w
 
         # TODO: no log
-        m = (np.array(mask) != 0).sum(0)
+        m = mask.sum((0, 2))
         # m = np.log(np.e + m)
         m = m + 1
 
@@ -140,9 +127,6 @@ class SampledRandomCrop(object):
         i, j, h, w = self.get_params(input['image'], input['mask'], self.size)
 
         return crop(input, i, j, h, w)
-
-    def __repr__(self):
-        return self.__class__.__name__ + '(size={0}, padding={1})'.format(self.size, self.padding)
 
     def preprocess(self, image):
         if self.padding is not None:
@@ -175,37 +159,35 @@ class CenterCrop(object):
             'mask': mask,
         }
 
-    def __repr__(self):
-        return self.__class__.__name__ + '(size={0})'.format(self.size)
-
 
 def hflip(input):
     return {
         **input,
-        'image': F.hflip(input['image']),
-        'mask': F.hflip(input['mask']),
+        'image': cv2.flip(input['image'], 1),
+        'mask': cv2.flip(input['mask'], 1),
     }
 
 
 def vflip(input):
     return {
         **input,
-        'image': F.vflip(input['image']),
-        'mask': F.vflip(input['mask']),
+        'image': cv2.flip(input['image'], 0),
+        'mask': cv2.flip(input['mask'], 0),
     }
 
 
 def transpose(input):
     return {
         **input,
-        'image': transforms.transpose(input['image']),
-        'mask': transforms.transpose(input['mask']),
+        'image': cv2.transpose(input['image']),
+        'mask': cv2.transpose(input['mask']),
     }
 
 
+# TODO: check
 def crop(input, i, j, h, w):
     return {
         **input,
-        'image': F.crop(input['image'], i, j, h, w),
-        'mask': F.crop(input['mask'], i, j, h, w),
+        'image': input['image'][i:i + h, j:j + w],
+        'mask': input['mask'][i:i + h, j:j + w],
     }

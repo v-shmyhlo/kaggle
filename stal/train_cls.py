@@ -64,10 +64,10 @@ train_transform = T.Compose([
     ApplyTo(
         ['image'],
         T.Compose([
-            T.ColorJitter(
-                brightness=config.aug.color_jitter,
-                contrast=config.aug.color_jitter,
-                saturation=config.aug.color_jitter),
+            # T.ColorJitter(
+            #     brightness=config.aug.color_jitter,
+            #     contrast=config.aug.color_jitter,
+            #     saturation=config.aug.color_jitter),
             T.ToTensor(),
             normalize,
         ])),
@@ -75,7 +75,6 @@ train_transform = T.Compose([
         ['mask'],
         T.Compose([
             T.ToTensor(),
-            T.Lambda(lambda x: x.long()),
         ])),
     Extract(['image', 'mask', 'id']),
 ])
@@ -90,7 +89,6 @@ eval_transform = T.Compose([
         ['mask'],
         T.Compose([
             T.ToTensor(),
-            T.Lambda(lambda x: x.long()),
         ])),
     Extract(['image', 'mask', 'id']),
 ])
@@ -169,15 +167,15 @@ def compute_loss(class_input, mask_input, target):
     class_loss = compute_class_loss(input=class_input, target=target)
     mask_loss = compute_mask_loss(input=mask_input, target=target)
 
-    assert class_loss.size() == mask_loss.size()
-    loss = class_loss + mask_loss
+    # assert class_loss.size() == mask_loss.size()
+    loss = class_loss.mean() + mask_loss.mean()
 
     return loss
 
 
 def compute_class_loss(input, target, axis=(2, 3)):
     input = input[:, 1:]
-    target = one_hot(target.squeeze(1)).sum(axis)[:, 1:]
+    target = target.sum(axis)[:, 1:]
     target = (target > 0.).float()
 
     loss = sigmoid_focal_loss(input=input, target=target)
@@ -187,8 +185,6 @@ def compute_class_loss(input, target, axis=(2, 3)):
 
 
 def compute_mask_loss(input, target, axis=(2, 3)):
-    target = one_hot(target.squeeze(1))
-
     focal = softmax_focal_loss(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
     dice = dice_loss(input=input.softmax(1), target=target, axis=axis).mean(1)
 
@@ -199,6 +195,10 @@ def compute_mask_loss(input, target, axis=(2, 3)):
     assert all(l.size() == loss[0].size() for l in loss)
     loss = sum(loss) / len(loss)
 
+    mask = target[:, 1:].sum(axis).sum(1) > 0.
+    assert mask.shape == loss.shape
+    loss = loss[mask]
+
     return loss
 
 
@@ -207,7 +207,7 @@ def compute_mask_loss(input, target, axis=(2, 3)):
 def compute_metric(class_input, mask_input, target, axis=(2, 3)):
     class_input = class_input[:, 1:]
     mask_input = one_hot(mask_input.argmax(1))[:, 1:]
-    target = one_hot(target.squeeze(1))[:, 1:]
+    target = target[:, 1:]
 
     class_input = (class_input > 0.).float().view(class_input.size(0), class_input.size(1), 1, 1)
     mask_input = mask_input * class_input
@@ -425,8 +425,12 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         writer.add_scalar('learning_rate', lr, global_step=epoch)
 
         images = images[:32]
-        masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
-        preds = mask_to_image(mask_logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+        masks = masks[:32]
+        mask_logits = mask_logits[:32]
+
+        masks = mask_to_image(masks, num_classes=NUM_CLASSES)
+        preds = mask_to_image(one_hot(mask_logits.argmax(1)), num_classes=NUM_CLASSES)
+        probs = mask_to_image(mask_logits.softmax(1), num_classes=NUM_CLASSES)
 
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
@@ -434,6 +438,8 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
             masks, nrow=compute_nrow(masks), normalize=True), global_step=epoch)
         writer.add_image('preds', torchvision.utils.make_grid(
             preds, nrow=compute_nrow(preds), normalize=True), global_step=epoch)
+        writer.add_image('probs', torchvision.utils.make_grid(
+            probs, nrow=compute_nrow(probs), normalize=True), global_step=epoch)
 
 
 def eval_epoch(model, data_loader, fold, epoch):

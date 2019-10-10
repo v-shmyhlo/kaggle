@@ -24,15 +24,17 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         sample = self.data.iloc[item]
 
         image = Image.open(os.path.join(sample['root'], sample['id']))
-        assert image.size == (1600, 256)
-        mask = np.zeros((image.size[1], image.size[0]), dtype=np.int32)
+        image = np.array(image)
+
+        mask = np.zeros(image.shape[:2], dtype=np.int32)
         for i, rle in enumerate(sample['rles'], 1):
-            m = rle_decode(rle, image.size)
+            m = rle_decode(rle, image.shape[:2])
             assert m.dtype == np.bool
             assert np.all(mask[m] == 0)
             mask[m] = i
-        mask = Image.fromarray(mask)
-        assert image.size == mask.size
+        mask = np.eye(NUM_CLASSES, dtype=np.float32)[mask]
+
+        assert image.shape[:2] == mask.shape[:2] == (256, 1600)
 
         input = {
             'image': image,

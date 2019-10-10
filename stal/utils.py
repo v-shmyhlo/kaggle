@@ -26,7 +26,7 @@ def rle_decode(rle, size):
     for lo, hi in zip(starts, ends):
         image[lo:hi] = 1
 
-    return image.reshape(size).T
+    return image.reshape((size[1], size[0])).T
 
 
 def mask_to_image(mask, num_classes):
@@ -34,7 +34,10 @@ def mask_to_image(mask, num_classes):
     colors[0] = 0.
     colors = torch.tensor(colors, dtype=torch.float).to(mask.device)
 
-    image = colors[mask.squeeze(1)]
-    image = image.permute(0, 3, 1, 2)
+    mask = mask.unsqueeze(2)
+    colors = colors.view(1, *colors.size(), 1, 1)
+
+    image = mask * colors
+    image = image.sum(1)
 
     return image

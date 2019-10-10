@@ -5,10 +5,9 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
-# TODO: resnet34
+# TODO: albu color augmentations
 # TODO: plot crop distribution weights
 # TODO: postprocessing
-# TODO: transpose batch
 # TODO: pseudolabeling
 # TODO: crop sampling + image sampling
 # TODO: effnet + swish hack
@@ -16,20 +15,15 @@ from stal.model import Conv, ConvNorm, ReLU
 # TODO: scale aug
 # TODO: dropcut
 # TODO: openinng/closing aug
-# TODO: label smoothing
 # TODO: postprocessing (dilation/erosion)
 # TODO: edges weighting/label smoothing
 # TODO: reweight loss
-# TODO: class-balanced sampler
 # TODO: mixup/cutmix
-# TODO: multi-layer class output
 
 
 # TODO: check augs from kernels
 # TODO: pseudolabeling
 # TODO: mixmatch
-# TODO: iterative stratification
-# TODO: strat zeros separately
 # TODO: mosaic
 # TODO: strat by error
 # TODO: augmentations

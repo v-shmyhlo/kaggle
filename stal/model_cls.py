@@ -122,7 +122,7 @@ class EffNetEncoder(nn.Module):
         # if self._dropout:
         #     input = F.dropout(input, p=self._dropout, training=self.training)
         # input = self._fc(input)
-       
+
         return input
 
 
