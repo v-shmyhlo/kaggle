@@ -1,6 +1,6 @@
 import itertools
 
-import efficientnet_pytorch
+# import efficientnet_pytorch
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

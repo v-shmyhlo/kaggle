@@ -93,7 +93,7 @@ def predict_on_test_using_fold(folds, test_data, experiment_path, config, worker
 
     models = []
     for fold in folds:
-        model = Model(config.model, NUM_CLASSES)
+        model = Model(config.model, NUM_CLASSES, pretrained=False)
         model = model.to(DEVICE)
         model.load_state_dict(torch.load(os.path.join(experiment_path, 'model_{}.pth'.format(fold))))
         models.append(model)

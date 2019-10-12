@@ -27,13 +27,16 @@ class TrainEvalDataset(torch.utils.data.Dataset):
         image = np.array(image)
         image = (image / 255).astype(np.float32)
 
-        mask = np.zeros(image.shape[:2], dtype=np.int32)
-        for i, rle in enumerate(sample['rles'], 1):
-            m = rle_decode(rle, image.shape[:2])
-            assert m.dtype == np.bool
-            assert np.all(mask[m] == 0)
-            mask[m] = i
-        mask = np.eye(NUM_CLASSES, dtype=np.float32)[mask]
+        if sample['rles'] is None:
+            mask = np.load('./pl/{}.npy'.format(sample['id']))
+        else:
+            mask = np.zeros(image.shape[:2], dtype=np.int32)
+            for i, rle in enumerate(sample['rles'], 1):
+                m = rle_decode(rle, image.shape[:2])
+                assert m.dtype == np.bool
+                assert np.all(mask[m] == 0)
+                mask[m] = i
+            mask = np.eye(NUM_CLASSES, dtype=np.float32)[mask]
 
         assert np.allclose(mask.sum(2), np.ones(mask.shape[:2]))
         assert image.shape[:2] == mask.shape[:2] == (256, 1600)

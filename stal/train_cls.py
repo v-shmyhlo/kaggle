@@ -491,12 +491,20 @@ def eval_epoch(model, data_loader, fold, epoch):
         return metrics
 
 
-def train_fold(fold, train_eval_data):
-    train_indices, eval_indices, weights = indices_for_fold(fold, train_eval_data)  # FIXME: dataset size
+def train_fold(fold, train_eval_data, tmp):
+    train_indices, eval_indices, _ = indices_for_fold(fold, train_eval_data)  # FIXME: dataset size
 
-    train_dataset = TrainEvalDataset(train_eval_data.iloc[train_indices], transform=train_transform)
-    weights = weights[train_indices]
-    assert len(train_dataset) == len(weights)
+    train_data = train_eval_data.iloc[train_indices]
+    eval_data = train_eval_data.iloc[eval_indices]
+
+    train_data = pd.concat([
+        train_data,
+        tmp,
+    ])
+
+    train_dataset = TrainEvalDataset(train_data, transform=train_transform)
+    # weights = weights[train_indices]
+    # assert len(train_dataset) == len(weights)
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
@@ -505,14 +513,14 @@ def train_fold(fold, train_eval_data):
         shuffle=True,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
-    eval_dataset = TrainEvalDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
+    eval_dataset = TrainEvalDataset(eval_data, transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = Model(config.model, NUM_CLASSES)
+    model = Model(config.model, NUM_CLASSES, pretrained=False)
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
@@ -622,7 +630,7 @@ def train_fold(fold, train_eval_data):
 def build_submission(folds, test_data, temp):
     with torch.no_grad():
         rles, ids = predict_on_test_using_fold(folds, test_data)
-       
+
         paths = [
             ('utils.py', 'utils.py'),
             ('transforms.py', 'transforms.py'),
@@ -782,6 +790,7 @@ def main():
     tmp = pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv'), converters={'EncodedPixels': str})
     tmp['root'] = os.path.join(args.dataset_path, 'test_images')
     tmp = build_data(tmp)
+    tmp['rles'] = None
 
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv'), converters={'EncodedPixels': str})
     test_data['root'] = os.path.join(args.dataset_path, 'test_images')
@@ -800,7 +809,7 @@ def main():
 
     if not args.infer:
         for fold in folds:
-            train_fold(fold, train_eval_data)
+            train_fold(fold, train_eval_data, tmp)
 
     update_transforms(1.)  # FIXME:
     # temp = find_temp_for_folds(folds, train_eval_data)
