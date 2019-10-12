@@ -32,8 +32,8 @@ def rle_decode(rle, size):
 def mask_to_image(mask, num_classes):
     colors = np.random.RandomState(42).uniform(0.5, 1., size=(num_classes, 3))
     colors[0] = 0.
-    colors = torch.tensor(colors, dtype=torch.float).to(mask.device)
-
+    colors = torch.tensor(colors, dtype=mask.dtype, device=mask.device)
+   
     mask = mask.unsqueeze(2)
     colors = colors.view(1, *colors.size(), 1, 1)
 

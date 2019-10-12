@@ -5,33 +5,35 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
+# TODO: bi-tempered loss
+# TODO: mobilenet
+# TODO: sched/opt order
+# TODO: tta
+# TODO: ranger (one more time)
 # TODO: albu color augmentations
 # TODO: plot crop distribution weights
 # TODO: postprocessing
 # TODO: pseudolabeling
-# TODO: crop sampling + image sampling
+# TODO: crop sample, no +1 prob
 # TODO: effnet + swish hack
 # TODO: kfold pseudolabeling
 # TODO: scale aug
-# TODO: dropcut
 # TODO: openinng/closing aug
 # TODO: postprocessing (dilation/erosion)
 # TODO: edges weighting/label smoothing
 # TODO: reweight loss
 # TODO: mixup/cutmix
-
-
-# TODO: check augs from kernels
-# TODO: pseudolabeling
+# TODO: cutout
 # TODO: mixmatch
 # TODO: mosaic
 # TODO: strat by error
 # TODO: augmentations
 # TODO: postprocess: aproximate with polygon
 # TODO: larger stride
-# TODO: viz probs
-# TODO: move mask.long() to transform
-# TODO: lovasz
+# TODO: lovasz loss
+# TODO: tversky loss
+# TODO: lsep loss
+# TODO: other losses
 
 
 class SEBlock(nn.Module):

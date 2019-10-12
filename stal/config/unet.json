@@ -6,7 +6,9 @@
         "encoder": "resnet"
     },
     "aug": {
-        "color_jitter": 0.5,
+        "brightness": 0.1,
+        "contrast": 0.1,
+        "gamma": 0.1,
         "crop": {
             "type": "sampled",
             "size": {

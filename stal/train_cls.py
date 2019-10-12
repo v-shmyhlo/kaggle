@@ -22,15 +22,15 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
-from losses import sigmoid_focal_loss, dice_loss, softmax_focal_loss
+from losses import sigmoid_focal_loss, dice_loss, softmax_focal_loss, softmax_cross_entropy
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from stal.compute_image_stats import compute_buckets
 from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset, build_data
-from stal.model_cls import Model
+from stal.model_cls import Model, Ensemble
 from stal.transforms import RandomHorizontalFlip, RandomVerticalFlip, SampledRandomCrop, RandomCrop
 from stal.utils import mask_to_image, rle_encode
-from transforms import ApplyTo, Extract, Resetable
+from transforms import ApplyTo, Extract, Resetable, RandomGamma, RandomBrightness, RandomContrast
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -64,10 +64,9 @@ train_transform = T.Compose([
     ApplyTo(
         ['image'],
         T.Compose([
-            # T.ColorJitter(
-            #     brightness=config.aug.color_jitter,
-            #     contrast=config.aug.color_jitter,
-            #     saturation=config.aug.color_jitter),
+            RandomBrightness(config.aug.brightness),
+            RandomContrast(config.aug.contrast),
+            RandomGamma(config.aug.gamma),
             T.ToTensor(),
             normalize,
         ])),
@@ -92,14 +91,16 @@ eval_transform = T.Compose([
         ])),
     Extract(['image', 'mask', 'id']),
 ])
-
-
-# test_transform = T.Compose([
-#     ApplyTo(
-#         ['image'],
-#         T.Lambda(lambda x: torch.stack([T.ToTensor()(x)], 0))),
-#     Extract(['image', 'id']),
-# ])
+test_transform = T.Compose([
+    ApplyTo(
+        ['image'],
+        T.Compose([
+            T.ToTensor(),
+            normalize,
+            T.Lambda(lambda x: torch.stack([x], 0))
+        ])),
+    Extract(['image', 'id']),
+])
 
 
 def update_transforms(p):
@@ -425,12 +426,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
         writer.add_scalar('learning_rate', lr, global_step=epoch)
 
         images = images[:32]
-        masks = masks[:32]
-        mask_logits = mask_logits[:32]
-
-        masks = mask_to_image(masks, num_classes=NUM_CLASSES)
-        preds = mask_to_image(one_hot(mask_logits.argmax(1)), num_classes=NUM_CLASSES)
-        probs = mask_to_image(mask_logits.softmax(1), num_classes=NUM_CLASSES)
+        masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
+        preds = mask_to_image(one_hot(mask_logits[:32].argmax(1)), num_classes=NUM_CLASSES)
+        probs = mask_to_image(mask_logits[:32].softmax(1), num_classes=NUM_CLASSES)
 
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
@@ -449,6 +447,7 @@ def eval_epoch(model, data_loader, fold, epoch):
         'loss': utils.Mean(),
         'dice': utils.Mean(),
         'fps': utils.Mean(),
+        'entropy': utils.Mean(),
     }
 
     model.eval()
@@ -464,6 +463,9 @@ def eval_epoch(model, data_loader, fold, epoch):
             metric = compute_metric(class_input=class_logits, mask_input=mask_logits, target=masks)
             for k in metric:
                 metrics[k].update(metric[k].data.cpu().numpy())
+
+            ent = softmax_cross_entropy(input=mask_logits, target=mask_logits.softmax(1), axis=1).mean((1, 2))
+            metrics['entropy'].update(ent.data.cpu().numpy())
 
             t2 = time.time()
             metrics['fps'].update(1 / ((t2 - t1) / images.size(0)))
@@ -619,23 +621,8 @@ def train_fold(fold, train_eval_data):
 
 def build_submission(folds, test_data, temp):
     with torch.no_grad():
-        # for fold in folds:
-        #     fold_rles, fold_ids = predict_on_test_using_fold(fold, test_data)
-        #
-        #     rles = fold_rles
-        #     ids = fold_ids
-        #
-        # submission_rles = []
-        # submission_ids = []
-        # for rle4, id in zip(rles, ids):
-        #     submission_rles.extend([' '.join(map(str, rle)) for rle in rle4])
-        #     submission_ids.extend(['{}_{}'.format(id, n) for n in range(1, 5)])
-        # assert len(submission_rles) == len(submission_ids)
-        #
-        # submission = pd.DataFrame({'ImageId_ClassId': submission_ids, 'EncodedPixels': submission_rles})
-        # submission.to_csv(os.path.join(args.experiment_path, 'submission.csv'), index=False)
-        # submission.to_csv('./subs/submission.csv', index=False)
-
+        rles, ids = predict_on_test_using_fold(folds, test_data)
+       
         paths = [
             ('utils.py', 'utils.py'),
             ('transforms.py', 'transforms.py'),
@@ -658,35 +645,53 @@ def build_submission(folds, test_data, temp):
             shutil.copy(src, os.path.join('subs', dst))
 
 
-def predict_on_test_using_fold(fold, test_data):
+def predict_on_test_using_fold(folds, test_data):
     test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=config.batch_size // 2,
+        batch_size=config.batch_size,
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = Model(config.model, NUM_CLASSES)
-    model = model.to(DEVICE)
-    model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+    models = []
+    for fold in folds:
+        model = Model(config.model, NUM_CLASSES)
+        model = model.to(DEVICE)
+        model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
+        models.append(model)
+    model = Ensemble(models)
+    del fold
 
     model.eval()
     with torch.no_grad():
         fold_rles = []
         fold_ids = []
 
-        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+        for images, ids in tqdm(test_data_loader, desc='inference'):
             images = images.to(DEVICE)
 
-            b, n, c, h, w = images.size()
-            images = images.view(b * n, c, h, w)
+            b, nt, c, h, w = images.size()
+            images = images.view(b * nt, c, h, w)
             class_logits, mask_logits = model(images)
-            class_logits = class_logits.view(b, n, NUM_CLASSES)
-            mask_logits = mask_logits.view(b, n, NUM_CLASSES, h, w)
+            _, nm, _ = class_logits.size()
+            class_logits = class_logits.view(b, nt * nm, NUM_CLASSES)
+            mask_logits = mask_logits.view(b, nt * nm, NUM_CLASSES, h, w)
 
-            n_dim, c_dim = 1, 2
+            n_dim = 1
+            c_dim = 2
+
             class_probs = class_logits.sigmoid().mean(n_dim)
             mask_probs = mask_logits.softmax(c_dim).mean(n_dim)
+
+            tmp = mask_probs.clone()
+            tmp[:, 1:] *= (class_probs[:, 1:] > 0.5).float().view(class_probs.size(0), class_probs.size(1) - 1, 1, 1)
+            tmp /= tmp.sum(1, keepdim=True)
+            assert torch.allclose(tmp.sum(1), torch.ones(tmp.size(0), tmp.size(2), tmp.size(3), device=tmp.device))
+
+            # TODO: fixme
+            for id, m in zip(ids, tmp.permute(0, 2, 3, 1).data.cpu().numpy()):
+                np.save('./pl/{}.npy'.format(id), m)
+            continue
 
             class_probs = class_probs[:, 1:]
             mask_probs = one_hot(mask_probs.argmax(1))[:, 1:]
@@ -773,6 +778,10 @@ def main():
     train_eval_data = pd.read_csv(os.path.join(args.dataset_path, 'train.csv'), converters={'EncodedPixels': str})
     train_eval_data['root'] = os.path.join(args.dataset_path, 'train_images')
     train_eval_data = build_data(train_eval_data)
+
+    tmp = pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv'), converters={'EncodedPixels': str})
+    tmp['root'] = os.path.join(args.dataset_path, 'test_images')
+    tmp = build_data(tmp)
 
     test_data = pd.read_csv(os.path.join(args.dataset_path, 'sample_submission.csv'), converters={'EncodedPixels': str})
     test_data['root'] = os.path.join(args.dataset_path, 'test_images')

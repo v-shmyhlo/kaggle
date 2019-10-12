@@ -105,7 +105,7 @@ class SampledRandomCrop(object):
             return 0, 0, h, w
 
         # TODO: no log
-        m = mask.sum((0, 2))
+        m = mask[:, :, 1:].sum((0, 2))
         # m = np.log(np.e + m)
         m = m + 1
 

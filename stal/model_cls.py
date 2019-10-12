@@ -1,6 +1,7 @@
 import itertools
 
 import efficientnet_pytorch
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
@@ -184,3 +185,20 @@ class Model(nn.Module):
         input = F.interpolate(input, scale_factor=2, mode='bilinear')
 
         return classifier, input
+
+
+class Ensemble(nn.Module):
+    def __init__(self, models):
+        super().__init__()
+
+        self.models = nn.ModuleList(models)
+
+    def forward(self, input):
+        outputs = [model(input) for model in self.models]
+
+        class_logits, mask_logits = zip(*outputs)
+
+        class_logits = torch.stack(class_logits, 1)
+        mask_logits = torch.stack(mask_logits, 1)
+
+        return class_logits, mask_logits

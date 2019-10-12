@@ -134,3 +134,69 @@ class Resetable(object):
 
     def reset(self, *args, **kwargs):
         self.transform = self.build_transform(*args, **kwargs)
+
+
+class RandomGamma(object):
+    def __init__(self, limit=0.2):
+        assert 0. < limit < 1.
+
+        self.limit = limit
+
+    def __call__(self, input):
+        gamma = 1. + np.random.uniform(-self.limit, self.limit)
+        input = gamma_transform(input, gamma)
+
+        return input
+
+
+class RandomBrightness(object):
+    def __init__(self, limit=0.2, use_max=False):
+        assert 0. < limit < 1.
+
+        self.limit = limit
+        self.use_max = use_max
+
+    def __call__(self, input):
+        brightness = 0. + np.random.uniform(-self.limit, self.limit)
+        input = brightness_adjust(input, brightness, self.use_max)
+
+        return input
+
+
+class RandomContrast(object):
+    def __init__(self, limit=0.2):
+        assert 0. < limit < 1.
+
+        self.limit = limit
+
+    def __call__(self, input):
+        contrast = 1. + np.random.uniform(-self.limit, self.limit)
+        input = contrast_adjist(input, contrast)
+
+        return input
+
+
+def gamma_transform(input, gamma):
+    input = input**gamma
+    input = np.clip(input, 0., 1.)
+
+    return input
+
+
+def brightness_adjust(input, brightness, use_max):
+    if use_max:
+        max_value = 1.
+        input += brightness * max_value
+    else:
+        input += brightness * np.mean(input)
+
+    input = np.clip(input, 0., 1.)
+
+    return input
+
+
+def contrast_adjist(input, contrast):
+    input = input * contrast
+    input = np.clip(input, 0., 1.)
+
+    return input

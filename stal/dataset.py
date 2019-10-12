@@ -25,6 +25,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
 
         image = Image.open(os.path.join(sample['root'], sample['id']))
         image = np.array(image)
+        image = (image / 255).astype(np.float32)
 
         mask = np.zeros(image.shape[:2], dtype=np.int32)
         for i, rle in enumerate(sample['rles'], 1):
@@ -34,6 +35,7 @@ class TrainEvalDataset(torch.utils.data.Dataset):
             mask[m] = i
         mask = np.eye(NUM_CLASSES, dtype=np.float32)[mask]
 
+        assert np.allclose(mask.sum(2), np.ones(mask.shape[:2]))
         assert image.shape[:2] == mask.shape[:2] == (256, 1600)
 
         input = {

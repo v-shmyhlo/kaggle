@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from config import Config
 from stal.dataset import NUM_CLASSES, TestDataset, build_data
-from stal.model_cls import Model
+from stal.model_cls import Model, Ensemble
 from stal.utils import rle_encode
 from transforms import ApplyTo, Extract
 
@@ -28,10 +28,11 @@ normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 test_transform = T.Compose([
     ApplyTo(
         ['image'],
-        T.Lambda(lambda x: torch.stack([T.Compose([
+        T.Compose([
             T.ToTensor(),
             normalize,
-        ])(x)], 0))),
+            T.Lambda(lambda x: torch.stack([x], 0))
+        ])),
     Extract(['image', 'id']),
 ])
 
@@ -68,12 +69,8 @@ def seed_torch(seed):
 
 def build_submission(folds, test_data, temp, experiment_path, config, workers):
     with torch.no_grad():
-        for fold in folds:
-            fold_rles, fold_ids = predict_on_test_using_fold(
-                fold, test_data, experiment_path=experiment_path, config=config, workers=workers)
-
-            rles = fold_rles
-            ids = fold_ids
+        rles, ids = predict_on_test_using_fold(
+            folds, test_data, experiment_path=experiment_path, config=config, workers=workers)
 
         submission_rles = []
         submission_ids = []
@@ -86,7 +83,7 @@ def build_submission(folds, test_data, temp, experiment_path, config, workers):
         submission.to_csv('./submission.csv', index=False)
 
 
-def predict_on_test_using_fold(fold, test_data, experiment_path, config, workers):
+def predict_on_test_using_fold(folds, test_data, experiment_path, config, workers):
     test_dataset = TestDataset(test_data, transform=test_transform)
     test_data_loader = torch.utils.data.DataLoader(
         test_dataset,
@@ -94,23 +91,29 @@ def predict_on_test_using_fold(fold, test_data, experiment_path, config, workers
         num_workers=workers,
         worker_init_fn=worker_init_fn)
 
-    model = Model(config.model, NUM_CLASSES, pretrained=False)
-    model = model.to(DEVICE)
-    model.load_state_dict(torch.load(os.path.join(experiment_path, 'model_{}.pth'.format(fold))))
+    models = []
+    for fold in folds:
+        model = Model(config.model, NUM_CLASSES)
+        model = model.to(DEVICE)
+        model.load_state_dict(torch.load(os.path.join(experiment_path, 'model_{}.pth'.format(fold))))
+        models.append(model)
+    model = Ensemble(models)
+    del fold
 
     model.eval()
     with torch.no_grad():
         fold_rles = []
         fold_ids = []
 
-        for images, ids in tqdm(test_data_loader, desc='fold {} inference'.format(fold)):
+        for images, ids in tqdm(test_data_loader, desc='inference'):
             images = images.to(DEVICE)
 
-            b, n, c, h, w = images.size()
-            images = images.view(b * n, c, h, w)
+            b, nt, c, h, w = images.size()
+            images = images.view(b * nt, c, h, w)
             class_logits, mask_logits = model(images)
-            class_logits = class_logits.view(b, n, NUM_CLASSES)
-            mask_logits = mask_logits.view(b, n, NUM_CLASSES, h, w)
+            _, nm, _ = class_logits.size()
+            class_logits = class_logits.view(b, nt * nm, NUM_CLASSES)
+            mask_logits = mask_logits.view(b, nt * nm, NUM_CLASSES, h, w)
 
             n_dim = 1
             c_dim = 2
