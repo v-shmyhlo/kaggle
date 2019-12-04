@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from lovasz_losses import lovasz_hinge
+from lovasz_losses import lovasz_softmax as _lovasz_softmax
 
 
 # TODO: add reduction argument
@@ -78,24 +78,23 @@ def lsep_loss(input, target):
     return loss
 
 
-def lovasz_loss(input, target):
-    loss = lovasz_hinge(logits=input, labels=target)
-    loss = loss.mean()
-
-    return loss
-
-
-def dice_loss(input, target, smooth=1., eps=0., axis=None, mode='neg'):
+def dice_loss(input, target, smooth=1., axis=None):
     intersection = (input * target).sum(axis)
     union = input.sum(axis) + target.sum(axis)
     dice = (2. * intersection + smooth) / (union + smooth)
 
-    if mode == 'neg':
-        loss = 1 - dice
-    elif mode == 'log':
-        loss = -torch.log(dice + eps)
-    else:
-        raise AssertionError('invalid mode {}'.format(mode))
+    loss = 1 - dice
+
+    return loss
+
+
+def wtf_loss(input, target, axis=None):
+    hit = (input * target).sum(axis) + \
+          ((1 - input) * (1 - target)).sum(axis)
+    miss = (input * (1 - target)).sum(axis) + \
+           ((1 - input) * target).sum(axis)
+
+    loss = miss / hit
 
     return loss
 
@@ -159,3 +158,25 @@ def fbeta_score(input, target, beta=1., eps=1e-7):
     fbeta = (1 + beta_sq) * p * r / (beta_sq * p + r + eps)
 
     return fbeta
+
+
+def softmax_lovasz_loss(input, target):
+    input = input.softmax(1)
+    target = target.argmax(1)
+    loss = _lovasz_softmax(probas=input, labels=target)
+
+    return loss
+
+
+# TODO: refactor sum
+def tversky_loss(input, target, alpha=0.5, beta=0.5, eps=1e-7, axis=None):
+    intersection = torch.sum(input * target, axis)
+    fp = torch.sum(input * (torch.tensor(1.) - target), axis)
+    fn = torch.sum((torch.tensor(1.) - input) * target, axis)
+
+    numerator = intersection
+    denominator = intersection + alpha * fp + beta * fn
+    tversky = numerator / (denominator + eps)
+    loss = 1 - tversky
+
+    return loss

@@ -5,18 +5,34 @@ from torch.nn import functional as F
 from stal.model import Conv, ConvNorm, ReLU
 
 
+# TODO: additional loss to predict number of positive pixels
+# TODO: limit dataset to positive only
+# TODO: plot classifier accuracy
+# TODO: pl, select best samples
 # TODO: bi-tempered loss
+# TODO: grad accum
+# TODO: deep supervision
 # TODO: mobilenet
-# TODO: sched/opt order
+# TODO: better classification loss
+# TODO: lsep for classification loss
+# TODO: rrelu
+# TODO: other radam impl
+# TODO: aux classifiers (on different decoder sizes)
+# TODO: train on downsampled masks
+# TODO: deep supervision
+# TODO: other decoders
+# TODO: normalized focal (both for classifier and mask)
+# TODO: sliding window classifier
 # TODO: tta
 # TODO: ranger (one more time)
 # TODO: albu color augmentations
 # TODO: plot crop distribution weights
 # TODO: postprocessing
 # TODO: pseudolabeling
-# TODO: crop sample, no +1 prob
+# TODO: sample pos/neg in batch
+# TODO: predict more than true/false for classification
+# TODO: smaller max size
 # TODO: effnet + swish hack
-# TODO: kfold pseudolabeling
 # TODO: scale aug
 # TODO: openinng/closing aug
 # TODO: postprocessing (dilation/erosion)
@@ -30,9 +46,7 @@ from stal.model import Conv, ConvNorm, ReLU
 # TODO: augmentations
 # TODO: postprocess: aproximate with polygon
 # TODO: larger stride
-# TODO: lovasz loss
 # TODO: tversky loss
-# TODO: lsep loss
 # TODO: other losses
 
 

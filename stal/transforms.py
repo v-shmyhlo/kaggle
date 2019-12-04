@@ -104,11 +104,8 @@ class SampledRandomCrop(object):
         if w == tw and h == th:
             return 0, 0, h, w
 
-        # TODO: no log
         m = mask[:, :, 1:].sum((0, 2))
-        # m = np.log(np.e + m)
         m = m + 1
-
         m = np.convolve(m, np.ones(tw), mode='valid')
         m = m / m.sum()
 

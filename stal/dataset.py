@@ -29,6 +29,8 @@ class TrainEvalDataset(torch.utils.data.Dataset):
 
         if sample['rles'] is None:
             mask = np.load('./pl/{}.npy'.format(sample['id']))
+            mask = np.argmax(mask, -1)
+            mask = np.eye(NUM_CLASSES, dtype=np.float32)[mask]
         else:
             mask = np.zeros(image.shape[:2], dtype=np.int32)
             for i, rle in enumerate(sample['rles'], 1):

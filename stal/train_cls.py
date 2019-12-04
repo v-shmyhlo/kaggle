@@ -22,7 +22,7 @@ import lr_scheduler_wrapper
 import optim
 import utils
 from config import Config
-from losses import sigmoid_focal_loss, dice_loss, softmax_focal_loss, softmax_cross_entropy
+from losses import softmax_cross_entropy, softmax_focal_loss, sigmoid_focal_loss, dice_loss
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from stal.compute_image_stats import compute_buckets
@@ -103,6 +103,30 @@ test_transform = T.Compose([
 ])
 
 
+def cut_mix(images_1, labels_1):
+    b, _, h, w = images_1.size()
+    perm = np.random.permutation(b)
+    images_2, labels_2 = images_1[perm], labels_1[perm]
+
+    lam = np.random.uniform(0, 1)
+    r_x = np.random.uniform(0, w)
+    r_y = np.random.uniform(0, h)
+    r_w = w * np.sqrt(1 - lam)
+    r_h = h * np.sqrt(1 - lam)
+    x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
+    x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
+    y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
+    y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
+
+    images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
+    labels_1[:, :, x1:x2, y1:y2] = labels_2[:, :, x1:x2, y1:y2]
+
+    images = images_1
+    labels = labels_1
+
+    return images, labels
+
+
 def update_transforms(p):
     assert 0. <= p <= 1.
 
@@ -111,28 +135,6 @@ def update_transforms(p):
     print('update transforms p: {:.2f}, crop_size: {}'.format(p, crop_size))
     random_crop.reset((256, crop_size))
     # center_crop.reset(crop_size)
-
-
-# TODO: use pool
-def find_temp_global(input, target, exps):
-    temps = np.logspace(np.log(1e-4), np.log(1.0), 50, base=np.e)
-    metrics = []
-    for temp in tqdm(temps, desc='temp search'):
-        fold_preds = assign_classes(probs=(input * temp).softmax(1).data.cpu().numpy(), exps=exps)
-        fold_preds = torch.tensor(fold_preds).to(input.device)
-        metric = compute_metric(mask_input=fold_preds, target=target)
-        metrics.append(metric['dice'].mean().data.cpu().numpy())
-
-    temp = temps[np.argmax(metrics)]
-    metric = metrics[np.argmax(metrics)]
-    fig = plt.figure()
-    plt.plot(temps, metrics)
-    plt.xscale('log')
-    plt.axvline(temp)
-    plt.title('metric: {:.4f}, temp: {:.4f}'.format(metric.item(), temp))
-    plt.savefig('./fig.png')
-
-    return temp, metric.item(), fig
 
 
 def worker_init_fn(_):
@@ -179,19 +181,30 @@ def compute_class_loss(input, target, axis=(2, 3)):
     target = target.sum(axis)[:, 1:]
     target = (target > 0.).float()
 
-    loss = sigmoid_focal_loss(input=input, target=target)
-    loss = loss.mean(1)
+    # ce = sigmoid_cross_entropy(input=input, target=target).mean(1)
+    focal = sigmoid_focal_loss(input=input, target=target).mean(1)
+
+    loss = [
+        # ce,
+        focal,
+    ]
+    assert all(l.size() == loss[0].size() for l in loss)
+    loss = sum(loss) / len(loss)
 
     return loss
 
 
 def compute_mask_loss(input, target, axis=(2, 3)):
+    # ce = softmax_cross_entropy(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
     focal = softmax_focal_loss(input=input, target=target, axis=1, keepdim=True).mean(axis).mean(1)
     dice = dice_loss(input=input.softmax(1), target=target, axis=axis).mean(1)
+    # tversky = tversky_loss(input=input.softmax(1), target=target, alpha=0.1, beta=0.9, axis=axis).mean(1)
 
     loss = [
+        # ce ,
         focal,
         dice,
+        # tversky,
     ]
     assert all(l.size() == loss[0].size() for l in loss)
     loss = sum(loss) / len(loss)
@@ -206,20 +219,29 @@ def compute_mask_loss(input, target, axis=(2, 3)):
 # TODO: check correctness
 # TODO: use argmax after masking
 def compute_metric(class_input, mask_input, target, axis=(2, 3)):
-    class_input = class_input[:, 1:]
-    mask_input = one_hot(mask_input.argmax(1))[:, 1:]
+    class_pred = (class_input[:, 1:] > 0.).float()
+    del class_input
+
+    mask_pred = one_hot(mask_input.argmax(1))[:, 1:]
+    del mask_input
+
     target = target[:, 1:]
+    mask_pred = mask_pred * class_pred.view(*class_pred.size(), 1, 1)
 
-    class_input = (class_input > 0.).float().view(class_input.size(0), class_input.size(1), 1, 1)
-    mask_input = mask_input * class_input
-
-    intersection = (mask_input * target).sum(axis)
-    union = mask_input.sum(axis) + target.sum(axis)
+    intersection = (mask_pred * target).sum(axis)
+    union = mask_pred.sum(axis) + target.sum(axis)
     dice = (2. * intersection) / union
     dice[union == 0.] = 1.
 
+    target = (target.sum(axis) > 0.).float()
+    class_eq = (class_pred == target).float()
+
     metric = {
         'dice': dice,
+        'class_acc/0': class_eq[:, 0],
+        'class_acc/1': class_eq[:, 1],
+        'class_acc/2': class_eq[:, 2],
+        'class_acc/3': class_eq[:, 3],
     }
 
     return metric
@@ -396,6 +418,8 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     t1 = time.time()
     for i, (images, masks, ids) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, masks = images.to(DEVICE), masks.to(DEVICE)
+        # images, masks = cut_mix(images, masks)
+
         class_logits, mask_logits = model(images)
 
         loss = compute_loss(class_input=class_logits, mask_input=mask_logits, target=masks)
@@ -448,6 +472,11 @@ def eval_epoch(model, data_loader, fold, epoch):
         'dice': utils.Mean(),
         'fps': utils.Mean(),
         'entropy': utils.Mean(),
+
+        'class_acc/0': utils.Mean(),
+        'class_acc/1': utils.Mean(),
+        'class_acc/2': utils.Mean(),
+        'class_acc/3': utils.Mean(),
     }
 
     model.eval()
@@ -479,7 +508,8 @@ def eval_epoch(model, data_loader, fold, epoch):
 
         images = images[:32]
         masks = mask_to_image(masks[:32], num_classes=NUM_CLASSES)
-        preds = mask_to_image(mask_logits[:32].argmax(1, keepdim=True), num_classes=NUM_CLASSES)
+        preds = mask_to_image(one_hot(mask_logits[:32].argmax(1)), num_classes=NUM_CLASSES)
+        probs = mask_to_image(mask_logits[:32].softmax(1), num_classes=NUM_CLASSES)
 
         writer.add_image('images', torchvision.utils.make_grid(
             images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
@@ -487,6 +517,8 @@ def eval_epoch(model, data_loader, fold, epoch):
             masks, nrow=compute_nrow(masks), normalize=True), global_step=epoch)
         writer.add_image('preds', torchvision.utils.make_grid(
             preds, nrow=compute_nrow(preds), normalize=True), global_step=epoch)
+        writer.add_image('probs', torchvision.utils.make_grid(
+            probs, nrow=compute_nrow(probs), normalize=True), global_step=epoch)
 
         return metrics
 
@@ -497,10 +529,10 @@ def train_fold(fold, train_eval_data, tmp):
     train_data = train_eval_data.iloc[train_indices]
     eval_data = train_eval_data.iloc[eval_indices]
 
-    train_data = pd.concat([
-        train_data,
-        tmp,
-    ])
+    # train_data = pd.concat([
+    #     train_data,
+    #     tmp,
+    # ])
 
     train_dataset = TrainEvalDataset(train_data, transform=train_transform)
     # weights = weights[train_indices]
@@ -520,7 +552,7 @@ def train_fold(fold, train_eval_data, tmp):
         num_workers=args.workers,
         worker_init_fn=worker_init_fn)
 
-    model = Model(config.model, NUM_CLASSES, pretrained=False)
+    model = Model(config.model, NUM_CLASSES)
     model = model.to(DEVICE)
     if args.restore_path is not None:
         model.load_state_dict(torch.load(os.path.join(args.restore_path, 'model_{}.pth'.format(fold))))
@@ -539,6 +571,11 @@ def train_fold(fold, train_eval_data, tmp):
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,
                 end_pos=config.sched.onecycle.end_pos))
+    elif config.sched.type == 'cosine':
+        scheduler = lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=len(train_data_loader) * config.epochs))
     elif config.sched.type == 'step':
         scheduler = lr_scheduler_wrapper.EpochWrapper(
             torch.optim.lr_scheduler.StepLR(
@@ -663,7 +700,7 @@ def predict_on_test_using_fold(folds, test_data):
 
     models = []
     for fold in folds:
-        model = Model(config.model, NUM_CLASSES)
+        model = Model(config.model, NUM_CLASSES, pretrained=False)
         model = model.to(DEVICE)
         model.load_state_dict(torch.load(os.path.join(args.experiment_path, 'model_{}.pth'.format(fold))))
         models.append(model)

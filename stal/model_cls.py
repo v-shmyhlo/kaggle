@@ -7,8 +7,6 @@ import torch.nn.functional as F
 import torchvision
 
 
-# TODO: init
-
 class ReLU(nn.ReLU):
     pass
 
@@ -75,6 +73,31 @@ class ResNetEncoder(nn.Module):
         c5 = input
 
         return [None, c1, c2, c3, c4, c5]
+
+
+class MobNetEncoder(nn.Module):
+    sizes = [None, 16, 24, 32, 96, 1280]
+
+    def __init__(self, pretrained):
+        super().__init__()
+
+        self.model = torchvision.models.mobilenet_v2(pretrained=pretrained)
+
+    def forward(self, input):
+        outputs = []
+        for l in self.model.features:
+            input = l(input)
+            outputs.append(input)
+
+        outputs = itertools.groupby(outputs, key=lambda x: x.size()[2:])
+        fmaps = [None]
+        for size, stage in outputs:
+            fmap = list(stage)[-1]
+            fmaps.append(fmap)
+
+        assert len(fmaps) == 6
+
+        return fmaps
 
 
 class EffNetEncoder(nn.Module):
@@ -159,8 +182,11 @@ class Model(nn.Module):
         super().__init__()
 
         self.norm = nn.BatchNorm2d(3)
+
         if model.encoder == 'resnet':
             self.encoder = ResNetEncoder(pretrained=pretrained)
+        elif model.encoder == 'mobnet':
+            self.encoder = MobNetEncoder(pretrained=pretrained)
         elif model.encoder == 'effnet':
             self.encoder = EffNetEncoder(pretrained=pretrained)
         else:
