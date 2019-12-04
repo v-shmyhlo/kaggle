@@ -22,13 +22,15 @@ import optim
 import utils
 from config import Config
 from detection.anchors import build_anchors_maps
+from detection.box_coding import decode_boxes
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
-from detection.utils import decode_boxes, boxes_yxhw_to_tlbr
+from detection.utils import boxes_yxhw_to_tlbr
 from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid
+# TODO: use tlbr format
 
 
 COLORS = np.random.RandomState(42).uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
@@ -48,6 +50,8 @@ def compute_anchor(size, ratio, scale):
 anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [2**0, 2**(1 / 3), 2**(2 / 3)]))
 ANCHORS = [
     None,
+    None,
+    None,
     [compute_anchor(32, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(64, ratio, scale) for ratio, scale in anchor_types],
     [compute_anchor(128, ratio, scale) for ratio, scale in anchor_types],
@@ -65,7 +69,7 @@ parser.add_argument('--workers', type=int, default=os.cpu_count())
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
-anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS, p2=False, p7=True).to(DEVICE)
+anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS).to(DEVICE)
 
 train_transform = T.Compose([
     Resize(config.image_size),

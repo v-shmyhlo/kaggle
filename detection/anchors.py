@@ -3,22 +3,15 @@ import math
 import torch
 
 
-def build_anchors_maps(image_size, anchor_levels, p2, p7):
+def build_anchors_maps(image_size, anchor_levels):
     h, w = image_size
-    includes = [p2, True, True, True, True, p7]
-    assert len(anchor_levels) == len(includes)
-
-    for _ in range(2):
-        h, w = math.ceil(h / 2), math.ceil(w / 2)
 
     anchor_maps = []
-    for anchors, include in zip(anchor_levels, includes):
-        if include:
+    for anchors in anchor_levels:
+        if anchors is not None:
             for anchor in anchors:
                 anchor_map = build_anchor_map(image_size, (h, w), anchor)
                 anchor_maps.append(anchor_map)
-        else:
-            assert anchors is None
 
         h, w = math.ceil(h / 2), math.ceil(w / 2)
 

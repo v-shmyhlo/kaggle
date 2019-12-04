@@ -3,7 +3,8 @@ import torch
 from PIL import Image
 
 from detection.anchors import build_anchors_maps
-from detection.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr, encode_boxes
+from detection.box_coding import encode_boxes
+from detection.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr
 
 
 class Resize(object):
@@ -50,7 +51,7 @@ class BuildLabels(object):
         image, dets = input['image'], (input['class_ids'], input['boxes'])
 
         _, h, w = image.size()
-        anchor_maps = build_anchors_maps((h, w), self.anchors, p2=self.p2, p7=self.p7)
+        anchor_maps = build_anchors_maps((h, w), self.anchors)
         maps = encode_boxes(dets, anchor_maps, min_iou=self.min_iou, max_iou=self.max_iou)
 
         return image, maps
@@ -65,7 +66,6 @@ def resize(input, size, interpolation=Image.BILINEAR):
 
     image = image.resize((w, h), interpolation)
     boxes = boxes * scale
-    # masks = [m.resize((w, h), interpolation) for m in masks]
 
     return {
         **input,
@@ -81,7 +81,6 @@ def flip_left_right(input):
     image = image.transpose(Image.FLIP_LEFT_RIGHT)
     w, _ = image.size
     boxes[:, 1] = w - boxes[:, 1]
-    # masks = [m.transpose(Image.FLIP_LEFT_RIGHT) for m in masks]
 
     return {
         **input,
@@ -114,13 +113,11 @@ def crop(input, ij, hw):
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, h)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, w)
     boxes = boxes_tlbr_to_yxhw(boxes)
-    # masks = [m.crop((j, i, j + w, i + h)) for m in masks]
 
     # TODO: min size
     keep = (boxes[:, 2] * boxes[:, 3]) >= 8**2
     class_ids = class_ids[keep]
     boxes = boxes[keep]
-    # masks = [m for m, k in zip(masks, keep) if k]
 
     return {
         **input,

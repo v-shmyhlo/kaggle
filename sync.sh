@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 
-HOST=vshmyhlo@77.120.246.182
+# HOST=vshmyhlo@77.120.246.182
+# HOST=vshmyhlo@192.168.1.9
+HOST=vshmyhlo@93.73.3.214
 
 rsync -avhHPx ./kaggle.yml ${HOST}:.config/tmuxinator/kaggle.yml
-rsync -avhHPx ./requirements.txt ${HOST}:code/kaggle/requirements.txt
-rsync -avhHPx ./*.py ${HOST}:code/kaggle/
 rsync -avhHPx "${HOST}:.kaggle/kaggle.json" ~/.kaggle/kaggle.json
 
-# rsync -avhHPx ./pl-data/ ${HOST}:code/kaggle/pl-data/
-# rsync -avhHPx "${HOST}:code/kaggle/*.csv" ./csv/
-# rsync -avhHPx "${HOST}:code/kaggle/*.pth" ./my-pth/
-# rsync -avhHPx "${HOST}:code/kaggle/*.pth" ./my-pl-pth/
-# rsync -avhHPx "${HOST}:code/kaggle/tf_log/cells/tmp-512-progres-crop-norm-la-pl-restore-2/" ./solution-tta/
-# rsync -avhHPx "${HOST}:code/kaggle/tf_log/cells/tmp-512-progres-crop-norm-la/" ./solution-nopl-tho/
+rsync -avhHPx ./*.{py,txt} ${HOST}:code/kaggle/
 
-for path in stal cells 
+for dir in detection
 do
-    rsync -avhHPx "${HOST}:code/kaggle/${path}/*.npy" ./${path}/ 
-    rsync -avhHPx ./${path}/ ${HOST}:code/kaggle/${path}/
+    rsync -avhHPx ./${dir}/ ${HOST}:code/kaggle/${dir}/
 done

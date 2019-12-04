@@ -47,7 +47,6 @@ class Dataset(torch.utils.data.Dataset):
 
         class_ids = []
         boxes = []
-        # masks = []
         for a in annotations:
             l, t, w, h = a['bbox']
             y = t + h / 2
@@ -55,9 +54,6 @@ class Dataset(torch.utils.data.Dataset):
 
             class_ids.append(self.cat_to_id[a['category_id']])
             boxes.append([y, x, h, w])
-            # mask = self.coco.annToMask(a)
-            # mask = Image.fromarray(mask * 255)
-            # masks.append(mask)
 
         class_ids = torch.tensor(class_ids).view(-1).long()
         boxes = torch.tensor(boxes).view(-1, 4).float()
@@ -67,7 +63,7 @@ class Dataset(torch.utils.data.Dataset):
             'class_ids': class_ids,
             'boxes': boxes,
         }
-       
+
         if self.transform is not None:
             input = self.transform(input)
 
