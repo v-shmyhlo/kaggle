@@ -4,6 +4,23 @@ import torchvision
 from detection.box_utils import boxes_iou, boxes_center, boxes_size
 
 
+def boxes_to_shifts_scales(boxes, anchors):
+    shifts = (boxes_center(boxes) - boxes_center(anchors)) / boxes_size(anchors)
+    scales = boxes_size(boxes) / boxes_size(anchors)
+    shifts_scales = torch.cat([shifts, scales.log()], 1)
+
+    return shifts_scales
+
+
+def shifts_scales_to_boxes(shifts_scales, anchors):
+    shifts, scales = torch.split(shifts_scales, 2, 1)
+    centers = shifts * boxes_size(anchors) + boxes_center(anchors)
+    sizes = scales.exp() * boxes_size(anchors)
+    boxes = torch.cat([centers - sizes / 2, centers + sizes / 2], 1)
+
+    return boxes
+
+
 def encode_boxes(input, anchors, min_iou, max_iou):
     class_ids, boxes = input
 
@@ -24,9 +41,7 @@ def encode_boxes(input, anchors, min_iou, max_iou):
     # build regr_output
     boxes = boxes[iou_indices]
 
-    shifts = (boxes_center(boxes) - boxes_center(anchors)) / boxes_size(anchors)
-    scales = boxes_size(boxes) / boxes_size(anchors)
-    regr_output = torch.cat([shifts, scales.log()], 1)
+    regr_output = boxes_to_shifts_scales(boxes, anchors)
 
     return class_output, regr_output
 
@@ -37,10 +52,7 @@ def decode_boxes(input, anchors):
     scores, class_ids = class_output.max(1)
     fg = scores > 0.
 
-    shifts, scales = torch.split(regr_output, 2, 1)
-    centers = shifts * boxes_size(anchors) + boxes_center(anchors)
-    sizes = scales.exp() * boxes_size(anchors)
-    boxes = torch.cat([centers - sizes / 2, centers + sizes / 2], 1)
+    boxes = shifts_scales_to_boxes(regr_output, anchors)
 
     boxes = boxes[fg]
     class_ids = class_ids[fg]
