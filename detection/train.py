@@ -23,14 +23,12 @@ import utils
 from config import Config
 from detection.anchors import build_anchors_maps
 from detection.box_coding import decode_boxes
-from detection.box_utils import boxes_yxhw_to_tlbr
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
 from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid
-# TODO: use tlbr format
 
 
 COLORS = np.random.RandomState(42).uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
@@ -166,7 +164,6 @@ def draw_boxes(image, detections, class_names, colors=COLORS):
     font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
 
     class_ids, boxes, scores = detections
-    boxes = boxes_yxhw_to_tlbr(boxes)
 
     device = image.device
     image = image.permute(1, 2, 0).data.cpu().numpy()

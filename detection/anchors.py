@@ -15,7 +15,7 @@ def build_anchors_maps(image_size, anchor_levels):
 
         h, w = math.ceil(h / 2), math.ceil(w / 2)
 
-    anchor_maps = torch.cat(anchor_maps, 1).t()
+    anchor_maps = torch.cat(anchor_maps, 0)
 
     return anchor_maps
 
@@ -27,9 +27,13 @@ def build_anchor_map(image_size, map_size, anchor):
     x = torch.linspace(cell_size[1] / 2, image_size[1] - cell_size[1] / 2, map_size[1])
 
     y, x = torch.meshgrid(y, x)
-    h = torch.ones(map_size) * anchor[0]
-    w = torch.ones(map_size) * anchor[1]
-    anchor_map = torch.stack([y, x, h, w])
-    anchor_map = anchor_map.view(anchor_map.size(0), anchor_map.size(1) * anchor_map.size(2))
+
+    t = y - anchor[0] / 2
+    l = x - anchor[1] / 2
+    b = y + anchor[0] / 2
+    r = x + anchor[1] / 2
+
+    anchor_map = torch.stack([t, l, b, r], 2)
+    anchor_map = anchor_map.view(anchor_map.size(0) * anchor_map.size(1), anchor_map.size(2))
 
     return anchor_map
