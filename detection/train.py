@@ -20,6 +20,7 @@ from tqdm import tqdm
 import lr_scheduler_wrapper
 import optim
 import utils
+from all_the_tools.torch.utils import Saver
 from config import Config
 from detection.anchors import build_anchors_maps
 from detection.box_coding import decode_boxes
@@ -309,8 +310,6 @@ def train():
 
     model = RetinaNet(NUM_CLASSES, len(anchor_types))
     model = model.to(DEVICE)
-    if args.restore_path is not None:
-        model.load_state_dict(torch.load(args.restore_path))
 
     optimizer = build_optimizer(config.opt, model.parameters())
 
@@ -320,7 +319,14 @@ def train():
     else:
         raise AssertionError('invalid sched {}'.format(config.sched.type))
 
-    for epoch in range(config.epochs):
+    saver = Saver({'model': model, 'optimizer': optimizer, 'scheduler': scheduler})
+    start_epoch = 0
+    if args.restore_path is not None:
+        saver.load(args.restore_path, keys=['model'])
+    if os.path.exists(os.path.join(args.experiment_path, 'checkpoint.pth')):
+        start_epoch = saver.load(os.path.join(args.experiment_path, 'checkpoint.pth'))
+
+    for epoch in range(start_epoch, config.epochs):
         train_epoch(
             model=model,
             optimizer=optimizer,
@@ -339,7 +345,7 @@ def train():
         scheduler.step_epoch()
         scheduler.step_score(score)
 
-        torch.save(model.state_dict(), os.path.join(args.experiment_path, 'model.pth'))
+        saver.save(os.path.join(args.experiment_path, 'checkpoint.pth'), epoch=epoch + 1)
 
 
 def main():
