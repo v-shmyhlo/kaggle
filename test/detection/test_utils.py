@@ -1,6 +1,6 @@
 import torch
 
-from detection.utils import boxes_yxhw_to_tlbr, boxes_tlbr_to_yxhw
+from detection.box_utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr
 
 
 def test_boxes_yxhw_to_tlbr():

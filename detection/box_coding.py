@@ -1,7 +1,7 @@
 import torch
 import torchvision
 
-from detection.utils import boxes_iou, boxes_yxhw_to_tlbr
+from detection.box_utils import boxes_iou, boxes_yxhw_to_tlbr
 
 
 def encode_boxes(input, anchors, min_iou, max_iou):

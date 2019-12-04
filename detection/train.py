@@ -23,10 +23,10 @@ import utils
 from config import Config
 from detection.anchors import build_anchors_maps
 from detection.box_coding import decode_boxes
+from detection.box_utils import boxes_yxhw_to_tlbr
 from detection.dataset import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
-from detection.utils import boxes_yxhw_to_tlbr
 from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid

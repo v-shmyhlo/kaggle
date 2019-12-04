@@ -4,7 +4,7 @@ from PIL import Image
 
 from detection.anchors import build_anchors_maps
 from detection.box_coding import encode_boxes
-from detection.utils import boxes_tlbr_to_yxhw, boxes_yxhw_to_tlbr
+from detection.box_utils import boxes_area
 
 
 class Resize(object):
@@ -25,10 +25,10 @@ class RandomCrop(object):
         image = input['image']
 
         w, h = image.size
-        i = np.random.randint(0, h - self.size + 1)
-        j = np.random.randint(0, w - self.size + 1)
+        t = np.random.randint(0, h - self.size + 1)
+        l = np.random.randint(0, w - self.size + 1)
 
-        return crop(input, (i, j), (self.size, self.size))
+        return crop(input, (t, l), (self.size, self.size), min_size=8**2)
 
 
 class RandomFlipLeftRight(object):
@@ -74,13 +74,12 @@ def resize(input, size, interpolation=Image.BILINEAR):
     }
 
 
-# TODO: test
 def flip_left_right(input):
     image, boxes = input['image'], input['boxes']
 
     image = image.transpose(Image.FLIP_LEFT_RIGHT)
     w, _ = image.size
-    boxes[:, 1] = w - boxes[:, 1]
+    boxes[:, 1], boxes[:, 3] = w - boxes[:, 3], w - boxes[:, 1]
 
     return {
         **input,
@@ -99,23 +98,20 @@ def denormalize(tensor, mean, std, inplace=False):
     return tensor
 
 
-def crop(input, ij, hw):
+def crop(input, tl, hw, min_size):
     image, class_ids, boxes = input['image'], input['class_ids'], input['boxes']
 
-    i, j = ij
+    t, l = tl
     h, w = hw
 
-    image = image.crop((j, i, j + w, i + h))
+    image = image.crop((l, t, l + w, t + h))
 
-    boxes = boxes_yxhw_to_tlbr(boxes)
-    boxes[:, [0, 2]] -= i
-    boxes[:, [1, 3]] -= j
+    boxes[:, [0, 2]] -= t
+    boxes[:, [1, 3]] -= l
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clamp(0, h)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clamp(0, w)
-    boxes = boxes_tlbr_to_yxhw(boxes)
 
-    # TODO: min size
-    keep = (boxes[:, 2] * boxes[:, 3]) >= 8**2
+    keep = boxes_area(boxes) >= min_size
     class_ids = class_ids[keep]
     boxes = boxes[keep]
 
