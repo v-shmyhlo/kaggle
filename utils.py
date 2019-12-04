@@ -72,7 +72,7 @@ class UpdatesPerSecond(Mean):
 
 def label_smoothing(input, alpha):
     assert input.dim() == 2
-   
+
     input = input * (1 - alpha) + alpha / input.size(1)
 
     return input

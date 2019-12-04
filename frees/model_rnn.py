@@ -1,11 +1,10 @@
-import torch
-import numpy as np
-from gammatone.fftweight import fft_weights
-import torch.distributions
-import torchvision
 import librosa
+import torch
+import torch.distributions
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
+from gammatone.fftweight import fft_weights
 
 
 class ReLU(nn.RReLU):
@@ -516,7 +515,7 @@ class Spectrogram(nn.Module):
 
         filters, _ = fft_weights(self.n_fft, rate, 128, width=1, fmin=0, fmax=rate / 2, maxlen=self.n_fft / 2 + 1)
         self.gamma = nn.Conv1d(512, 128, 1, bias=False)
-        self.gamma.weight.data = filters_to_tensor(filters)
+        self.gamma.weight.data.copy_(filters_to_tensor(filters))
         self.gamma.weight.requires_grad = False
 
         self.coord = HeightCoord(128)

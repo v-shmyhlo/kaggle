@@ -35,7 +35,7 @@
         }
     },
     "sched": {
-        "type": "step",
+        "type": "cosine",
         "step": {
             "decay": 0.1,
             "step_size": 10
