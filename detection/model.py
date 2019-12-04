@@ -69,18 +69,16 @@ class UpsampleMerge(nn.Module):
 
 # TODO: optimize level calculation
 class FPN(nn.Module):
-    def __init__(self, p2, p7):
+    def __init__(self):
         super().__init__()
 
         self.c5_to_p6 = ConvNorm(2048, 256, 3, stride=2)
         self.p6_to_p7 = nn.Sequential(
             ReLU(inplace=True),
-            ConvNorm(256, 256, 3, stride=2)
-        ) if p7 else None
+            ConvNorm(256, 256, 3, stride=2))
         self.c5_to_p5 = ConvNorm(2048, 256, 1)
         self.p5c4_to_p4 = UpsampleMerge(1024)
         self.p4c3_to_p3 = UpsampleMerge(512)
-        self.p3c2_to_p2 = UpsampleMerge(256) if p2 else None
 
     def forward(self, input):
         p6 = self.c5_to_p6(input[5])
@@ -88,9 +86,8 @@ class FPN(nn.Module):
         p5 = self.c5_to_p5(input[5])
         p4 = self.p5c4_to_p4(p5, input[4])
         p3 = self.p4c3_to_p3(p4, input[3])
-        p2 = self.p3c2_to_p2(p3, input[2]) if self.p3c2_to_p2 is not None else None
 
-        input = [None, None, p2, p3, p4, p5, p6, p7]
+        input = [None, None, None, p3, p4, p5, p6, p7]
 
         return input
 
@@ -128,7 +125,7 @@ class RetinaNet(nn.Module):
         super().__init__()
 
         self.backbone = Backbone()
-        self.fpn = FPN(p2=False, p7=True)
+        self.fpn = FPN()
         self.class_head = HeadSubnet(256, num_anchors * num_classes)
         self.regr_head = HeadSubnet(256, num_anchors * 4)
         self.flatten = FlattenDetectionMap(num_anchors)
