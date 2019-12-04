@@ -21,6 +21,14 @@ class LRSchedulerWrapper(object):
 
         return np.squeeze(lr)
 
+    def state_dict(self):
+        return {
+            'scheduler': self.scheduler.state_dict(),
+        }
+
+    def load_state_dict(self, state_dict):
+        self.scheduler.load_state_dict(state_dict['scheduler'])
+
 
 class StepWrapper(LRSchedulerWrapper):
     def step(self):
