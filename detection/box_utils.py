@@ -29,9 +29,7 @@ def boxes_yxhw_to_tlbr(boxes):
 
 
 def boxes_iou(a, b):
-    a = boxes_yxhw_to_tlbr(a)
-    b = boxes_yxhw_to_tlbr(b)
-    iou = torchvision.ops.box_iou(boxes_yxhw_to_tlbr(a), boxes_yxhw_to_tlbr(b))
+    iou = torchvision.ops.box_iou(a, b)
 
     return iou
 

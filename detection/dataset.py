@@ -28,8 +28,9 @@ class Dataset(torch.utils.data.Dataset):
         self.class_names = {self.cat_to_id[cat]: self.coco.cats[cat]['name'] for cat in self.cat_to_id}
         assert len(self.cat_to_id) == NUM_CLASSES
         self.data = self.coco.loadImgs(ids=self.coco.getImgIds())
-        self.data = [item for item in self.data
-                     if len(self.coco.loadAnns(ids=self.coco.getAnnIds(imgIds=item['id'], iscrowd=False))) > 0]
+        self.data = [
+            item for item in self.data
+            if len(self.coco.loadAnns(ids=self.coco.getAnnIds(imgIds=item['id'], iscrowd=False))) > 0]
 
     def __len__(self):
         return len(self.data)
@@ -49,11 +50,10 @@ class Dataset(torch.utils.data.Dataset):
         boxes = []
         for a in annotations:
             l, t, w, h = a['bbox']
-            y = t + h / 2
-            x = l + w / 2
+            b, r = t + h, l + w
 
             class_ids.append(self.cat_to_id[a['category_id']])
-            boxes.append([y, x, h, w])
+            boxes.append([t, l, b, r])
 
         class_ids = torch.tensor(class_ids).view(-1).long()
         boxes = torch.tensor(boxes).view(-1, 4).float()
