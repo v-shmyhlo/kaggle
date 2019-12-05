@@ -121,9 +121,10 @@ class FlattenDetectionMap(nn.Module):
 
 
 class RetinaNet(nn.Module):
-    def __init__(self, num_classes, num_anchors):
+    def __init__(self, num_classes, num_anchors, freeze_bn=False):
         super().__init__()
 
+        self.freeze_bn = freeze_bn
         self.backbone = Backbone()
         self.fpn = FPN()
         self.class_head = HeadSubnet(256, num_anchors * num_classes)
@@ -161,6 +162,9 @@ class RetinaNet(nn.Module):
 
     def train(self, mode=True):
         super().train(mode)
+
+        if not self.freeze_bn:
+            return
 
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):

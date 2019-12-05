@@ -40,10 +40,8 @@ class RandomFlipLeftRight(object):
 
 
 class BuildLabels(object):
-    def __init__(self, anchors, p2, p7, min_iou, max_iou):
+    def __init__(self, anchors, min_iou, max_iou):
         self.anchors = anchors
-        self.p2 = p2
-        self.p7 = p7
         self.min_iou = min_iou
         self.max_iou = max_iou
 
@@ -98,6 +96,7 @@ def denormalize(tensor, mean, std, inplace=False):
     return tensor
 
 
+# TODO: test min-size removal
 def crop(input, tl, hw, min_size):
     image, class_ids, boxes = input['image'], input['class_ids'], input['boxes']
 

@@ -18,18 +18,20 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import lr_scheduler_wrapper
-import optim
 import utils
 from all_the_tools.torch.utils import Saver
 from config import Config
 from detection.anchors import build_anchors_maps
 from detection.box_coding import decode_boxes
-from detection.dataset import Dataset, NUM_CLASSES
+# from detection.datasets.coco import Dataset, NUM_CLASSES
+from detection.datasets.wider import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
+from detection.utils import logit
 from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid
+# TODO: move logits slicing to helpers
 
 
 COLORS = np.random.RandomState(42).uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
@@ -37,6 +39,11 @@ MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 MIN_IOU = 0.4
 MAX_IOU = 0.5
+
+
+# TODO: check all usages
+def encode_class_ids(input):
+    return utils.one_hot(input + 1, NUM_CLASSES + 2)[:, 2:]
 
 
 def compute_anchor(size, ratio, scale):
@@ -78,7 +85,7 @@ train_transform = T.Compose([
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD),
     ])),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    BuildLabels(ANCHORS, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 eval_transform = T.Compose([
     Resize(config.image_size),
@@ -87,7 +94,7 @@ eval_transform = T.Compose([
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD),
     ])),
-    BuildLabels(ANCHORS, p2=False, p7=True, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    BuildLabels(ANCHORS, min_iou=MIN_IOU, max_iou=MAX_IOU),
 ])
 
 
@@ -99,7 +106,7 @@ def focal_loss(input, target, gamma=2., alpha=0.25):
     norm = (target > 0).sum()
     assert norm > 0
 
-    target = utils.one_hot(target + 1, NUM_CLASSES + 2)[:, 2:]
+    target = encode_class_ids(target)
 
     prob = input.sigmoid()
     prob_true = prob * target + (1 - prob) * (1 - target)
@@ -152,12 +159,6 @@ def build_optimizer(optimizer_config, parameters):
     else:
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
-    if optimizer_config.lookahead is not None:
-        optimizer = optim.LA(
-            optimizer,
-            optimizer_config.lookahead.lr,
-            num_steps=optimizer_config.lookahead.steps)
-
     return optimizer
 
 
@@ -165,6 +166,7 @@ def draw_boxes(image, detections, class_names, colors=COLORS):
     font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
 
     class_ids, boxes, scores = detections
+    scores = scores.sigmoid()  # TODO: fixme
 
     device = image.device
     image = image.permute(1, 2, 0).data.cpu().numpy()
@@ -196,9 +198,9 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     optimizer.zero_grad()
     for i, (images, maps) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch))):
         images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
-        logits = model(images)
+        output = model(images)
 
-        loss = compute_loss(input=logits, target=maps)
+        loss = compute_loss(input=output, target=maps)
         metrics['loss'].update(loss.data.cpu().numpy())
 
         lr = scheduler.get_lr()
@@ -216,10 +218,18 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
     with torch.no_grad():
         loss = metrics['loss'].compute_and_reset()
 
-        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*maps)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
-        dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
+        dets_true = [
+            decode_boxes((logit(encode_class_ids(c)), r), anchor_maps)
+            for c, r in zip(*maps)]
+        images_true = [
+            draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names)
+            for i, d in zip(images, dets_true)]
+        dets_pred = [
+            decode_boxes((c, r), anchor_maps)
+            for c, r in zip(*output)]
+        images_pred = [
+            draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names)
+            for i, d in zip(images, dets_pred)]
 
         print('[EPOCH {}][TRAIN] loss: {:.4f}'.format(epoch, loss))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -241,18 +251,26 @@ def eval_epoch(model, data_loader, class_names, epoch):
     with torch.no_grad():
         for images, maps in tqdm(data_loader, desc='epoch {} evaluation'.format(epoch)):
             images, maps = images.to(DEVICE), [m.to(DEVICE) for m in maps]
-            logits = model(images)
+            output = model(images)
 
-            loss = compute_loss(input=logits, target=maps)
+            loss = compute_loss(input=output, target=maps)
             metrics['loss'].update(loss.data.cpu().numpy())
 
         loss = metrics['loss'].compute_and_reset()
         score = 0  # TODO:
 
-        dets = [decode_boxes((utils.one_hot(c + 1, NUM_CLASSES + 2)[:, 2:], r), anchor_maps) for c, r in zip(*maps)]
-        images_true = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
-        dets = [decode_boxes((c, r), anchor_maps) for c, r in zip(*logits)]
-        images_pred = [draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names) for i, d in zip(images, dets)]
+        dets_true = [
+            decode_boxes((logit(encode_class_ids(c)), r), anchor_maps)
+            for c, r in zip(*maps)]
+        images_true = [
+            draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names)
+            for i, d in zip(images, dets_true)]
+        dets_pred = [
+            decode_boxes((c, r), anchor_maps)
+            for c, r in zip(*output)]
+        images_pred = [
+            draw_boxes(denormalize(i, mean=MEAN, std=STD), d, class_names)
+            for i, d in zip(images, dets_pred)]
 
         print('[EPOCH {}][EVAL] loss: {:.4f}, score: {:.4f}'.format(epoch, loss, score))
         writer.add_scalar('loss', loss, global_step=epoch)
@@ -281,14 +299,13 @@ def collate_fn(batch):
     images, maps = zip(*batch)
 
     images = torch.utils.data.dataloader.default_collate(images)
-    # dets = collate_cat_fn(dets)
     maps = torch.utils.data.dataloader.default_collate(maps)
 
     return images, maps
 
 
 def train():
-    train_dataset = Dataset(args.dataset_path, train=True, transform=train_transform)
+    train_dataset = Dataset(args.dataset_path, subset='train', transform=train_transform)
     class_names = train_dataset.class_names
     train_data_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -299,7 +316,7 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    eval_dataset = Dataset(args.dataset_path, train=False, transform=eval_transform)
+    eval_dataset = Dataset(args.dataset_path, subset='eval', transform=eval_transform)
     eval_data_loader = torch.utils.data.DataLoader(
         eval_dataset,
         batch_size=config.batch_size,

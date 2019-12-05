@@ -676,7 +676,7 @@ def build_submission(folds, test_data, temp):
             ('stal/model.py', 'stal/model.py'),
             ('stal/model_cls.py', 'stal/model_cls.py'),
             ('stal/transforms.py', 'stal/transforms.py'),
-            ('stal/dataset.py', 'stal/dataset.py'),
+            ('stal/coco.py', 'stal/coco.py'),
             ('stal/utils.py', 'stal/utils.py'),
             (os.path.join(args.experiment_path, 'config.yaml'), 'experiment/config.yaml')
         ]

@@ -14,13 +14,15 @@ NUM_CLASSES = 80
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, path, train, transform=None):
-        if train:
+    def __init__(self, path, subset, transform=None):
+        if subset == 'train':
             ann_path = os.path.join(path, 'annotations/instances_train2017.json')
             self.path = os.path.join(path, 'train2017')
-        else:
+        elif subset == 'eval':
             ann_path = os.path.join(path, 'annotations/instances_val2017.json')
             self.path = os.path.join(path, 'val2017')
+        else:
+            raise AssertionError('invalid subset {}'.format(subset))
 
         self.transform = transform
         self.coco = pycoco.COCO(ann_path)
