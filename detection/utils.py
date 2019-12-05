@@ -7,7 +7,7 @@ def logit(input):
     return torch.log(input / (1 - input))
 
 
-def draw_boxes(image, detections, class_names):
+def draw_boxes(image, detections, class_names, line_width=2):
     colors = np.random.RandomState(42).uniform(51, 255, size=(len(class_names), 3)).round().astype(np.uint8)
     font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
 
@@ -25,9 +25,9 @@ def draw_boxes(image, detections, class_names):
         if len(class_names) > 1:
             text = '{}: {:.2f}'.format(class_names[c], s)
             size = draw.textsize(text, font=font)
-            draw.rectangle(((l, t - size[1]), (l + size[0], t)), fill=color)
-            draw.text((l, t - size[1]), text, font=font, fill=(0, 0, 0))
-        draw.rectangle(((l, t), (r, b)), outline=color, width=2)
+            draw.rectangle(((l, t - size[1]), (l + size[0] + line_width * 2, t)), fill=color)
+            draw.text((l + line_width, t - size[1]), text, font=font, fill=(0, 0, 0))
+        draw.rectangle(((l, t), (r, b)), outline=color, width=line_width)
 
     image = torch.tensor(np.array(image) / 255).permute(2, 0, 1).to(device)
 

@@ -33,8 +33,6 @@ from transforms import ApplyTo
 
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
-MIN_IOU = 0.4
-MAX_IOU = 0.5
 
 
 # TODO: check all usages
@@ -70,7 +68,7 @@ train_transform = T.Compose([
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD),
     ])),
-    BuildLabels(ANCHORS, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    BuildLabels(ANCHORS, min_iou=config.anchors.min_iou, max_iou=config.anchors.max_iou),
 ])
 eval_transform = T.Compose([
     Resize(config.image_size),
@@ -79,7 +77,7 @@ eval_transform = T.Compose([
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD),
     ])),
-    BuildLabels(ANCHORS, min_iou=MIN_IOU, max_iou=MAX_IOU),
+    BuildLabels(ANCHORS, min_iou=config.anchors.min_iou, max_iou=config.anchors.max_iou),
 ])
 
 
@@ -121,30 +119,44 @@ def compute_loss(input, target):
     # classification loss
     class_mask = target_class != -1
     class_loss = focal_loss(input=input_class[class_mask], target=target_class[class_mask])
-    assert class_loss.dim() == 0
 
     # regression loss
     regr_mask = target_class > 0
     regr_loss = smooth_l1_loss(input=input_regr[regr_mask], target=target_regr[regr_mask])
-    assert regr_loss.dim() == 0
 
+    assert class_loss.dim() == regr_loss.dim() == 0
     loss = class_loss + regr_loss
 
     return loss
 
 
-def build_optimizer(optimizer_config, parameters):
-    if optimizer_config.type == 'sgd':
-        optimizer = torch.optim.SGD(
+def build_optimizer(parameters, config):
+    if config.opt.type == 'sgd':
+        return torch.optim.SGD(
             parameters,
-            optimizer_config.lr,
-            momentum=optimizer_config.sgd.momentum,
-            weight_decay=optimizer_config.weight_decay,
+            config.opt.lr,
+            momentum=config.opt.sgd.momentum,
+            weight_decay=config.opt.weight_decay,
             nesterov=True)
     else:
-        raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
+        raise AssertionError('invalid config.opt.type {}'.format(config.opt.type))
 
-    return optimizer
+
+def build_scheduler(optimizer, config, start_epoch):
+    if config.sched.type == 'multistep':
+        return lr_scheduler_wrapper.EpochWrapper(
+            torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                config.sched.multistep.steps,
+                last_epoch=start_epoch - 1))
+    elif config.sched.type == 'cosine':
+        return lr_scheduler_wrapper.StepWrapper(
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                config.epochs * config.train_size,
+                last_epoch=start_epoch * config.train_size - 1))
+    else:
+        raise AssertionError('invalid config.sched.type {}'.format(config.sched.type))
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
@@ -288,20 +300,16 @@ def train():
     model = RetinaNet(NUM_CLASSES, len(anchor_types), anchor_levels=[a is not None for a in ANCHORS])
     model = model.to(DEVICE)
 
-    optimizer = build_optimizer(config.opt, model.parameters())
+    optimizer = build_optimizer(model.parameters(), config)
 
-    if config.sched.type == 'multistep':
-        scheduler = lr_scheduler_wrapper.EpochWrapper(
-            torch.optim.lr_scheduler.MultiStepLR(optimizer, config.sched.multistep.steps))
-    else:
-        raise AssertionError('invalid sched {}'.format(config.sched.type))
-
-    saver = Saver({'model': model, 'optimizer': optimizer, 'scheduler': scheduler})
+    saver = Saver({'model': model, 'optimizer': optimizer})
     start_epoch = 0
     if args.restore_path is not None:
         saver.load(args.restore_path, keys=['model'])
     if os.path.exists(os.path.join(args.experiment_path, 'checkpoint.pth')):
         start_epoch = saver.load(os.path.join(args.experiment_path, 'checkpoint.pth'))
+
+    scheduler = build_scheduler(optimizer, config, start_epoch)
 
     for epoch in range(start_epoch, config.epochs):
         train_epoch(

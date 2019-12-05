@@ -36,7 +36,7 @@ def encode_boxes(input, anchors, min_iou, max_iou):
     # build class_output
     class_output = class_ids[iou_indices] + 1
     class_output[iou_values < min_iou] = 0
-    class_output[(iou_values >= min_iou) & (iou_values <= max_iou)] = -1
+    class_output[(min_iou <= iou_values) & (iou_values <= max_iou)] = -1
 
     # build regr_output
     boxes = boxes[iou_indices]
