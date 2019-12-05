@@ -4,7 +4,6 @@ import itertools
 import os
 import shutil
 
-import numpy as np
 import torch
 import torch.distributions
 import torch.nn.functional as F
@@ -12,7 +11,6 @@ import torch.utils
 import torch.utils.data
 import torchvision
 import torchvision.transforms as T
-from PIL import Image, ImageDraw, ImageFont
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -26,14 +24,13 @@ from detection.box_coding import decode_boxes
 from detection.datasets.wider import Dataset, NUM_CLASSES
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
-from detection.utils import logit
+from detection.utils import logit, draw_boxes
 from transforms import ApplyTo
 
 # TODO: visualization scores sigmoid
 # TODO: move logits slicing to helpers
 
 
-COLORS = np.random.RandomState(42).uniform(51, 255, size=(NUM_CLASSES, 3)).round().astype(np.uint8)
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
 MIN_IOU = 0.4
@@ -148,31 +145,6 @@ def build_optimizer(optimizer_config, parameters):
         raise AssertionError('invalid OPT {}'.format(optimizer_config.type))
 
     return optimizer
-
-
-def draw_boxes(image, detections, class_names, colors=COLORS):
-    font = ImageFont.truetype('./imet/Droid+Sans+Mono+Awesome.ttf', size=14)
-
-    class_ids, boxes, scores = detections
-    scores = scores.sigmoid()  # TODO: fixme
-
-    device = image.device
-    image = image.permute(1, 2, 0).data.cpu().numpy()
-    image = (image * 255).astype(np.uint8)
-    image = Image.fromarray(image)
-    draw = ImageDraw.Draw(image)
-
-    for c, (t, l, b, r), s in zip(class_ids.data.cpu().numpy(), boxes.data.cpu().numpy(), scores.data.cpu().numpy()):
-        color = tuple(colors[c])
-        text = '{}: {:.2f}'.format(class_names[c], s)
-        size = draw.textsize(text, font=font)
-        draw.rectangle(((l, t - size[1]), (l + size[0], t)), fill=color)
-        draw.text((l, t - size[1]), text, font=font, fill=(0, 0, 0))
-        draw.rectangle(((l, t), (r, b)), outline=color)
-
-    image = torch.tensor(np.array(image) / 255).permute(2, 0, 1).to(device)
-
-    return image
 
 
 def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
