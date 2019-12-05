@@ -1,7 +1,6 @@
 import argparse
 import gc
 import itertools
-import math
 import os
 import shutil
 
@@ -21,7 +20,7 @@ import lr_scheduler_wrapper
 import utils
 from all_the_tools.torch.utils import Saver
 from config import Config
-from detection.anchors import build_anchors_maps
+from detection.anchors import build_anchors_maps, compute_anchor
 from detection.box_coding import decode_boxes
 # from detection.datasets.coco import Dataset, NUM_CLASSES
 from detection.datasets.wider import Dataset, NUM_CLASSES
@@ -46,24 +45,6 @@ def encode_class_ids(input):
     return utils.one_hot(input + 1, NUM_CLASSES + 2)[:, 2:]
 
 
-def compute_anchor(size, ratio, scale):
-    h = math.sqrt(size**2 / ratio) * scale
-    w = h * ratio
-
-    return h, w
-
-
-anchor_types = list(itertools.product([1 / 2, 1, 2 / 1], [2**0, 2**(1 / 3), 2**(2 / 3)]))
-ANCHORS = [
-    None,
-    None,
-    None,
-    [compute_anchor(32, ratio, scale) for ratio, scale in anchor_types],
-    [compute_anchor(64, ratio, scale) for ratio, scale in anchor_types],
-    [compute_anchor(128, ratio, scale) for ratio, scale in anchor_types],
-    [compute_anchor(256, ratio, scale) for ratio, scale in anchor_types],
-    [compute_anchor(512, ratio, scale) for ratio, scale in anchor_types],
-]
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 parser = argparse.ArgumentParser()
@@ -75,6 +56,13 @@ parser.add_argument('--workers', type=int, default=os.cpu_count())
 args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
+
+anchor_types = list(itertools.product(config.anchors.ratios, config.anchors.scales))
+ANCHORS = [
+    [compute_anchor(size, ratio, scale) for ratio, scale in anchor_types]
+    if size is not None else None
+    for size in config.anchors.sizes
+]
 anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS).to(DEVICE)
 
 train_transform = T.Compose([
@@ -325,7 +313,7 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    model = RetinaNet(NUM_CLASSES, len(anchor_types))
+    model = RetinaNet(NUM_CLASSES, len(anchor_types), anchor_levels=[a is not None for a in ANCHORS])
     model = model.to(DEVICE)
 
     optimizer = build_optimizer(config.opt, model.parameters())

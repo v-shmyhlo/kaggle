@@ -4,6 +4,25 @@ batch_size: 8
 image_size: 512
 train_size: 3000
 
+anchors:
+  sizes:
+    -
+    -
+    -
+    - 32
+    - 64
+    - 128
+    - 256
+    - 512
+  ratios:
+    - 0.5
+    - 1
+    - 2
+  scales:
+    - 1
+    - 1.26
+    - 1.587
+
 opt:
   type: sgd
   lr: 0.01

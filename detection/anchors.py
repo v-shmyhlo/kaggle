@@ -37,3 +37,10 @@ def build_anchor_map(image_size, map_size, anchor):
     anchor_map = anchor_map.view(anchor_map.size(0) * anchor_map.size(1), anchor_map.size(2))
 
     return anchor_map
+
+
+def compute_anchor(size, ratio, scale):
+    h = math.sqrt(size**2 / ratio) * scale
+    w = h * ratio
+
+    return h, w
