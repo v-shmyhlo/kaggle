@@ -18,8 +18,9 @@ class Resize(object):
 
 # TODO: test
 class RandomCrop(object):
-    def __init__(self, size):
+    def __init__(self, size, min_size=8**2):
         self.size = size
+        self.min_size = min_size
 
     def __call__(self, input):
         image = input['image']
@@ -28,7 +29,7 @@ class RandomCrop(object):
         t = np.random.randint(0, h - self.size + 1)
         l = np.random.randint(0, w - self.size + 1)
 
-        return crop(input, (t, l), (self.size, self.size), min_size=8**2)
+        return crop(input, (t, l), (self.size, self.size), min_size=self.min_size)
 
 
 class RandomFlipLeftRight(object):

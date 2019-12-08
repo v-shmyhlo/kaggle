@@ -1,8 +1,10 @@
 seed: 42
-epochs: 50
+dataset: wider
+epochs: 100
 batch_size: 8
-image_size: 512
-train_size: 1000
+resize_size: 512
+crop_size: 512
+train_steps: 1000
 
 anchors:
   min_iou: 0.3
@@ -17,7 +19,7 @@ anchors:
     - 256
     -
   ratios:
-    - 1
+    - 0.8
   scales:
     - 1
     - 1.26

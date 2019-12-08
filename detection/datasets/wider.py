@@ -4,8 +4,6 @@ import torch
 import torch.utils.data
 from PIL import Image
 
-NUM_CLASSES = 1
-
 
 # TODO: crop box to be within image
 # TODO: refactor
@@ -13,6 +11,8 @@ NUM_CLASSES = 1
 
 
 class Dataset(torch.utils.data.Dataset):
+    num_classes = 1
+
     def __init__(self, path, subset, transform=None):
         self.transform = transform
 

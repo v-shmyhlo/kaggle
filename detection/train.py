@@ -20,8 +20,8 @@ from all_the_tools.torch.utils import Saver
 from config import Config
 from detection.anchors import build_anchors_maps, compute_anchor
 from detection.box_coding import decode_boxes
-# from detection.datasets.coco import Dataset, NUM_CLASSES
-from detection.datasets.wider import Dataset, NUM_CLASSES
+from detection.datasets.coco import Dataset as CocoDataset
+from detection.datasets.wider import Dataset as WiderDataset
 from detection.model import RetinaNet
 from detection.transform import Resize, BuildLabels, RandomCrop, RandomFlipLeftRight, denormalize
 from detection.utils import logit, draw_boxes
@@ -37,7 +37,7 @@ STD = [0.229, 0.224, 0.225]
 
 # TODO: check all usages
 def encode_class_ids(input):
-    return utils.one_hot(input + 1, NUM_CLASSES + 2)[:, 2:]
+    return utils.one_hot(input + 1, Dataset.num_classes + 2)[:, 2:]
 
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -52,17 +52,24 @@ args = parser.parse_args()
 config = Config.from_yaml(args.config_path)
 shutil.copy(args.config_path, utils.mkdir(args.experiment_path))
 
-anchor_types = list(itertools.product(config.anchors.ratios, config.anchors.scales))
+if config.dataset == 'coco':
+    Dataset = CocoDataset
+elif config.dataset == 'wider':
+    Dataset = WiderDataset
+else:
+    raise AssertionError('invalid config.dataset {}'.format(config.dataset))
+
+ANCHOR_TYPES = list(itertools.product(config.anchors.ratios, config.anchors.scales))
 ANCHORS = [
-    [compute_anchor(size, ratio, scale) for ratio, scale in anchor_types]
+    [compute_anchor(size, ratio, scale) for ratio, scale in ANCHOR_TYPES]
     if size is not None else None
     for size in config.anchors.sizes
 ]
-anchor_maps = build_anchors_maps((config.image_size, config.image_size), ANCHORS).to(DEVICE)
+anchor_maps = build_anchors_maps((config.crop_size, config.crop_size), ANCHORS).to(DEVICE)
 
 train_transform = T.Compose([
-    Resize(config.image_size),
-    RandomCrop(config.image_size),
+    Resize(config.resize_size),
+    RandomCrop(config.crop_size),
     RandomFlipLeftRight(),
     ApplyTo(['image'], T.Compose([
         T.ToTensor(),
@@ -71,8 +78,8 @@ train_transform = T.Compose([
     BuildLabels(ANCHORS, min_iou=config.anchors.min_iou, max_iou=config.anchors.max_iou),
 ])
 eval_transform = T.Compose([
-    Resize(config.image_size),
-    RandomCrop(config.image_size),
+    Resize(config.resize_size),
+    RandomCrop(config.crop_size),
     ApplyTo(['image'], T.Compose([
         T.ToTensor(),
         T.Normalize(mean=MEAN, std=STD),
@@ -153,8 +160,8 @@ def build_scheduler(optimizer, config, start_epoch):
         return lr_scheduler_wrapper.StepWrapper(
             torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                config.epochs * config.train_size,
-                last_epoch=start_epoch * config.train_size - 1))
+                config.epochs * config.train_steps,
+                last_epoch=start_epoch * config.train_steps - 1))
     else:
         raise AssertionError('invalid config.sched.type {}'.format(config.sched.type))
 
@@ -184,7 +191,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, class_names, epoch):
 
         scheduler.step()
 
-        if i >= config.train_size:
+        if i >= config.train_steps:
             break
 
     with torch.no_grad():
@@ -297,7 +304,7 @@ def train():
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn)
 
-    model = RetinaNet(NUM_CLASSES, len(anchor_types), anchor_levels=[a is not None for a in ANCHORS])
+    model = RetinaNet(Dataset.num_classes, len(ANCHOR_TYPES), anchor_levels=[a is not None for a in ANCHORS])
     model = model.to(DEVICE)
 
     optimizer = build_optimizer(model.parameters(), config)

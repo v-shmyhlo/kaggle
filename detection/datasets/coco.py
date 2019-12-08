@@ -5,8 +5,6 @@ import torch
 import torch.utils.data
 from PIL import Image
 
-NUM_CLASSES = 80
-
 
 # TODO: crop box to be within image
 # TODO: refactor
@@ -14,6 +12,8 @@ NUM_CLASSES = 80
 
 
 class Dataset(torch.utils.data.Dataset):
+    num_classes = 80
+
     def __init__(self, path, subset, transform=None):
         if subset == 'train':
             ann_path = os.path.join(path, 'annotations/instances_train2017.json')
@@ -28,7 +28,7 @@ class Dataset(torch.utils.data.Dataset):
         self.coco = pycoco.COCO(ann_path)
         self.cat_to_id = {cat: id for id, cat in enumerate(self.coco.getCatIds())}
         self.class_names = {self.cat_to_id[cat]: self.coco.cats[cat]['name'] for cat in self.cat_to_id}
-        assert len(self.cat_to_id) == NUM_CLASSES
+        assert len(self.cat_to_id) == self.num_classes
         self.data = self.coco.loadImgs(ids=self.coco.getImgIds())
         self.data = [
             item for item in self.data
