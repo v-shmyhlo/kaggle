@@ -32,6 +32,23 @@ class RandomCrop(object):
         return crop(input, (t, l), (self.size, self.size), min_size=self.min_size)
 
 
+class RandomSizedCrop(object):
+    def __init__(self, ratio, min_size=8**2):
+        self.ratio = ratio
+        self.min_size = min_size
+
+    def __call__(self, input):
+        image = input['image']
+
+        w, h = image.size
+        size = round(min(h, w) * np.random.uniform(self.ratio[0], self.ratio[1]))
+
+        t = np.random.randint(0, h - size + 1)
+        l = np.random.randint(0, w - size + 1)
+
+        return crop(input, (t, l), (size, size), min_size=self.min_size)
+
+
 class RandomFlipLeftRight(object):
     def __call__(self, input):
         if np.random.random() > 0.5:
