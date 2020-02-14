@@ -471,7 +471,7 @@ def train_fold(fold, train_eval_data):
             OneCycleScheduler(
                 optimizer,
                 lr=(config.opt.lr / 20, config.opt.lr),
-                beta=config.sched.onecycle.beta,
+                beta_range=config.sched.onecycle.beta,
                 max_steps=config.epochs,
                 annealing=config.sched.onecycle.anneal,
                 peak_pos=config.sched.onecycle.peak_pos,

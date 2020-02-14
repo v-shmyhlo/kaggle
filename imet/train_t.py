@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sklearn.model_selection import KFold
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+from transform import SquarePad, RatioPad, Cutout
 
 import lr_scheduler_wrapper
 import utils
@@ -23,7 +24,6 @@ from config import Config
 from losses import FocalLoss, bce_loss, lsep_loss, f2_loss, lovasz_loss
 from lr_scheduler import OneCycleScheduler, CyclicLR
 from optim import AdamW
-from transform import SquarePad, RatioPad, Cutout
 from .model import Model
 
 # TODO: try largest lr before diverging
@@ -578,7 +578,7 @@ def train_fold(fold, lr):
             OneCycleScheduler(
                 optimizer,
                 lr=(lr / 20, lr),
-                beta=config.sched.onecycle.beta,
+                beta_range=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
     elif config.sched.type == 'cyclic':

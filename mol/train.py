@@ -252,7 +252,7 @@ def train_fold(fold, train_eval_data, args, config):
             OneCycleScheduler(
                 optimizer,
                 lr=(lr / 20, lr),
-                beta=config.sched.onecycle.beta,
+                beta_range=config.sched.onecycle.beta,
                 max_steps=len(train_data_loader) * config.epochs,
                 annealing=config.sched.onecycle.anneal))
     elif config.sched.type == 'cyclic':
