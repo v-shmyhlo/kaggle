@@ -4,15 +4,19 @@ import math
 import os
 
 import click
+import matplotlib.pyplot as plt
 import numpy as np
 import sklearn
 import torch
+import torch.utils.data
 import torchvision
 import torchvision.transforms as T
+from PIL import Image
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
+import utils
 from all_the_tools.metrics import Last, Mean, Metric
 from all_the_tools.torch.losses import softmax_cross_entropy
 from all_the_tools.torch.optim import LookAhead
@@ -21,15 +25,27 @@ from all_the_tools.utils import seed_python
 from beng.dataset import LabeledDataset, load_labeled_data, split_target, CLASS_META, decode_target
 from beng.model import Model
 from beng.transforms import Invert
+from lr_scheduler import OneCycleScheduler, CosineWithWarmup
 
+# TODO: label smoothin
+# TODO: increase la step-size or weight
+# TODO: no soft recall
+# TODO: pl
 # TODO: spatial transformer network
 # TODO: reduce entropy?
+# TODO: mixup/cutmix
 # TODO: strat split
 # TODO: postprocess coocurence
+# TODO: manifold mixup
+# TODO: lsep loss
+# TODO: erosion/dilation
+# TODO: perspective
+# TODO: shear/scale and other affine
 
 
-# TODO: rotation
+# TODO: skeletonize and add noize
 # TODO: scale
+# TODO: mixmatch
 # TODO: shift
 # TODO: center images
 # TODO: synthetic data
@@ -102,7 +118,8 @@ def compute_loss(input, target):
     target = split_target(target, -1)
 
     loss = [compute(input=i, target=t) for i, t in zip(input, target)]
-    loss = sum(loss)
+    assert len(loss) == len(CLASS_META['weight'].values)
+    loss = sum([l * w for l, w in zip(loss, CLASS_META['weight'].values)])
 
     return loss
 
@@ -154,9 +171,23 @@ def build_optimizer(parameters, config):
     return optimizer
 
 
-def build_scheduler(optimizer, config, epochs, steps_per_epoch):
+def build_scheduler(optimizer, config, optimizer_config, epochs, steps_per_epoch):
     if config.type == 'cosine':
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs * steps_per_epoch)
+    elif config.type == 'onecycle':
+        scheduler = OneCycleScheduler(
+            optimizer,
+            min_lr=optimizer_config.lr / 100,
+            beta_range=[0.95, 0.85],
+            max_steps=epochs * steps_per_epoch,
+            annealing='linear',
+            peak_pos=0.45,
+            end_pos=0.9)
+    elif config.type == 'coswarm':
+        scheduler = CosineWithWarmup(
+            optimizer,
+            warmup_steps=steps_per_epoch,
+            max_steps=epochs * steps_per_epoch)
     else:
         raise AssertionError('invalid scheduler {}'.format(config.type))
 
@@ -183,6 +214,7 @@ def build_transforms():
     ])
     train_transform = T.Compose([
         Invert(),
+        T.RandomAffine(degrees=15, scale=(0.8, 1 / 0.8), resample=Image.BILINEAR),
         to_tensor_and_norm,
     ])
     eval_transform = T.Compose([
@@ -255,29 +287,112 @@ def eval_epoch(model, data_loader, epoch, config):
     writer.close()
 
 
+def lr_search(train_data, train_transform, config):
+    train_dataset = LabeledDataset(train_data, transform=train_transform)
+    train_data_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=config.train.batch_size,
+        drop_last=True,
+        shuffle=True,
+        num_workers=config.workers,
+        worker_init_fn=worker_init_fn)
+
+    min_lr = 1e-7
+    max_lr = 10.
+    gamma = (max_lr / min_lr)**(1 / len(train_data_loader))
+
+    lrs = []
+    losses = []
+    lim = None
+
+    model = Model(config.model, num_classes=CLASS_META['num_classes'].sum()).to(DEVICE)
+    optimizer = build_optimizer(model.parameters(), config.train.optimizer)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = min_lr
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma)
+
+    # update_transforms(1.)
+    model.train()
+    optimizer.zero_grad()
+    model.train()
+    for images, targets in tqdm(train_data_loader, desc='lr_search'):
+        images, targets = images.to(DEVICE), targets.to(DEVICE)
+
+        logits = model(images)
+
+        loss = compute_loss(input=logits, target=targets)
+
+        lrs.append(np.squeeze(scheduler.get_lr()))
+        losses.append(loss.data.cpu().numpy().mean())
+
+        if lim is None:
+            lim = losses[0] * 1.1
+        if lim < losses[-1]:
+            break
+
+        loss.mean().backward()
+        optimizer.step()
+        optimizer.zero_grad()
+        scheduler.step()
+
+    writer = SummaryWriter(os.path.join(config.experiment_path, 'lr_search'))
+
+    with torch.no_grad():
+        losses = np.clip(losses, 0, lim)
+        minima_loss = losses[np.argmin(utils.smooth(losses))]
+        minima_lr = lrs[np.argmin(utils.smooth(losses))]
+
+        step = 0
+        for loss, loss_sm in zip(losses, utils.smooth(losses)):
+            writer.add_scalar('search_loss', loss, global_step=step)
+            writer.add_scalar('search_loss_sm', loss_sm, global_step=step)
+            step += config.train.batch_size
+
+        fig = plt.figure()
+        plt.plot(lrs, losses)
+        plt.plot(lrs, utils.smooth(losses))
+        plt.axvline(minima_lr)
+        plt.xscale('log')
+        plt.title('loss: {:.8f}, lr: {:.8f}'.format(minima_loss, minima_lr))
+        writer.add_figure('lr_search', fig, global_step=0)
+        print(minima_lr)
+
+    writer.flush()
+    writer.close()
+
+    return minima_lr
+
+
 @click.command()
 @click.option('--config-path', type=click.Path(), required=True)
 @click.option('--dataset-path', type=click.Path(), required=True)
 @click.option('--experiment-path', type=click.Path(), required=True)
+@click.option('--restore-path', type=click.Path())
+@click.option('--lr-search', is_flag=True)
 @click.option('--workers', type=click.INT, default=os.cpu_count())
 def main(**kwargs):
     # TODO: seed everything
-
     config = load_config(**kwargs, fold=1)  # FIXME:
     del kwargs
-
-    fold = 0  # FIXME:
 
     train_eval_data = load_labeled_data(
         os.path.join(config.dataset_path, 'train.csv'),
         glob.glob(os.path.join(config.dataset_path, 'train_image_data_*.parquet')),
         cache_path=os.path.join(config.dataset_path, 'train_images'))
 
-    train_indices, eval_indices = indices_for_fold(train_eval_data, fold=fold, seed=config.seed)
+    train_indices, eval_indices = indices_for_fold(train_eval_data, fold=config.fold, seed=config.seed)
 
     train_transform, eval_transform = build_transforms()
 
+    if config.lr_search:
+        lr_search(train_eval_data, train_transform, config)
+        return
+
     train_dataset = LabeledDataset(train_eval_data.iloc[train_indices], transform=train_transform)
+    train_dataset = torch.utils.data.ConcatDataset([
+        train_dataset,
+        # FakeDataset(train_eval_data, len(train_dataset) // 4, transform=train_transform)
+    ])
     eval_dataset = LabeledDataset(train_eval_data.iloc[eval_indices], transform=eval_transform)
 
     train_data_loader = torch.utils.data.DataLoader(
@@ -294,13 +409,17 @@ def main(**kwargs):
         worker_init_fn=worker_init_fn)
 
     model = Model(config.model, num_classes=CLASS_META['num_classes'].sum()).to(DEVICE)
-    optimizer = build_optimizer(model.parameters(), config.train.optimizer)
-    scheduler = build_scheduler(optimizer, config.train.scheduler, config.epochs, len(train_data_loader))
+    optimizer = build_optimizer(
+        model.parameters(), config.train.optimizer)
+    scheduler = build_scheduler(
+        optimizer, config.train.scheduler, config.train.optimizer, config.epochs, len(train_data_loader))
     saver = Saver({
         'model': model,
         'optimizer': optimizer,
         'scheduler': scheduler,
     })
+    if config.restore_path is not None:
+        saver.load(config.restore_path, keys=['model'])
 
     for epoch in range(1, config.epochs + 1):
         train_epoch(model, train_data_loader, optimizer, scheduler, epoch=epoch, config=config)

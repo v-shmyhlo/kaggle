@@ -1,0 +1,135 @@
+/* bengali */
+@font-face {
+  font-family: 'Atma';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Atma Regular'), local('Atma-Regular'), url(https://fonts.gstatic.com/s/atma/v5/uK_84rqWc-Eoq3tRDx0VMv-kXw.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0981-09FB, U+200C-200D, U+20B9, U+25CC;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Atma';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Atma Regular'), local('Atma-Regular'), url(https://fonts.gstatic.com/s/atma/v5/uK_84rqWc-Eoq2dRDx0VMv-kXw.woff2) format('woff2');
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Atma';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Atma Regular'), local('Atma-Regular'), url(https://fonts.gstatic.com/s/atma/v5/uK_84rqWc-Eoq2lRDx0VMv8.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* bengali */
+@font-face {
+  font-family: 'Baloo Da';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Baloo Da Regular'), local('BalooDa-Regular'), url(https://fonts.gstatic.com/s/balooda/v5/LhWmMVnXOfIZO795FUkKQPp3MNmYuu8.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0981-09FB, U+200C-200D, U+20B9, U+25CC;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Baloo Da';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Baloo Da Regular'), local('BalooDa-Regular'), url(https://fonts.gstatic.com/s/balooda/v5/LhWmMVnXOfIZO795FUkXQPp3MNmYuu8.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Baloo Da';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Baloo Da Regular'), local('BalooDa-Regular'), url(https://fonts.gstatic.com/s/balooda/v5/LhWmMVnXOfIZO795FUkWQPp3MNmYuu8.woff2) format('woff2');
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Baloo Da';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Baloo Da Regular'), local('BalooDa-Regular'), url(https://fonts.gstatic.com/s/balooda/v5/LhWmMVnXOfIZO795FUkYQPp3MNmY.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* bengali */
+@font-face {
+  font-family: 'Galada';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Galada Regular'), local('Galada-Regular'), url(https://fonts.gstatic.com/s/galada/v5/H4cmBXyGmcjXlUXO5yY_wrmwgp63.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0981-09FB, U+200C-200D, U+20B9, U+25CC;
+}
+/* latin */
+@font-face {
+  font-family: 'Galada';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Galada Regular'), local('Galada-Regular'), url(https://fonts.gstatic.com/s/galada/v5/H4cmBXyGmcjXlUXO9SY_wrmwgg.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* bengali */
+@font-face {
+  font-family: 'Hind Siliguri';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Hind Siliguri Regular'), local('HindSiliguri-Regular'), url(https://fonts.gstatic.com/s/hindsiliguri/v6/ijwTs5juQtsyLLR5jN4cxBEoTI7ax8s3JimW3w.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0981-09FB, U+200C-200D, U+20B9, U+25CC;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Hind Siliguri';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Hind Siliguri Regular'), local('HindSiliguri-Regular'), url(https://fonts.gstatic.com/s/hindsiliguri/v6/ijwTs5juQtsyLLR5jN4cxBEoTJLax8s3JimW3w.woff2) format('woff2');
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Hind Siliguri';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Hind Siliguri Regular'), local('HindSiliguri-Regular'), url(https://fonts.gstatic.com/s/hindsiliguri/v6/ijwTs5juQtsyLLR5jN4cxBEoTJzax8s3Jik.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* bengali */
+@font-face {
+  font-family: 'Mina';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Mina'), local('Mina-Regular'), url(https://fonts.gstatic.com/s/mina/v3/-nFzOGc18vARnypp7w_x-5udPg.woff2) format('woff2');
+  unicode-range: U+0964-0965, U+0981-09FB, U+200C-200D, U+20B9, U+25CC;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Mina';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Mina'), local('Mina-Regular'), url(https://fonts.gstatic.com/s/mina/v3/-nFzOGc18vARnzZp7w_x-5udPg.woff2) format('woff2');
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Mina';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('Mina'), local('Mina-Regular'), url(https://fonts.gstatic.com/s/mina/v3/-nFzOGc18vARnzhp7w_x-5s.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
