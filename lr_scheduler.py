@@ -83,7 +83,7 @@ class CosineWithWarmup(torch.optim.lr_scheduler._LRScheduler):
         def get_param_group_lr(base_lr):
             if self.last_epoch < self.warmup_steps:
                 r = self.last_epoch / self.warmup_steps
-                lr = annealing_exponential(1e-7, base_lr, r)
+                lr = annealing_exponential(base_lr * 1e-3, base_lr, r)
             else:
                 r = (self.last_epoch - self.warmup_steps) / (self.max_steps - self.warmup_steps)
                 lr = annealing_cosine(base_lr, 0., r)
