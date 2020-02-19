@@ -41,7 +41,7 @@ class LabeledDataset(torch.utils.data.Dataset):
         ], dtype=torch.long)
         target = encode_target(target)
 
-        return image, target
+        return image, target, i
 
 
 class FakeDataset(torch.utils.data.Dataset):
@@ -92,7 +92,7 @@ def load_labeled_data(metadata_path, parquet_paths, cache_path):
     return data
 
 
-def split_target(target, dim=None):
+def split_target(target, dim=-1):
     return torch.split(target, CLASS_META['num_classes'].values.tolist(), dim=dim)
 
 
@@ -105,7 +105,7 @@ def encode_target(target):
 
 
 def decode_target(target):
-    target = split_target(target, -1)
+    target = split_target(target)
     target = [x.argmax(-1) for x in target]
     target = torch.stack(target, -1)
 

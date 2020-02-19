@@ -1,13 +1,15 @@
+import os
+from functools import partial
+
 import click
 import numpy as np
-from tqdm import tqdm
-import os
 import torch
-from .dataset import EPS, TrainEvalDataset, load_train_eval_data
-from .utils import collate_fn
-from .transform import LoadSignal, ToSpectrogram
-from functools import partial
 import torchvision.transforms as T
+from tqdm import tqdm
+
+from .dataset import EPS, TrainEvalDataset, load_train_eval_data
+from .transform import LoadSignal, ToSpectrogram
+from .utils import collate_fn
 
 
 @click.command()

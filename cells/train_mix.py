@@ -28,7 +28,7 @@ from cells.utils import images_to_rgb, cut_mix
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
-from transforms import ApplyTo, Resetable
+from transforms import ApplyTo, Resettable
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -60,9 +60,9 @@ class RandomResize(object):
         return input
 
 
-random_crop = Resetable(RandomCrop)
-center_crop = Resetable(CenterCrop)
-infer_image_transform = Resetable(lambda tta: test_image_transform if tta else eval_image_transform)
+random_crop = Resettable(RandomCrop)
+center_crop = Resettable(CenterCrop)
+infer_image_transform = Resettable(lambda tta: test_image_transform if tta else eval_image_transform)
 to_tensor = ToTensor()
 
 if config.normalize is None:

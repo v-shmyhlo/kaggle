@@ -122,7 +122,7 @@ def transpose(image):
     return image.transpose(Image.TRANSPOSE)
 
 
-class Resetable(object):
+class Resettable(object):
     def __init__(self, build_transform):
         self.build_transform = build_transform
         self.transform = None

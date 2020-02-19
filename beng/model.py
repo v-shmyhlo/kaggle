@@ -6,7 +6,11 @@ class Model(nn.Module):
     def __init__(self, config, num_classes):
         super().__init__()
 
-        self.encoder = EfficientNet.from_pretrained('efficientnet-b0', num_classes=num_classes, in_channels=1)
-       
+        self.norm = nn.BatchNorm2d(1)
+        self.encoder = EfficientNet.from_pretrained(config.type, num_classes=num_classes, in_channels=1)
+
     def forward(self, input):
-        return self.encoder(input)
+        input = self.norm(input)
+        input = self.encoder(input)
+
+        return input

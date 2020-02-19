@@ -30,7 +30,7 @@ from stal.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset, build_data
 from stal.model_cls import Model, Ensemble
 from stal.transforms import RandomHorizontalFlip, RandomVerticalFlip, SampledRandomCrop, RandomCrop
 from stal.utils import mask_to_image, rle_encode
-from transforms import ApplyTo, Extract, Resetable, RandomGamma, RandomBrightness, RandomContrast
+from transforms import ApplyTo, Extract, Resettable, RandomGamma, RandomBrightness, RandomContrast
 
 FOLDS = list(range(1, 5 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -51,9 +51,9 @@ shutil.copy(args.config_path, os.path.join(utils.mkdir(args.experiment_path), 'c
 normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 if config.aug.crop.type == 'random':
-    random_crop = Resetable(RandomCrop)
+    random_crop = Resettable(RandomCrop)
 elif config.aug.crop.type == 'sampled':
-    random_crop = Resetable(SampledRandomCrop)
+    random_crop = Resettable(SampledRandomCrop)
 else:
     raise AssertionError('invalid config.aug.crop.type {}'.format(config.aug.crop.type))
 

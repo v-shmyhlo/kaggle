@@ -29,7 +29,7 @@ from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTen
 from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
-from transforms import ApplyTo, Resetable
+from transforms import ApplyTo, Resettable
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -140,9 +140,9 @@ class MixSites(object):
         return s1
 
 
-random_resize = Resetable(RandomResize)
-random_crop = Resetable(RandomCrop)
-center_crop = Resetable(CenterCrop)
+random_resize = Resettable(RandomResize)
+random_crop = Resettable(RandomCrop)
+center_crop = Resettable(CenterCrop)
 to_tensor = ToTensor()
 
 if config.normalize is None:
