@@ -103,30 +103,6 @@ test_transform = T.Compose([
 ])
 
 
-def cut_mix(images_1, labels_1):
-    b, _, h, w = images_1.size()
-    perm = np.random.permutation(b)
-    images_2, labels_2 = images_1[perm], labels_1[perm]
-
-    lam = np.random.uniform(0, 1)
-    r_x = np.random.uniform(0, w)
-    r_y = np.random.uniform(0, h)
-    r_w = w * np.sqrt(1 - lam)
-    r_h = h * np.sqrt(1 - lam)
-    x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
-    x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
-    y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
-    y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
-
-    images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
-    labels_1[:, :, x1:x2, y1:y2] = labels_2[:, :, x1:x2, y1:y2]
-
-    images = images_1
-    labels = labels_1
-
-    return images, labels
-
-
 def update_transforms(p):
     assert 0. <= p <= 1.
 

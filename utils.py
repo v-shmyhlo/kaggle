@@ -10,6 +10,8 @@ import scipy.signal
 import torch
 from PIL import Image
 
+from beng.train import weighted_sum
+
 
 class RandomSubset(torch.utils.data.Dataset):
     def __init__(self, dataset, size):
@@ -124,3 +126,96 @@ def mkdir(path):
 
 def one_hot(input, num_classes):
     return torch.eye(num_classes).to(input.device)[input]
+
+
+def mixup(images_1, targets_1, alpha):
+    indices = np.random.permutation(images_1.size(0))
+    images_2, targets_2 = images_1[indices], targets_1[indices]
+
+    lam = np.random.beta(alpha, alpha)
+    lam = np.maximum(lam, 1 - lam)
+
+    images = weighted_sum(images_1, images_2, lam)
+    targets = weighted_sum(targets_1, targets_2, lam)
+
+    return images, targets
+
+
+# def cutmix(images_1, labels_1, alpha):
+#     b, _, h, w = images_1.size()
+#     perm = np.random.permutation(b)
+#     images_2, labels_2 = images_1[perm], labels_1[perm]
+# 
+#     lam = np.random.beta(alpha, alpha)
+#     lam = np.maximum(lam, 1 - lam)
+# 
+#     r_x = np.random.uniform(0, w)
+#     r_y = np.random.uniform(0, h)
+#     r_w = w * np.sqrt(1 - lam)
+#     r_h = h * np.sqrt(1 - lam)
+#     x1 = (r_x - r_w / 2).clip(0, w).round().astype(np.int32)
+#     x2 = (r_x + r_w / 2).clip(0, w).round().astype(np.int32)
+#     y1 = (r_y - r_h / 2).clip(0, h).round().astype(np.int32)
+#     y2 = (r_y + r_h / 2).clip(0, h).round().astype(np.int32)
+# 
+#     images_1[:, :, x1:x2, y1:y2] = images_2[:, :, x1:x2, y1:y2]
+#     images = images_1
+#     labels = weighted_sum(labels_1, labels_2, lam)
+# 
+#     return images, labels
+
+
+def cutmix(images_1, labels_1, alpha):
+    b, _, h, w = images_1.size()
+    perm = np.random.permutation(b)
+    images_2, labels_2 = images_1[perm], labels_1[perm]
+
+    lam = np.random.beta(alpha, alpha)
+    lam = np.maximum(lam, 1 - lam)
+
+    r_w = w * np.sqrt(1 - lam)
+    r_h = h * np.sqrt(1 - lam)
+
+    t = np.random.uniform(0, h - r_h)
+    l = np.random.uniform(0, w - r_w)
+    b = t + r_h
+    r = l + r_w
+
+    t, l, b, r = [np.round(p).astype(np.int32) for p in [t, l, b, r]]
+    assert 0 <= t <= b <= h
+    assert 0 <= l <= r <= w
+
+    images_1[:, :, t:b, l:r] = images_2[:, :, t:b, l:r]
+    images = images_1
+    labels = weighted_sum(labels_1, labels_2, lam)
+
+    return images, labels
+
+# def cutmix(images_1, labels_1, alpha):
+#     b, _, h, w = images_1.size()
+#     perm = np.random.permutation(b)
+#     images_2, labels_2 = images_1[perm], labels_1[perm]
+#
+#     for i in range(b):
+#         lam = np.random.beta(alpha, alpha)
+#         lam = np.maximum(lam, 1 - lam)
+#
+#         r_w = w * np.sqrt(1 - lam)
+#         r_h = h * np.sqrt(1 - lam)
+#
+#         t = np.random.uniform(0, h - r_h)
+#         l = np.random.uniform(0, w - r_w)
+#         b = t + r_h
+#         r = l + r_w
+#
+#         t, l, b, r = [np.round(p).astype(np.int32) for p in [t, l, b, r]]
+#         assert 0 <= t <= b <= h
+#         assert 0 <= l <= r <= w
+#
+#         images_1[i, :, t:b, l:r] = images_2[i, :, t:b, l:r]
+#         labels_1[i] = weighted_sum(labels_1[i], labels_2[i], lam)
+#
+#     images = images_1
+#     labels = labels_1
+#
+#     return images, labels

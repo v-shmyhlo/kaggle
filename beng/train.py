@@ -33,12 +33,12 @@ from transforms import Resettable
 # TODO: seresnext
 # TODO: predict full character
 # TODO: segment and classify
+# TODO: synthetic data
 # TODO: reweight loss based on how bad sample is
 # TODO: cutout
 # TODO: filter-response normalization
 # TODO: train multiple models and make noisy student/teacher
 # TODO: ewa optimization
-# TODO: cutmix
 # TODO: tf_efficientnet_b1_ns
 # TODO: random crops
 # TODO: progressive crops
@@ -57,16 +57,17 @@ from transforms import Resettable
 # TODO: self-mixup, self-cutmix
 # TODO: population based training
 # TODO: mixmatch
+# TODO: stn regularize to identity
 # TODO: pl
-# TODO: manifold mixup
-# TODO: spatial transformer network
-# TODO: mixup/cutmix
+# TODO: spatial transformer network !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# TODO: dropout
 # TODO: strat split
 # TODO: postprocess coocurence
 # TODO: manifold mixup
 # TODO: no soft f1 when trained with self-dist or LS
 # TODO: nonlinear heads for classes
 # TODO: lsep loss
+# TODO: cutmix: progressive
 # TODO: distillation
 # TODO: erosion/dilation
 # TODO: perspective
@@ -168,7 +169,8 @@ def compute_entropy(input):
 
 def compute_loss(input, target, config):
     def compute(input, target, dim=-1):
-        target = utils.label_smoothing(target, eps=config.label_smoothing)
+        if config.label_smoothing is not None:
+            target = utils.label_smoothing(target, eps=config.label_smoothing)
 
         ce = softmax_cross_entropy(input=input, target=target, axis=dim)
         r = softmax_recall_loss(input=input, target=target, dim=dim)
@@ -251,6 +253,11 @@ def build_scheduler(optimizer, config, optimizer_config, epochs, steps_per_epoch
             optimizer,
             warmup_steps=steps_per_epoch,
             max_steps=epochs * steps_per_epoch)
+    elif config.type == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=(epochs * steps_per_epoch) // 3,
+            gamma=0.1)
     else:
         raise AssertionError('invalid scheduler {}'.format(config.type))
 
@@ -293,7 +300,7 @@ def build_transforms():
         T.RandomAffine(degrees=15, scale=(0.8, 1 / 0.8), resample=Image.BILINEAR),
         random_crop,
         to_tensor_and_norm,
-        T.RandomErasing(value=0),
+        # T.RandomErasing(value=0),
     ])
     eval_transform = T.Compose([
         Invert(),
@@ -304,7 +311,7 @@ def build_transforms():
     return train_transform, eval_transform, update_transforms
 
 
-def train_epoch(model, data_loader, fold_probs, fold_weights, optimizer, scheduler, epoch, config):
+def train_epoch(model, data_loader, fold_probs, optimizer, scheduler, epoch, config):
     writer = SummaryWriter(os.path.join(config.experiment_path, 'F{}'.format(config.fold), 'train'))
     metrics = {
         'loss': Mean(),
@@ -319,14 +326,13 @@ def train_epoch(model, data_loader, fold_probs, fold_weights, optimizer, schedul
 
         if epoch >= config.train.self_distillation.start_epoch:
             targets = weighted_sum(targets, fold_probs[indices], config.train.self_distillation.target_weight)
-        # images, targets = mixup(images, targets, 0.5)
+        if config.train.cutmix is not None:
+            if np.random.uniform() > (epoch - 1) / (config.epochs - 1):
+                images, targets = utils.cutmix(images, targets, config.train.cutmix)
 
-        logits = model(images)
+        logits, etc = model(images)
 
         loss = compute_loss(input=logits, target=targets, config=config.train)
-
-        # assert loss.size() == fold_weights[indices].size()
-        # fold_weights[indices] = weighted_sum(fold_weights[indices], compute_weight_from_loss(loss.detach()), 2 / 3)
 
         metrics['loss'].update(loss.data.cpu().numpy())
         metrics['loss_hist'].update(loss.data.cpu().numpy())
@@ -339,18 +345,20 @@ def train_epoch(model, data_loader, fold_probs, fold_weights, optimizer, schedul
         scheduler.step()
 
         # FIXME:
-        # if epoch >= config.train.self_distillation.start_epoch:
-        probs = torch.cat([i.softmax(-1) for i in split_target(logits.detach())], -1)
-        fold_probs[indices] = weighted_sum(fold_probs[indices], probs, config.train.self_distillation.pred_ewa)
+        if epoch >= config.train.self_distillation.start_epoch:
+            probs = torch.cat([i.softmax(-1) for i in split_target(logits.detach())], -1)
+            fold_probs[indices] = weighted_sum(fold_probs[indices], probs, config.train.self_distillation.pred_ewa)
 
     for k in metrics:
-        writer.add_histogram('loss_weight', fold_weights, global_step=epoch)
         if k.endswith('_hist'):
             writer.add_histogram(k, metrics[k].compute_and_reset(), global_step=epoch)
         else:
             writer.add_scalar(k, metrics[k].compute_and_reset(), global_step=epoch)
     writer.add_image('images', torchvision.utils.make_grid(
         images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
+    if 'stn' in etc:
+        writer.add_image('stn', torchvision.utils.make_grid(
+            etc['stn'], nrow=compute_nrow(etc['stn']), normalize=True), global_step=epoch)
 
     writer.flush()
     writer.close()
@@ -370,7 +378,7 @@ def eval_epoch(model, data_loader, epoch, config):
         for images, targets, _ in tqdm(data_loader, desc='[F{}][epoch {}] eval'.format(config.fold, epoch)):
             images, targets = images.to(DEVICE), targets.to(DEVICE)
 
-            logits = model(images)
+            logits, etc = model(images)
 
             loss = compute_loss(input=logits, target=targets, config=config.train)
 
@@ -388,23 +396,12 @@ def eval_epoch(model, data_loader, epoch, config):
             writer.add_scalar(k, metrics[k].compute_and_reset(), global_step=epoch)
     writer.add_image('images', torchvision.utils.make_grid(
         images, nrow=compute_nrow(images), normalize=True), global_step=epoch)
+    if 'stn' in etc:
+        writer.add_image('stn', torchvision.utils.make_grid(
+            etc['stn'], nrow=compute_nrow(etc['stn']), normalize=True), global_step=epoch)
 
     writer.flush()
     writer.close()
-
-
-def mixup(images_1, targets_1, alpha):
-    dist = torch.distributions.beta.Beta(alpha, alpha)
-    indices = np.random.permutation(images_1.size(0))
-    images_2, targets_2 = images_1[indices], targets_1[indices]
-
-    lam = dist.sample().to(images_1.device)
-    lam = torch.max(lam, 1 - lam)
-
-    images = weighted_sum(images_1, images_2, lam)
-    targets = weighted_sum(targets_1, targets_2, lam)
-
-    return images, targets
 
 
 def lr_search(train_data, train_transform, config):
@@ -436,7 +433,10 @@ def lr_search(train_data, train_transform, config):
     for images, targets, _ in tqdm(train_data_loader, desc='lr_search'):
         images, targets = images.to(DEVICE), targets.to(DEVICE)
 
-        logits = model(images)
+        if config.train.cutmix is not None:
+            images, targets = utils.cutmix(images, targets, config.train.cutmix)
+
+        logits, etc = model(images)
 
         loss = compute_loss(input=logits, target=targets, config=config.train)
 
@@ -558,12 +558,10 @@ def main(**kwargs):
 
     update_transforms(0)
     fold_probs = build_dataset_targets(train_dataset, config)
-    fold_weights = torch.ones(fold_probs.size(0), dtype=torch.float, device=fold_probs.device)
 
     for epoch in range(1, config.epochs + 1):
         update_transforms((epoch - 1) / (config.epochs - 1))
-        train_epoch(model, train_data_loader, fold_probs, fold_weights, optimizer, scheduler, epoch=epoch,
-                    config=config)
+        train_epoch(model, train_data_loader, fold_probs, optimizer, scheduler, epoch=epoch, config=config)
         eval_epoch(model, eval_data_loader, epoch=epoch, config=config)
         saver.save(
             os.path.join(

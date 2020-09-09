@@ -24,11 +24,12 @@ from cells.dataset import NUM_CLASSES, TrainEvalDataset, TestDataset
 from cells.model import Model
 from cells.transforms import Extract, RandomFlip, RandomTranspose, Resize, ToTensor, RandomSite, SplitInSites, \
     RandomCrop, CenterCrop, NormalizeByExperimentStats, NormalizeByPlateStats, ChannelReweight
-from cells.utils import images_to_rgb, cut_mix
+from cells.utils import images_to_rgb
 from config import Config
 from lr_scheduler import OneCycleScheduler
 from radam import RAdam
 from transforms import ApplyTo, Resettable
+from utils import cutmix
 
 FOLDS = list(range(1, 3 + 1))
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -298,7 +299,7 @@ def lr_search(train_eval_data):
     for i, (images, feats, _, labels, _) in enumerate(tqdm(train_eval_data_loader, desc='lr search'), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         labels = utils.one_hot(labels, NUM_CLASSES)
-        images, labels = cut_mix(images, labels)
+        images, labels = cutmix(images, labels)
         logits = model(images, object(), object())
 
         loss = compute_loss(input=logits, target=labels)
@@ -358,7 +359,7 @@ def train_epoch(model, optimizer, scheduler, data_loader, fold, epoch):
     for i, (images, feats, _, labels, _) in enumerate(tqdm(data_loader, desc='epoch {} train'.format(epoch)), 1):
         images, feats, labels = images.to(DEVICE), feats.to(DEVICE), labels.to(DEVICE)
         labels = utils.one_hot(labels, NUM_CLASSES)
-        images, labels = cut_mix(images, labels)
+        images, labels = cutmix(images, labels)
         logits = model(images, object(), object())
 
         loss = compute_loss(input=logits, target=labels)
